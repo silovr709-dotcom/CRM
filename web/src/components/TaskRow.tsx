@@ -4,7 +4,7 @@ import { PRIORITY_META } from '../meta';
 import { useApp } from '../store';
 import type { Task } from '../types';
 
-export default function TaskRow({ task, showDate, showTime = true }: { task: Task; showDate?: boolean; showTime?: boolean }) {
+export default function TaskRow({ task, showDate, showTime = true, draggable }: { task: Task; showDate?: boolean; showTime?: boolean; draggable?: boolean }) {
   const { refresh, toast, openTask } = useApp();
   const done = task.status === 'done';
 
@@ -40,7 +40,12 @@ export default function TaskRow({ task, showDate, showTime = true }: { task: Tas
   }
 
   return (
-    <div className={`task-row${done ? ' done' : ''}`} onClick={() => openTask(task)}>
+    <div
+      className={`task-row${done ? ' done' : ''}`}
+      onClick={() => openTask(task)}
+      draggable={draggable && task.schedule_mode !== 'fixed'}
+      onDragStart={draggable ? (e) => { e.dataTransfer.setData('text/task-id', String(task.id)); e.dataTransfer.effectAllowed = 'move'; } : undefined}
+    >
       {showTime && <div className="t-time">{task.time ?? ''}</div>}
       <div className={`task-check${done ? ' checked' : ''}${task.blocked && !done ? ' blocked' : ''}`} onClick={toggle}>
         {done ? '✓' : ''}

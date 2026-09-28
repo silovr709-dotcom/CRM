@@ -9,16 +9,25 @@ import projectsRouter from './routes/projects.js';
 import miscRouter from './routes/misc.js';
 import assistantRouter from './routes/assistant.js';
 import plannerRouter from './routes/planner.js';
+import telegramRouter from './routes/telegram.js';
+import stockRouter from './routes/stock.js';
+import { startTelegramLoop, startTelegramScheduler } from './services/telegram.js';
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '20mb' }));
 
 app.use('/api/tasks', tasksRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/assistant', assistantRouter);
 app.use('/api/planner', plannerRouter);
+app.use('/api/telegram', telegramRouter);
+app.use('/api/stock', stockRouter);
 app.use('/api', miscRouter);
+
+// Telegram-бот: long polling + планировщик напоминаний/брифингов
+startTelegramLoop();
+startTelegramScheduler();
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

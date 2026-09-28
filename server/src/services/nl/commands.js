@@ -166,6 +166,14 @@ export function executeCommand(cmd) {
       }
       return { ok: true, text: `Разбил «${t.title}» на ${n} подзадачи.` };
     }
+    case 'carry_over_ids': {
+      const to = addDays(todayStr(), 1);
+      let n = 0;
+      for (const id of cmd.ids || []) {
+        if (updateTask(id, { date: to, time: null })) n++;
+      }
+      return { ok: true, text: `Перенесено на завтра: ${n}` };
+    }
     default:
       return { ok: false, text: 'Неизвестная команда.' };
   }

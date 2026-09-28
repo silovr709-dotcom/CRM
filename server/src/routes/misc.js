@@ -1,9 +1,59 @@
 import { Router } from 'express';
+import { randomBytes } from 'node:crypto';
+import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, extname } from 'node:path';
 import { db, getSetting, setSetting } from '../db.js';
 import { log, getActivity } from '../services/activity.js';
 import { instantiateTemplate } from '../services/templates.js';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const filesDir = join(__dirname, '..', '..', 'data', 'files');
+mkdirSync(filesDir, { recursive: true });
+
 const r = Router();
+
+// ---------- Вложения (файлы) ----------
+r.get('/attachments', (req, res) => {
+  const where = [], params = [];
+  if (req.query.task_id) { where.push('task_id = ?'); params.push(Number(req.query.task_id)); }
+  if (req.query.project_id) { where.push('project_id = ?'); params.push(Number(req.query.project_id)); }
+  if (req.query.note_id) { where.push('note_id = ?'); params.push(Number(req.query.note_id)); }
+  res.json(db.prepare(`SELECT id, filename, mime, size, task_id, project_id, note_id, created_at FROM attachments
+    ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC`).all(...params));
+});
+
+r.post('/attachments', (req, res) => {
+  const { filename, data, mime = 'application/octet-stream', task_id = null, project_id = null, note_id = null } = req.body;
+  if (!filename || !data) return res.status(400).json({ error: 'filename and data (base64) required' });
+  const buf = Buffer.from(data, 'base64');
+  if (buf.length > 15 * 1024 * 1024) return res.status(413).json({ error: 'файл больше 15 МБ' });
+  const stored = randomBytes(10).toString('hex') + extname(filename).slice(0, 10);
+  writeFileSync(join(filesDir, stored), buf);
+  const result = db.prepare(
+    'INSERT INTO attachments (filename, mime, size, stored_name, task_id, project_id, note_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(filename, mime, buf.length, stored, task_id, project_id, note_id);
+  const id = Number(result.lastInsertRowid);
+  log('attachment', id, 'created', filename);
+  res.status(201).json(db.prepare('SELECT id, filename, mime, size, created_at FROM attachments WHERE id = ?').get(id));
+});
+
+r.get('/attachments/:id/download', (req, res) => {
+  const a = db.prepare('SELECT * FROM attachments WHERE id = ?').get(Number(req.params.id));
+  if (!a) return res.status(404).json({ error: 'not found' });
+  res.setHeader('Content-Type', a.mime);
+  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(a.filename)}`);
+  res.sendFile(join(filesDir, a.stored_name));
+});
+
+r.delete('/attachments/:id', (req, res) => {
+  const a = db.prepare('SELECT * FROM attachments WHERE id = ?').get(Number(req.params.id));
+  if (a) {
+    try { unlinkSync(join(filesDir, a.stored_name)); } catch { /* уже нет */ }
+    db.prepare('DELETE FROM attachments WHERE id = ?').run(a.id);
+  }
+  res.json({ ok: true });
+});
 
 // ---------- Заметки ----------
 r.get('/notes', (req, res) => {

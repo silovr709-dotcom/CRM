@@ -167,6 +167,11 @@ export default function Today() {
                       {b.task!.project ? ` · ${b.task!.project.name}` : ''}
                       {b.task!.blocked ? ' · 🔗 ждёт предыдущую' : ''}
                     </div>
+                    {b.task!.departure_time && b.task!.status !== 'done' && (
+                      <div className="tl-range" style={{ color: 'var(--accent-ink)', fontWeight: 600 }}>
+                        🚗 Выезд в {b.task!.departure_time} (дорога ~{b.task!.travel_min} мин)
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="tl-card free">🟢 Свободно · {humanDuration(b.minutes ?? 0)}</div>

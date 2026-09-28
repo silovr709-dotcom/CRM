@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { api, humanDate, humanDuration, todayStr } from '../api';
 import { typeIcon, typeLabel, TYPE_META } from '../meta';
 import { useApp, useRoute } from '../store';
-import type { Template, Automation, Contact, Category, Activity } from '../types';
+import type { Template, Automation, Contact, Category, Activity, StockItem, StockMove } from '../types';
 
 const SECTIONS = [
   { id: 'analytics', icon: '📊', label: 'Аналитика', desc: 'Продуктивность, распределение дел, хронические переносы' },
+  { id: 'stock', icon: '📦', label: 'Склад', desc: 'Остатки, приход/расход, минимальные запасы' },
   { id: 'templates', icon: '🧩', label: 'Шаблоны', desc: 'Готовые цепочки задач: доставка, монтаж, новый клиент' },
   { id: 'automations', icon: '⚡', label: 'Автоматизации', desc: 'КОГДА событие → ТОГДА действие' },
   { id: 'contacts', icon: '👥', label: 'Контакты', desc: 'Клиенты, поставщики, люди' },
@@ -53,6 +54,7 @@ export default function More({ section }: { section?: string }) {
       <button className="btn ghost small" onClick={() => nav('/more')}>← Ещё</button>
       <div className="mt12">
         {section === 'analytics' && <Analytics />}
+        {section === 'stock' && <Stock />}
         {section === 'templates' && <Templates />}
         {section === 'automations' && <Automations />}
         {section === 'contacts' && <Contacts />}
@@ -424,16 +426,231 @@ function Settings() {
         <button className="btn primary mt16" onClick={save}>Сохранить</button>
       </div>
 
+      <TelegramSettings s={s} setS={setS} />
+
       <div className="card mt16" style={{ padding: 16, maxWidth: 480 }}>
-        <b>Интеграции</b>
-        <p className="small muted">Архитектура уведомлений готова к подключению внешних каналов. Сейчас работают внутренние напоминания; провайдеры подключаются без изменения бизнес-логики:</p>
-        {['Push-уведомления', 'Apple Calendar', 'Apple Reminders', 'Email', 'Telegram'].map(x => (
-          <div key={x} className="flex small" style={{ padding: '7px 0', borderBottom: '1px solid var(--border)', justifyContent: 'space-between' }}>
-            <span>{x}</span><span className="chip">скоро</span>
-          </div>
-        ))}
-        <p className="small muted mt12">Внешний LLM для разбора фраз подключается через переменные окружения <code>LLM_API_URL</code> / <code>LLM_API_KEY</code> — ключи не хранятся в коде.</p>
+        <b>🔔 Уведомления в браузере</b>
+        <p className="small muted">Разрешите уведомления, чтобы напоминания приходили, даже когда вкладка не активна.</p>
+        <button className="btn small" onClick={async () => {
+          if (!('Notification' in window)) { toast('Браузер не поддерживает уведомления'); return; }
+          const perm = await Notification.requestPermission();
+          toast(perm === 'granted' ? 'Уведомления включены ✓' : 'Уведомления не разрешены');
+        }}>
+          {'Notification' in window && Notification.permission === 'granted' ? '✓ Разрешены' : 'Разрешить уведомления'}
+        </button>
       </div>
+
+      <LlmStatus />
+    </div>
+  );
+}
+
+function TelegramSettings({ s, setS }: { s: Record<string, string>; setS: (v: Record<string, string>) => void }) {
+  const { toast } = useApp();
+  const [status, setStatus] = useState<{ configured: boolean; valid?: boolean; bot_username?: string | null; linked: boolean } | null>(null);
+  const [token, setToken] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const loadStatus = () => api.get<any>('/telegram/status').then(setStatus).catch(() => {});
+  useEffect(() => { loadStatus(); }, []);
+
+  async function saveToken() {
+    setBusy(true);
+    try {
+      await api.post('/telegram/token', { token: token.trim() });
+      setToken('');
+      await loadStatus();
+      toast('Токен сохранён');
+    } finally { setBusy(false); }
+  }
+
+  async function saveBrief() {
+    await api.put('/settings', {
+      brief_morning: s.brief_morning ?? '08:00',
+      brief_evening: s.brief_evening ?? '20:30',
+      notify_before_min: s.notify_before_min ?? '15',
+    });
+    toast('Сохранено');
+  }
+
+  async function test() {
+    const r = await api.post<any>('/telegram/test', {});
+    toast(r.ok ? '✅ Сообщение отправлено' : `⚠️ ${r.error || 'Не получилось'}`);
+  }
+
+  return (
+    <div className="card mt16" style={{ padding: 16, maxWidth: 480 }}>
+      <b>✈️ Telegram-бот</b>
+      {status?.configured ? (
+        <div className="small mt8">
+          {status.valid
+            ? <>Бот: <b>@{status.bot_username}</b> {status.linked
+                ? <span className="chip" style={{ background: 'var(--ok-soft, #dcfce7)', color: 'var(--ok, #16a34a)' }}>подключён ✓</span>
+                : <span className="chip">откройте бота и отправьте /start</span>}</>
+            : <span style={{ color: 'var(--danger)' }}>Токен не принят Telegram — проверьте его</span>}
+        </div>
+      ) : (
+        <p className="small muted">
+          Через бота приходят напоминания, брифинги — и можно ставить задачи текстом.<br />
+          1. В Telegram откройте <b>@BotFather</b> → /newbot → получите токен.<br />
+          2. Вставьте токен сюда.<br />
+          3. Откройте своего бота и отправьте /start.
+        </p>
+      )}
+      <div className="flex mt8" style={{ gap: 8 }}>
+        <input
+          style={{ flex: 1 }}
+          type="password"
+          placeholder={status?.configured ? 'Заменить токен…' : 'Токен от @BotFather'}
+          value={token}
+          onChange={e => setToken(e.target.value)}
+        />
+        <button className="btn small" disabled={busy || !token.trim()} onClick={saveToken}>Сохранить</button>
+      </div>
+      {status?.linked && (
+        <button className="btn small mt8" onClick={test}>Отправить тестовое сообщение</button>
+      )}
+      <div className="form-grid mt12">
+        <div className="field"><label>Утренний брифинг</label>
+          <input type="time" value={s.brief_morning ?? '08:00'} onChange={e => setS({ ...s, brief_morning: e.target.value })} /></div>
+        <div className="field"><label>Вечерний разбор</label>
+          <input type="time" value={s.brief_evening ?? '20:30'} onChange={e => setS({ ...s, brief_evening: e.target.value })} /></div>
+        <div className="field full"><label>Напоминать о задаче за, мин</label>
+          <input type="number" value={s.notify_before_min ?? '15'} onChange={e => setS({ ...s, notify_before_min: e.target.value })} /></div>
+      </div>
+      <button className="btn small mt8" onClick={saveBrief}>Сохранить расписание</button>
+    </div>
+  );
+}
+
+function LlmStatus() {
+  const [st, setSt] = useState<{ available: boolean; model?: string } | null>(null);
+  useEffect(() => { api.get<any>('/telegram/llm-status').then(setSt).catch(() => {}); }, []);
+  return (
+    <div className="card mt16" style={{ padding: 16, maxWidth: 480 }}>
+      <b>🧠 Внешний LLM</b>
+      <div className="small mt8">
+        {st?.available
+          ? <>Подключён: <b>{st.model}</b> — фразы разбирает нейросеть, с фолбэком на встроенный парсер.</>
+          : <span className="muted">Не подключён — работает встроенный разбор фраз. Для подключения задайте переменные окружения сервера: <code>LLM_API_KEY</code>, опционально <code>LLM_API_URL</code> и <code>LLM_MODEL</code> (любой OpenAI-совместимый API). Ключи не хранятся в коде и в базе.</span>}
+      </div>
+    </div>
+  );
+}
+
+function Stock() {
+  const { toast } = useApp();
+  const [items, setItems] = useState<StockItem[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ name: '', qty: '0', unit: 'шт', min_qty: '0', location: '' });
+  const [openMoves, setOpenMoves] = useState<number | null>(null);
+  const [moves, setMoves] = useState<StockMove[]>([]);
+
+  const load = () => api.get<StockItem[]>('/stock').then(setItems).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  async function add() {
+    if (!form.name.trim()) return;
+    await api.post('/stock', { ...form, qty: Number(form.qty), min_qty: Number(form.min_qty) });
+    setForm({ name: '', qty: '0', unit: 'шт', min_qty: '0', location: '' });
+    setAdding(false);
+    load();
+  }
+
+  async function move(it: StockItem, sign: 1 | -1) {
+    const raw = prompt(`${sign > 0 ? 'Приход' : 'Расход'} «${it.name}», ${it.unit}:`, '1');
+    if (!raw) return;
+    const qty = Math.abs(Number(raw.replace(',', '.')));
+    if (!qty) return;
+    const reason = prompt('Причина / комментарий (не обязательно):') || '';
+    await api.post(`/stock/${it.id}/move`, { delta: sign * qty, reason });
+    toast(sign > 0 ? `+${qty} ${it.unit}` : `−${qty} ${it.unit}`);
+    load();
+    if (openMoves === it.id) showMoves(it.id);
+  }
+
+  async function showMoves(id: number) {
+    if (openMoves === id) { setOpenMoves(null); return; }
+    setMoves(await api.get<StockMove[]>(`/stock/${id}/moves`));
+    setOpenMoves(id);
+  }
+
+  async function removeItem(it: StockItem) {
+    if (!confirm(`Удалить позицию «${it.name}»?`)) return;
+    await api.del(`/stock/${it.id}`);
+    load();
+  }
+
+  const low = items.filter(i => i.min_qty > 0 && i.qty <= i.min_qty);
+
+  return (
+    <div>
+      <div className="page-title">
+        <h1>📦 Склад</h1>
+        <button className="btn primary" onClick={() => setAdding(!adding)}>{adding ? 'Отмена' : '+ Позиция'}</button>
+      </div>
+
+      {low.length > 0 && (
+        <div className="card mt12" style={{ padding: '10px 14px', borderColor: 'var(--danger)' }}>
+          <span className="small" style={{ color: 'var(--danger)' }}>
+            ⚠️ Заканчивается: {low.map(i => `${i.name} (${i.qty} ${i.unit})`).join(', ')}
+          </span>
+        </div>
+      )}
+
+      {adding && (
+        <div className="card mt12" style={{ padding: 16 }}>
+          <div className="form-grid">
+            <div className="field full"><label>Название</label>
+              <input autoFocus value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Например: Фасады МДФ белые" /></div>
+            <div className="field"><label>Количество</label>
+              <input type="number" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} /></div>
+            <div className="field"><label>Единица</label>
+              <input value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })} /></div>
+            <div className="field"><label>Мин. запас</label>
+              <input type="number" value={form.min_qty} onChange={e => setForm({ ...form, min_qty: e.target.value })} /></div>
+            <div className="field"><label>Где лежит</label>
+              <input value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} placeholder="Склад / цех / гараж" /></div>
+          </div>
+          <button className="btn primary mt12" onClick={add}>Добавить</button>
+        </div>
+      )}
+
+      {items.length === 0 && !adding ? (
+        <div className="card empty mt12" style={{ padding: 24 }}>Пока пусто. Добавьте первую позицию — материалы, фурнитуру, инструменты.</div>
+      ) : (
+        <div className="card list-plain mt12">
+          {items.map(it => (
+            <div key={it.id} style={{ borderBottom: '1px solid var(--border)' }}>
+              <div className="flex" style={{ padding: '10px 14px', gap: 10, alignItems: 'center' }}>
+                <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => showMoves(it.id)}>
+                  <div style={{ fontWeight: 600 }}>
+                    {it.name}
+                    {it.min_qty > 0 && it.qty <= it.min_qty && <span className="chip" style={{ marginLeft: 8, color: 'var(--danger)' }}>мало</span>}
+                  </div>
+                  <div className="small muted">
+                    {it.qty} {it.unit}{it.location ? ` · ${it.location}` : ''}{it.min_qty > 0 ? ` · мин. ${it.min_qty}` : ''}
+                  </div>
+                </div>
+                <button className="btn small" onClick={() => move(it, 1)}>+</button>
+                <button className="btn small" onClick={() => move(it, -1)}>−</button>
+                <button className="btn small ghost danger" onClick={() => removeItem(it)}>✕</button>
+              </div>
+              {openMoves === it.id && (
+                <div style={{ padding: '0 14px 12px' }}>
+                  {moves.length === 0 ? <div className="small muted">Движений нет</div> : moves.map(m => (
+                    <div key={m.id} className="flex small" style={{ justifyContent: 'space-between', padding: '3px 0' }}>
+                      <span className="muted">{m.created_at?.slice(0, 16).replace('T', ' ')}</span>
+                      <span>{m.reason || '—'}</span>
+                      <b style={{ color: m.delta > 0 ? 'var(--ok, #16a34a)' : 'var(--danger)' }}>{m.delta > 0 ? '+' : ''}{m.delta} {it.unit}</b>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

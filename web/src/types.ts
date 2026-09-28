@@ -54,6 +54,23 @@ export interface Task {
   notes?: Note[];
   reminders?: Reminder[];
   attention_reason?: string;
+  // подсказки «когда выезжать» (экран Сегодня)
+  travel_min?: number | null;
+  departure_time?: string | null;
+}
+
+export interface Attachment {
+  id: number; filename: string; mime: string; size: number; created_at: string;
+}
+
+export interface StockItem {
+  id: number; name: string; qty: number; unit: string; min_qty: number;
+  location: string; note: string; project_id: number | null; project_name?: string;
+  updated_at: string;
+}
+
+export interface StockMove {
+  id: number; item_id: number; delta: number; reason: string; project_name?: string; created_at: string;
 }
 
 export interface Project {

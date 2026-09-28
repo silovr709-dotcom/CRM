@@ -26,7 +26,40 @@ export default function AiModal() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [listening, setListening] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const recRef = useRef<{ stop: () => void } | null>(null);
+
+  const speechSupported = typeof window !== 'undefined' &&
+    Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+
+  function toggleVoice() {
+    if (listening) { recRef.current?.stop(); return; }
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) return;
+    const rec = new SR();
+    rec.lang = 'ru-RU';
+    rec.interimResults = true;
+    rec.continuous = false;
+    let final = '';
+    rec.onresult = (e: any) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
+      }
+      setInput(final + interim);
+    };
+    rec.onend = () => {
+      setListening(false);
+      recRef.current = null;
+      if (final.trim()) send(final.trim());
+    };
+    rec.onerror = () => { setListening(false); recRef.current = null; };
+    recRef.current = rec;
+    setListening(true);
+    rec.start();
+  }
 
   useEffect(() => {
     if (aiOpen) {
@@ -242,11 +275,16 @@ export default function AiModal() {
         <div className="ai-input">
           <input
             value={input}
-            placeholder="Что нужно сделать?"
+            placeholder={listening ? '🎙 Говорите…' : 'Что нужно сделать?'}
             autoFocus
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && send()}
           />
+          {speechSupported && (
+            <button className={`btn${listening ? ' ai' : ''}`} onClick={toggleVoice} title="Голосовой ввод">
+              {listening ? '⏹' : '🎙'}
+            </button>
+          )}
           <button className="btn ai" onClick={() => send()}>➤</button>
         </div>
       </div>

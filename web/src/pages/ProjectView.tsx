@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, humanDate, todayStr, addDays } from '../api';
 import { useApp, useRoute } from '../store';
 import TaskRow from '../components/TaskRow';
+import Attachments from '../components/Attachments';
 import type { Project, Template } from '../types';
 
 const ACTIONS: Record<string, string> = {
@@ -14,7 +15,7 @@ export default function ProjectView({ id }: { id: number }) {
   const { version, refresh, toast, openTask } = useApp();
   const { nav } = useRoute();
   const [p, setP] = useState<Project | null>(null);
-  const [tab, setTab] = useState<'tasks' | 'notes' | 'history'>('tasks');
+  const [tab, setTab] = useState<'tasks' | 'notes' | 'files' | 'history'>('tasks');
   const [noteText, setNoteText] = useState('');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [tplPick, setTplPick] = useState('');
@@ -87,6 +88,7 @@ export default function ProjectView({ id }: { id: number }) {
       <div className="tab-pills">
         <button className={tab === 'tasks' ? 'on' : ''} onClick={() => setTab('tasks')}>Задачи ({openTasks.length})</button>
         <button className={tab === 'notes' ? 'on' : ''} onClick={() => setTab('notes')}>Заметки ({p.notes?.length ?? 0})</button>
+        <button className={tab === 'files' ? 'on' : ''} onClick={() => setTab('files')}>Файлы</button>
         <button className={tab === 'history' ? 'on' : ''} onClick={() => setTab('history')}>История</button>
       </div>
 
@@ -137,6 +139,12 @@ export default function ProjectView({ id }: { id: number }) {
             </div>
           )}
         </>
+      )}
+
+      {tab === 'files' && (
+        <div className="card" style={{ padding: 16 }}>
+          <Attachments projectId={id} />
+        </div>
       )}
 
       {tab === 'history' && (

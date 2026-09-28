@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, humanDate, todayStr } from '../api';
 import { TYPE_META, STATUS_META, PRIORITY_META, RECUR_OPTIONS, MODE_META } from '../meta';
 import { useApp } from '../store';
+import Attachments from './Attachments';
 import type { Task, Recurrence } from '../types';
 
 export default function TaskModal() {
@@ -265,6 +266,10 @@ export default function TaskModal() {
                   style={{ padding: 8, borderRadius: 10, border: '1px solid var(--border)' }} />
                 {remDate && <button className="btn small" onClick={addReminder}>Напомнить</button>}
               </div>
+            </div>
+
+            <div className="mt12">
+              <Attachments taskId={t.id as number} />
             </div>
 
             {t.postponed_count ? <div className="small muted mt12">Переносилась: {t.postponed_count} раз</div> : null}

@@ -77,6 +77,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             notified.add(r.id);
             sessionStorage.setItem('notified', JSON.stringify([...notified]));
             toast(`⏰ Напоминание: ${r.title}`);
+            // системное уведомление, если пользователь разрешил
+            if ('Notification' in window && Notification.permission === 'granted') {
+              try { new Notification('⏰ Напоминание', { body: r.title, icon: '/icons/icon-192.png' }); } catch { /* ignore */ }
+            }
             break; // не больше одного за проверку
           }
         }

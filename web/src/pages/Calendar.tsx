@@ -14,7 +14,23 @@ const MODES: { id: Mode; label: string }[] = [
 ];
 
 export default function Calendar() {
-  const { version, openTask } = useApp();
+  const { version, openTask, refresh, toast } = useApp();
+  const [dragOver, setDragOver] = useState<string | null>(null);
+
+  async function dropOn(date: string, e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(null);
+    const id = e.dataTransfer.getData('text/task-id');
+    if (!id) return;
+    await api.patch(`/tasks/${id}`, { date });
+    toast(`Перенесено на ${humanDate(date)}`);
+    refresh();
+  }
+  const dropProps = (d: string) => ({
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOver(d); },
+    onDragLeave: () => setDragOver((cur) => (cur === d ? null : cur)),
+    onDrop: (e: React.DragEvent) => dropOn(d, e),
+  });
   const [mode, setMode] = useState<Mode>('day');
   const [anchor, setAnchor] = useState(todayStr());
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -92,6 +108,8 @@ export default function Calendar() {
               const list = byDate.get(d) ?? [];
               return (
                 <div key={d} className={`cal-cell${inMonth ? '' : ' other'}${d === todayStr() ? ' today' : ''}`}
+                  style={dragOver === d ? { borderColor: 'var(--accent)', boxShadow: '0 0 0 2.5px var(--accent-soft)' } : {}}
+                  {...dropProps(d)}
                   onClick={() => { setAnchor(d); setMode('day'); }}>
                   <div className="d">{Number(d.slice(8, 10))}</div>
                   {list.slice(0, 3).map(t => <div key={t.id} className="cal-ev">{t.time ? t.time + ' ' : ''}{t.title}</div>)}
@@ -108,15 +126,16 @@ export default function Calendar() {
             const list = (byDate.get(d) ?? []).filter(t => mode === 'list' ? t.status !== 'done' : true);
             if (mode === 'list' && list.length === 0) return null;
             return (
-              <div key={d}>
-                <div className="date-group-head" style={d === todayStr() ? { color: 'var(--accent)' } : {}}>
+              <div key={d} {...dropProps(d)}
+                style={dragOver === d ? { outline: '2px dashed var(--accent)', outlineOffset: 4, borderRadius: 14 } : {}}>
+                <div className="date-group-head" style={d === todayStr() ? { color: 'var(--accent-ink)' } : {}}>
                   {humanDate(d)} · {WD_FULL[weekdayOf(d)]}
                 </div>
                 {list.length === 0 ? (
-                  <div className="card empty" style={{ padding: 18 }}>Свободный день</div>
+                  <div className="card empty" style={{ padding: 18 }}>Свободный день — перетащите сюда задачу</div>
                 ) : (
                   <div className="card list-plain">
-                    {list.map(t => <TaskRow key={t.id} task={t} />)}
+                    {list.map(t => <TaskRow key={t.id} task={t} draggable />)}
                   </div>
                 )}
               </div>

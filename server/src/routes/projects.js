@@ -35,7 +35,7 @@ r.get('/:id', (req, res) => {
   const full = projectStats(p);
   full.tasks = listTasks({ project_id: p.id, include_subtasks: 1 });
   full.notes = db.prepare('SELECT * FROM notes WHERE project_id = ? ORDER BY pinned DESC, id DESC').all(p.id);
-  full.reminders = db.prepare('SELECT * FROM reminders WHERE project_id = ? AND status = "pending"').all(p.id);
+  full.reminders = db.prepare("SELECT * FROM reminders WHERE project_id = ? AND status = 'pending'").all(p.id);
   full.history = db.prepare(`
     SELECT a.* FROM activity_log a WHERE (a.entity_type = 'project' AND a.entity_id = ?)
       OR (a.entity_type = 'task' AND a.entity_id IN (SELECT id FROM tasks WHERE project_id = ?))

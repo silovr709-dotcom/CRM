@@ -170,7 +170,44 @@ CREATE TABLE IF NOT EXISTS integrations (
   config TEXT DEFAULT '{}',
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename TEXT NOT NULL,
+  mime TEXT DEFAULT 'application/octet-stream',
+  size INTEGER DEFAULT 0,
+  stored_name TEXT NOT NULL,
+  task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+  project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  note_id INTEGER REFERENCES notes(id) ON DELETE CASCADE,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS stock_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  qty REAL DEFAULT 0,
+  unit TEXT DEFAULT 'шт',
+  min_qty REAL DEFAULT 0,
+  location TEXT DEFAULT '',
+  note TEXT DEFAULT '',
+  project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS stock_moves (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+  delta REAL NOT NULL,
+  reason TEXT DEFAULT '',
+  project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
 `);
+
+// Миграции для существующих баз
+try { db.exec(`ALTER TABLE reminders ADD COLUMN notified_at TEXT`); } catch { /* уже есть */ }
 
 // ---------- сид данных ----------
 function seed() {
@@ -267,6 +304,17 @@ function seed() {
 }
 
 seed();
+
+// Настройки, добавляемые в существующие базы
+function ensureSettings() {
+  const ins = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  ins.run('telegram_token', '');
+  ins.run('telegram_chat_id', '');
+  ins.run('brief_morning', '08:00');
+  ins.run('brief_evening', '20:30');
+  ins.run('notify_before_min', '15');
+}
+ensureSettings();
 
 export function getSetting(key, fallback = null) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);

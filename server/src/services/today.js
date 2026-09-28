@@ -12,8 +12,30 @@ export function getTodayView(date = todayStr()) {
 
   const withDone = listTasks({ date, status: ACTIVE + ',done' });
   const tasks = withDone.filter(t => t.status !== 'done');
+
+  // Учёт дороги: если у задачи есть место — подсказываем время выезда.
+  // Время берётся из справочника мест (locations.travel_min) или из настроек.
+  const defaultTravel = Number(getSetting('default_travel_min', '30'));
+  const locations = db.prepare('SELECT * FROM locations').all();
+  const travelFor = (t) => {
+    const place = t.location_to || t.location || t.location_from;
+    if (!place || !t.time) return null;
+    if (!['trip', 'delivery', 'meeting', 'event'].includes(t.type)) return null;
+    const known = locations.find(l => place.toLowerCase().includes(l.name.toLowerCase()));
+    return known?.travel_min ?? defaultTravel;
+  };
+
   const timed = withDone.filter(t => t.time)
-    .map(t => ({ ...t, start_min: timeToMin(t.time), end_min: timeToMin(t.time) + defaultDuration(t) }))
+    .map(t => {
+      const travel = travelFor(t);
+      return {
+        ...t,
+        start_min: timeToMin(t.time),
+        end_min: timeToMin(t.time) + defaultDuration(t),
+        travel_min: travel,
+        departure_time: travel ? minToTime(timeToMin(t.time) - travel) : null,
+      };
+    })
     .sort((a, b) => a.start_min - b.start_min);
   const untimed = tasks.filter(t => !t.time);
 
