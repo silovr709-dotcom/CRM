@@ -7,6 +7,9 @@
 // НЕ в коде и не в репозитории.
 
 import { db, getSetting, setSetting } from '../db.js';
+import { runAs, uid } from '../ctx.js';
+import { activeUsers } from './users.js';
+import { monthSummaryText, weekStatsText } from './nl/assistant.js';
 import { smartMessage } from './nl/smart.js';
 import { executeCommand } from './nl/commands.js';
 import { applyPlanItems } from './nl/apply.js';
@@ -104,11 +107,15 @@ async function handleText(chatId, text) {
       '👋 Привет! Я — ваш органайзер.\n\n' +
       'Пишите обычным языком:\n«Завтра утром съездить на склад, забрать фасады, потом отвезти на объект»\n\n' +
       'Или спрашивайте:\n«Что у меня сегодня?» · «Что просрочено?» · «Что я забыл?»\n\n' +
-      'Команды:\n/today — план на сегодня\n/tomorrow — что завтра\n/brief — утренний брифинг\n/evening — вечерний разбор\n\n' +
+      'Команды:\n/today — план на сегодня\n/tomorrow — что завтра\n/week — что на неделе\n' +
+      '/stats — статистика недели\n/month — итоги месяца\n/brief — утренний брифинг\n/evening — вечерний разбор\n\n' +
       '✅ Сюда будут приходить напоминания и брифинги.');
     return;
   }
   if (t === '/today') return answerAndSend(chatId, 'Что у меня сегодня?');
+  if (t === '/week') return answerAndSend(chatId, 'Что на неделе?');
+  if (t === '/stats') return sendMessage(chatId, weekStatsText());
+  if (t === '/month') return sendMessage(chatId, monthSummaryText());
   if (t === '/tomorrow') return answerAndSend(chatId, 'Что у меня завтра?');
   if (t === '/brief') return sendMessage(chatId, briefingText(getTodayView()));
   if (t === '/evening') return sendMessage(chatId, eveningText(getTodayView()));
@@ -166,9 +173,16 @@ async function answerAndSend(chatId, text) {
 
 async function handleCallback(cb) {
   const [action, key] = String(cb.data || '').split(':');
-  const item = pending.get(key);
   await call('answerCallbackQuery', { callback_query_id: cb.id });
   const chatId = cb.message.chat.id;
+
+  // Закрыть напоминание прямо из чата
+  if (action === 'done') {
+    db.prepare(`UPDATE reminders SET status = 'done' WHERE id = ? AND user_id = ?`).run(Number(key), uid());
+    return sendMessage(chatId, '✅ Напоминание закрыто.');
+  }
+
+  const item = pending.get(key);
 
   if (!item) return sendMessage(chatId, 'Это предложение уже неактуально.');
   pending.delete(key);
@@ -194,39 +208,66 @@ async function handleCallback(cb) {
 }
 
 // ---------- long polling ----------
-let offset = 0;
+// У каждого пользователя свой бот и свой токен, поэтому цикл опроса — на каждого.
+const loops = new Map(); // userId → { token }
+
+async function pollLoop(user) {
+  let offset = 0;
+  while (true) {
+    const state = loops.get(user.id);
+    const token = runAs(user, () => getSetting('telegram_token', ''));
+    if (!state || !token || token !== state.token) { loops.delete(user.id); return; }
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates?timeout=25&offset=${offset}`, {
+        signal: AbortSignal.timeout(35000),
+      });
+      const data = await res.json();
+      if (!data.ok) { await sleep(5000); continue; }
+      for (const u of data.result) {
+        offset = u.update_id + 1;
+        try {
+          if (u.message?.text) await runAs(user, () => handleText(u.message.chat.id, u.message.text));
+          else if (u.callback_query) await runAs(user, () => handleCallback(u.callback_query));
+        } catch (e) {
+          console.error('tg update error:', e.message);
+        }
+      }
+    } catch {
+      await sleep(5000);
+    }
+  }
+}
 
 export function startTelegramLoop() {
-  (async () => {
-    // сброс накопившихся апдейтов при старте
-    while (true) {
-      const token = getSetting('telegram_token', '');
-      if (!token) { await sleep(5000); continue; }
-      try {
-        const res = await fetch(api('getUpdates') + `?timeout=25&offset=${offset}`, {
-          signal: AbortSignal.timeout(35000),
-        });
-        const data = await res.json();
-        if (!data.ok) { await sleep(5000); continue; }
-        for (const u of data.result) {
-          offset = u.update_id + 1;
-          try {
-            if (u.message?.text) await handleText(u.message.chat.id, u.message.text);
-            else if (u.callback_query) await handleCallback(u.callback_query);
-          } catch (e) {
-            console.error('tg update error:', e.message);
-          }
-        }
-      } catch {
-        await sleep(5000);
+  const supervise = () => {
+    for (const user of activeUsers()) {
+      const token = runAs(user, () => getSetting('telegram_token', ''));
+      const state = loops.get(user.id);
+      if (token && (!state || state.token !== token)) {
+        loops.set(user.id, { token });
+        pollLoop(user);
       }
+      if (!token && state) loops.delete(user.id);
     }
-  })();
+  };
+  supervise();
+  setInterval(supervise, 15000);
 }
 
 // ---------- планировщик уведомлений ----------
 export function startTelegramScheduler() {
   setInterval(async () => {
+    for (const user of activeUsers()) {
+      try {
+        await runAs(user, () => tickForUser());
+      } catch (e) {
+        console.error('tg scheduler error:', e.message);
+      }
+    }
+  }, 60000);
+}
+
+async function tickForUser() {
     const chatId = getSetting('telegram_chat_id', '');
     const token = getSetting('telegram_token', '');
     if (!chatId || !token) return;
@@ -236,11 +277,14 @@ export function startTelegramScheduler() {
 
     // 1. Напоминания, чьё время пришло
     const due = db.prepare(`
-      SELECT * FROM reminders WHERE status = 'pending' AND notified_at IS NULL
+      SELECT * FROM reminders WHERE user_id = ? AND status = 'pending' AND notified_at IS NULL
         AND (remind_date < ? OR (remind_date = ? AND (remind_time IS NULL OR remind_time <= ?)))`)
-      .all(today, today, now);
+      .all(uid(), today, today, now);
     for (const r of due) {
-      await sendMessage(chatId, `⏰ Напоминание: ${r.title}`);
+      const key = String(pendingSeq++);
+      pending.set(key, { type: 'command', cmd: { command: 'snooze_reminder', reminder_id: r.id } });
+      await sendMessage(chatId, `⏰ Напоминание: ${r.title}`,
+        [[{ text: '💤 Через час', callback_data: `ok:${key}` }, { text: '✅ Готово', callback_data: `done:${r.id}` }]]);
       db.prepare(`UPDATE reminders SET notified_at = datetime('now') WHERE id = ?`).run(r.id);
     }
 
@@ -248,10 +292,10 @@ export function startTelegramScheduler() {
     const before = Number(getSetting('notify_before_min', '15'));
     const nowMin = timeToMin(now);
     const upcoming = db.prepare(`
-      SELECT * FROM tasks WHERE date = ? AND time IS NOT NULL AND status IN ('planned','in_progress')`)
-      .all(today);
+      SELECT * FROM tasks WHERE user_id = ? AND date = ? AND time IS NOT NULL AND status IN ('planned','in_progress')`)
+      .all(uid(), today);
     for (const t of upcoming) {
-      const key = `${today}:${t.id}`;
+      const key = `${uid()}:${today}:${t.id}`;
       const startMin = timeToMin(t.time);
       if (!notifiedTasks.has(key) && startMin - nowMin <= before && startMin - nowMin > 0) {
         notifiedTasks.add(key);
@@ -285,5 +329,12 @@ export function startTelegramScheduler() {
         await sendMessage(chatId, eveningText(v));
       }
     }
-  }, 60000);
+
+    // 5. Итоги месяца — 1-го числа утром
+    const isFirst = new Date().getDate() === 1;
+    if (isFirst && getSetting('monthly_report', '1') === '1'
+        && now >= morning && getSetting('last_month_report', '') !== today) {
+      setSetting('last_month_report', today);
+      await sendMessage(chatId, monthSummaryText(-1));
+    }
 }

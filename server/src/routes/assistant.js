@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { smartMessage } from '../services/nl/smart.js';
 import { executeCommand } from '../services/nl/commands.js';
 import { applyPlanItems } from '../services/nl/apply.js';
+import { SUGGESTIONS } from '../services/nl/assistant.js';
 
 const r = Router();
 
@@ -13,6 +14,9 @@ r.post('/', async (req, res) => {
     res.json({ kind: 'answer', text: 'Не смог разобрать запрос. Попробуйте иначе.' });
   }
 });
+
+// Чипы-подсказки для окна чата
+r.get('/suggestions', (req, res) => res.json({ suggestions: SUGGESTIONS }));
 
 // Подтверждение плана из AI-ввода → реальное создание задач
 r.post('/confirm', (req, res) => {

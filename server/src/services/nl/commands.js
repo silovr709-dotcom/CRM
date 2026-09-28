@@ -1,10 +1,11 @@
 // Команды: «перенеси на пятницу», «напомни через неделю», «удали», «поставь в приоритет»…
 // Возвращают ПРЕДЛОЖЕНИЕ команды; выполнение — после подтверждения (/api/assistant/confirm).
 
+import { uid } from '../../ctx.js';
 import { db } from '../../db.js';
 import { extractDate, R } from './parser.js';
-import { findTaskByTitle, updateTask, deleteTask, setStatus } from '../tasks.js';
-import { todayStr, addDays, humanDate } from '../../util/dates.js';
+import { findTaskByTitle, updateTask, deleteTask, setStatus, completeTask } from '../tasks.js';
+import { todayStr, addDays, humanDate, nextWeekday } from '../../util/dates.js';
 
 const norm = (s) => s.toLowerCase().replace(/ё/g, 'е').trim();
 
@@ -29,8 +30,24 @@ export function parseCommand(text) {
     return { kind: 'command', command: 'unload_day', date: todayStr() };
   }
 
+  // перенеси всё на завтра
+  let m = s.match(/^(перенеси|перекинь|отложи)\s+(все|всё|весь день|оставшееся)\s+на\s+(завтра|послезавтра|понедельник)$/);
+  if (m) {
+    const date = m[3] === 'послезавтра' ? addDays(todayStr(), 2)
+      : m[3] === 'понедельник' ? nextWeekday(todayStr(), 1)
+      : addDays(todayStr(), 1);
+    const ids = db.prepare(`
+      SELECT id FROM tasks WHERE user_id = ? AND date = ? AND status NOT IN ('done','cancelled')`)
+      .all(uid(), todayStr()).map(x => x.id);
+    if (!ids.length) return { kind: 'answer', text: 'На сегодня незакрытых задач нет — переносить нечего. 👌' };
+    return {
+      kind: 'command', command: 'carry_over_ids', ids, date,
+      text: `Перенести все незакрытые задачи (${ids.length}) на ${humanDate(date)}?`,
+    };
+  }
+
   // перенеси/отложи/поставь X на КОГДА
-  let m = s.match(/^(перенеси(?:те)?|отложи(?:те)?|поставь(?:те)?|передвинь)\s+(.+?)\s+на\s+(.+)$/);
+  m = s.match(/^(перенеси(?:те)?|отложи(?:те)?|поставь(?:те)?|передвинь)\s+(.+?)\s+на\s+(.+)$/);
   if (m) {
     const when = extractDate(m[3], todayStr()) || extractDate('в ' + m[3], todayStr());
     const target = when ? when.date
@@ -96,11 +113,42 @@ export function parseCommand(text) {
   m = s.match(/^(добавь|свяжи)\s+(.+?)\s+(?:в\s+проект|с\s+проектом|с)\s+(.+)$/);
   if (m) {
     const { candidates } = resolveTask(m[2]);
-    const project = db.prepare(`SELECT * FROM projects WHERE nlower(name) LIKE nlower(?) LIMIT 1`).get(`%${m[3].trim()}%`);
+    const project = db.prepare(`SELECT * FROM projects WHERE user_id = ? AND nlower(name) LIKE nlower(?) LIMIT 1`).get(uid(), `%${m[3].trim()}%`);
     if (project) {
       return { kind: 'command', command: 'link_project', candidates, project_id: project.id, project_name: project.name, text: `Добавить «${m[2].trim()}» в проект «${project.name}»?` };
     }
     return { kind: 'answer', text: `Не нашёл проект «${m[3].trim()}».` };
+  }
+
+  // выполнил X / сделал X / готово X
+  m = s.match(/^(выполнил[а]?|сделал[а]?|закрыл[а]?|готово|done)\s+(.+)$/);
+  if (m) {
+    const { candidates } = resolveTask(m[2]);
+    if (!candidates.length) return { kind: 'answer', text: `Не нашёл активную задачу «${m[2].trim()}».` };
+    return { kind: 'command', command: 'complete', candidates, text: `Отметить «${candidates[0].title}» выполненной?` };
+  }
+
+  // начни X / в работу X
+  m = s.match(/^(начни|начать|начинаю|возьми в работу|в работу)\s+(.+)$/);
+  if (m) {
+    const { candidates } = resolveTask(m[2]);
+    if (!candidates.length) return { kind: 'answer', text: `Не нашёл задачу «${m[2].trim()}».` };
+    return { kind: 'command', command: 'start', candidates, text: `Взять «${candidates[0].title}» в работу?` };
+  }
+
+  // пауза X (задача или проект)
+  m = s.match(/^(пауза|приостанови|на паузу|поставь на паузу)\s+(.+)$/);
+  if (m) {
+    const frag = m[2].trim();
+    const project = db.prepare(`SELECT * FROM projects WHERE user_id = ? AND status = 'active' AND nlower(name) LIKE nlower(?) LIMIT 1`)
+      .get(uid(), `%${frag}%`);
+    if (project) {
+      return { kind: 'command', command: 'pause_project', project_id: project.id, project_name: project.name,
+        text: `Поставить проект «${project.name}» на паузу?` };
+    }
+    const { candidates } = resolveTask(frag);
+    if (!candidates.length) return { kind: 'answer', text: `Не нашёл «${frag}» ни в задачах, ни в проектах.` };
+    return { kind: 'command', command: 'pause', candidates, text: `Поставить «${candidates[0].title}» на паузу?` };
   }
 
   // разбей X на N задач
@@ -125,12 +173,12 @@ export function executeCommand(cmd) {
       return { ok: true, text: `Перенёс «${t.title}» на ${humanDate(cmd.date)}.`, task: t };
     }
     case 'remind': {
-      const res = db.prepare('INSERT INTO reminders (title, remind_date) VALUES (?, ?)').run(cmd.title, cmd.date);
+      const res = db.prepare('INSERT INTO reminders (title, remind_date, user_id) VALUES (?, ?, ?)').run(cmd.title, cmd.date, uid());
       return { ok: true, text: `Напоминание «${cmd.title}» — ${humanDate(cmd.date)}.`, reminder_id: Number(res.lastInsertRowid) };
     }
     case 'delete': {
       if (!taskId) return { ok: false, text: 'Не выбрана задача.' };
-      const t = db.prepare('SELECT title FROM tasks WHERE id = ?').get(taskId);
+      const t = db.prepare('SELECT title FROM tasks WHERE id = ? AND user_id = ?').get(taskId, uid());
       deleteTask(taskId);
       return { ok: true, text: `Удалил «${t?.title}».` };
     }
@@ -156,23 +204,53 @@ export function executeCommand(cmd) {
     }
     case 'split': {
       if (!taskId) return { ok: false, text: 'Не выбрана задача.' };
-      const t = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+      const t = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, uid());
       const n = cmd.parts || 2;
       const per = t.duration_min ? Math.ceil(t.duration_min / n) : null;
       for (let i = 1; i <= n; i++) {
-        db.prepare(`INSERT INTO tasks (title, type, parent_id, duration_min, project_id, category_id)
-                    VALUES (?, ?, ?, ?, ?, ?)`)
-          .run(`${t.title} — часть ${i}/${n}`, t.type, t.id, per, t.project_id, t.category_id);
+        db.prepare(`INSERT INTO tasks (title, type, parent_id, duration_min, project_id, category_id, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .run(`${t.title} — часть ${i}/${n}`, t.type, t.id, per, t.project_id, t.category_id, uid());
       }
       return { ok: true, text: `Разбил «${t.title}» на ${n} подзадачи.` };
     }
+    case 'complete': {
+      if (!taskId) return { ok: false, text: 'Не выбрана задача.' };
+      const res = completeTask(taskId);
+      return { ok: true, text: `Отметил «${res.task.title}» выполненной. 👍`, task: res.task };
+    }
+    case 'start': {
+      if (!taskId) return { ok: false, text: 'Не выбрана задача.' };
+      const t = setStatus(taskId, 'in_progress');
+      return { ok: true, text: `«${t.title}» — в работе.`, task: t };
+    }
+    case 'pause': {
+      if (!taskId) return { ok: false, text: 'Не выбрана задача.' };
+      const t = setStatus(taskId, 'paused');
+      return { ok: true, text: `«${t.title}» — на паузе.`, task: t };
+    }
+    case 'pause_project': {
+      db.prepare(`UPDATE projects SET status = 'paused', updated_at = datetime('now') WHERE id = ? AND user_id = ?`)
+        .run(cmd.project_id, uid());
+      return { ok: true, text: `Проект «${cmd.project_name}» на паузе.` };
+    }
+    case 'snooze_reminder': {
+      const rem = db.prepare('SELECT * FROM reminders WHERE id = ? AND user_id = ?').get(cmd.reminder_id, uid());
+      if (!rem) return { ok: false, text: 'Напоминание не найдено.' };
+      const at = new Date(Date.now() + 60 * 60 * 1000);
+      const date = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+      const time = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+      db.prepare(`UPDATE reminders SET remind_date = ?, remind_time = ?, status = 'pending', notified_at = NULL WHERE id = ?`)
+        .run(date, time, rem.id);
+      return { ok: true, text: `💤 Напомню ещё раз в ${time}.` };
+    }
     case 'carry_over_ids': {
-      const to = addDays(todayStr(), 1);
+      const to = cmd.date || addDays(todayStr(), 1);
       let n = 0;
       for (const id of cmd.ids || []) {
         if (updateTask(id, { date: to, time: null })) n++;
       }
-      return { ok: true, text: `Перенесено на завтра: ${n}` };
+      return { ok: true, text: `Перенёс на ${humanDate(to)}: ${n} задач(и).` };
     }
     default:
       return { ok: false, text: 'Неизвестная команда.' };

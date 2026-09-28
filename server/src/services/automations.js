@@ -1,3 +1,4 @@
+import { uid } from '../ctx.js';
 import { db } from '../db.js';
 import { log } from './activity.js';
 import { addDays, addWorkdays, todayStr, humanDate } from '../util/dates.js';
@@ -16,7 +17,7 @@ function matches(conditions, task) {
 }
 
 export function runAutomations(triggerType, task) {
-  const rules = db.prepare('SELECT * FROM automations WHERE enabled = 1 AND trigger_type = ?').all(triggerType);
+  const rules = db.prepare('SELECT * FROM automations WHERE user_id = ? AND enabled = 1 AND trigger_type = ?').all(uid(), triggerType);
   const created = [];
   for (const rule of rules) {
     let conditions = {};

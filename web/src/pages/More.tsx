@@ -2,17 +2,19 @@ import { useEffect, useState } from 'react';
 import { api, humanDate, humanDuration, todayStr } from '../api';
 import { typeIcon, typeLabel, TYPE_META } from '../meta';
 import { useApp, useRoute } from '../store';
-import type { Template, Automation, Contact, Category, Activity, StockItem, StockMove } from '../types';
+import type { Template, Automation, Contact, Category, Activity, StockItem, StockMove, User as UserT } from '../types';
 
 const SECTIONS = [
   { id: 'analytics', icon: '📊', label: 'Аналитика', desc: 'Продуктивность, распределение дел, хронические переносы' },
   { id: 'stock', icon: '📦', label: 'Склад', desc: 'Остатки, приход/расход, минимальные запасы' },
   { id: 'templates', icon: '🧩', label: 'Шаблоны', desc: 'Готовые цепочки задач: доставка, монтаж, новый клиент' },
   { id: 'automations', icon: '⚡', label: 'Автоматизации', desc: 'КОГДА событие → ТОГДА действие' },
-  { id: 'contacts', icon: '👥', label: 'Контакты', desc: 'Клиенты, поставщики, люди' },
+  { id: 'contacts', icon: '👥', label: 'Контакты', desc: 'Поставщики и прочие люди (клиенты — в разделе «Клиенты»)' },
   { id: 'categories', icon: '🏷', label: 'Категории', desc: 'Работа, личное и свои собственные' },
   { id: 'history', icon: '🕓', label: 'История', desc: 'Все изменения: создано, перенесено, выполнено' },
-  { id: 'settings', icon: '⚙️', label: 'Настройки', desc: 'Рабочие часы, планирование, интеграции' },
+  { id: 'settings', icon: '⚙️', label: 'Настройки', desc: 'Рабочие часы, планирование, Telegram' },
+  { id: 'account', icon: '🔑', label: 'Мой аккаунт', desc: 'Смена пароля и выход' },
+  { id: 'users', icon: '👤', label: 'Пользователи', desc: 'Только для администратора: кто имеет доступ' },
 ];
 
 const ACTIONS: Record<string, string> = {
@@ -61,6 +63,8 @@ export default function More({ section }: { section?: string }) {
         {section === 'categories' && <Categories />}
         {section === 'history' && <History />}
         {section === 'settings' && <Settings />}
+        {section === 'account' && <Account />}
+        {section === 'users' && <Users />}
       </div>
     </div>
   );
@@ -440,7 +444,6 @@ function Settings() {
         </button>
       </div>
 
-      <LlmSettings />
       <InstallApp />
     </div>
   );
@@ -571,92 +574,6 @@ function TelegramSettings({ s, setS }: { s: Record<string, string>; setS: (v: Re
   );
 }
 
-function LlmSettings() {
-  const { toast } = useApp();
-  const [st, setSt] = useState<{ available: boolean; model?: string | null; url?: string | null; source?: string | null } | null>(null);
-  const [key, setKey] = useState('');
-  const [model, setModel] = useState('');
-  const [url, setUrl] = useState('');
-  const [showAdv, setShowAdv] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const load = () => api.get<any>('/telegram/llm-status').then(setSt).catch(() => {});
-  useEffect(() => { load(); }, []);
-
-  async function save() {
-    setBusy(true);
-    try {
-      const body: Record<string, string> = {};
-      if (key.trim()) body.key = key.trim();
-      if (model.trim()) body.model = model.trim();
-      if (url.trim()) body.url = url.trim();
-      const next = await api.post<any>('/telegram/llm-config', body);
-      setSt(next); setKey('');
-      toast('Сохранено. Проверяю ключ…');
-      const t = await api.post<any>('/telegram/llm-test', {});
-      toast(t.ok ? `✅ Работает: ${t.model}` : `⚠️ ${t.error}`);
-    } finally { setBusy(false); }
-  }
-
-  async function disconnect() {
-    await api.post('/telegram/llm-config', { key: '' });
-    await load();
-    toast('LLM отключён');
-  }
-
-  return (
-    <div className="card mt16" style={{ padding: 16, maxWidth: 480 }}>
-      <b>🧠 Внешний LLM (нейросеть для разбора фраз)</b>
-      {st?.available ? (
-        <div className="small mt8">
-          ✅ Подключён: <b>{st.model}</b>
-          {st.source === 'env' ? <span className="muted"> (через переменные окружения сервера)</span> : null}
-          <div className="flex mt8" style={{ gap: 8 }}>
-            <button className="btn small" onClick={async () => {
-              const t = await api.post<any>('/telegram/llm-test', {});
-              toast(t.ok ? `✅ Работает: ${t.model}` : `⚠️ ${t.error}`);
-            }}>Проверить</button>
-            {st.source !== 'env' && <button className="btn small ghost danger" onClick={disconnect}>Отключить</button>}
-          </div>
-        </div>
-      ) : (
-        <p className="small muted">
-          Без ключа работает встроенный разбор фраз (он уже понимает многое).
-          С ключом сложные фразы разбирает нейросеть — точнее и гибче.<br /><br />
-          Подойдёт ключ <b>OpenAI</b> (platform.openai.com → API keys) или любой
-          OpenAI-совместимый сервис (OpenRouter, DeepSeek, локальная Ollama…).
-          Ключ хранится только в локальной базе — в код и git не попадает.
-        </p>
-      )}
-      <div className="flex mt8" style={{ gap: 8 }}>
-        <input
-          style={{ flex: 1 }}
-          type="password"
-          placeholder={st?.available ? 'Заменить ключ…' : 'API-ключ (sk-…)'}
-          value={key}
-          onChange={e => setKey(e.target.value)}
-        />
-        <button className="btn small" disabled={busy || !key.trim()} onClick={save}>Подключить</button>
-      </div>
-      <button className="btn small ghost mt8" onClick={() => setShowAdv(!showAdv)}>
-        {showAdv ? '▴ Скрыть дополнительно' : '▾ Дополнительно (модель, свой API)'}
-      </button>
-      {showAdv && (
-        <div className="form-grid mt8">
-          <div className="field full"><label>Модель (по умолчанию gpt-4o-mini)</label>
-            <input placeholder="gpt-4o-mini" value={model} onChange={e => setModel(e.target.value)} /></div>
-          <div className="field full"><label>URL API (для OpenRouter/Ollama и т.п.)</label>
-            <input placeholder="https://api.openai.com/v1/chat/completions" value={url} onChange={e => setUrl(e.target.value)} /></div>
-          {(model.trim() || url.trim()) && !key.trim() && (
-            <div className="field full">
-              <button className="btn small" disabled={busy} onClick={save}>Сохранить модель/URL</button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function Stock() {
   const { toast } = useApp();
@@ -769,6 +686,219 @@ function Stock() {
               )}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ---------- Мой аккаунт ----------
+function Account() {
+  const { user, logout, setUser, toast } = useApp();
+  const [oldPassword, setOld] = useState('');
+  const [newPassword, setNew] = useState('');
+  const [repeat, setRepeat] = useState('');
+
+  async function change() {
+    if (newPassword !== repeat) { toast('Пароли не совпадают'); return; }
+    try {
+      const res = await api.post<{ user: UserT }>('/auth/password', { old_password: oldPassword, new_password: newPassword });
+      setUser(res.user);
+      setOld(''); setNew(''); setRepeat('');
+      toast('Пароль изменён ✓');
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  }
+
+  return (
+    <div>
+      <div className="page-title"><h1>🔑 Мой аккаунт</h1></div>
+      <div className="card" style={{ padding: 16, maxWidth: 420 }}>
+        <div className="small muted">Логин</div>
+        <b>{user?.login}</b>
+        <div className="small muted mt8">Имя</div>
+        <b>{user?.name || '—'}</b>
+        <div className="small muted mt8">Права</div>
+        <b>{user?.role === 'admin' ? 'администратор' : 'пользователь'}</b>
+      </div>
+
+      <div className="card mt16" style={{ padding: 16, maxWidth: 420 }}>
+        <b>Сменить пароль</b>
+        <div className="form-grid mt8">
+          <div className="field full"><label>Текущий пароль</label>
+            <input type="password" value={oldPassword} onChange={e => setOld(e.target.value)} /></div>
+          <div className="field full"><label>Новый пароль</label>
+            <input type="password" value={newPassword} onChange={e => setNew(e.target.value)} /></div>
+          <div className="field full"><label>Повторите пароль</label>
+            <input type="password" value={repeat} onChange={e => setRepeat(e.target.value)} /></div>
+        </div>
+        <button className="btn primary mt12" disabled={!oldPassword || !newPassword} onClick={change}>Сохранить пароль</button>
+      </div>
+
+      {user?.role === 'admin' && <BackupCard />}
+
+      <button className="btn mt16" onClick={logout}>Выйти из аккаунта</button>
+    </div>
+  );
+}
+
+// ---------- Резервная копия базы (только администратор) ----------
+type StorageStatus = { enabled: boolean; ok: boolean; message: string; bucket?: string; last_snapshot_at?: string | null };
+
+function BackupCard() {
+  const { toast } = useApp();
+  const [info, setInfo] = useState<{ tasks: number; projects: number; notes: number; backups: { name: string; created_at: string }[] } | null>(null);
+  const [storage, setStorage] = useState<StorageStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+  useEffect(() => { api.get<any>('/admin/info').then(setInfo).catch(() => {}); }, []);
+  useEffect(() => { api.get<StorageStatus>('/admin/storage').then(setStorage).catch(() => {}); }, []);
+  const last = info?.backups?.[0];
+
+  return (
+    <div className="card mt16" style={{ padding: 16, maxWidth: 420 }}>
+      <b>💾 Резервная копия</b>
+      <p className="small muted">
+        Все ваши данные — один файл. Скачайте его и сохраните на компьютер:
+        если что-то случится с сервером, из этого файла всё восстанавливается.
+        {last ? ` Последняя копия на сервере: ${last.name}.` : ''}
+      </p>
+      <div className="flex wrap">
+        <button className="btn primary small" onClick={() => { window.location.href = '/api/admin/backups/latest/download'; }}>
+          Скачать копию
+        </button>
+        <button className="btn small" onClick={async () => {
+          try { await api.post('/admin/backups', {}); const fresh = await api.get<any>('/admin/info'); setInfo(fresh); toast('Копия создана на сервере'); }
+          catch (e) { toast((e as Error).message); }
+        }}>Создать копию сейчас</button>
+      </div>
+      {info && (
+        <div className="small muted mt8">
+          В базе: задач {info.tasks}, проектов {info.projects}, заметок {info.notes}.
+          Копии создаются автоматически раз в сутки.
+        </div>
+      )}
+
+      <div className="divider" />
+      <b>☁️ Облачное хранилище</b>
+      <p className="small muted">
+        {storage
+          ? (storage.enabled
+              ? `${storage.ok ? '✅' : '⚠️'} ${storage.message}${storage.last_snapshot_at ? ` · последний снимок: ${new Date(storage.last_snapshot_at).toLocaleString('ru-RU')}` : ''}`
+              : '⚠️ Хранилище не подключено: данные живут только на диске сервера.')
+          : 'Проверяю…'}
+      </p>
+      <div className="flex wrap">
+        <button className="btn small" disabled={checking} onClick={async () => {
+          setChecking(true);
+          try { setStorage(await api.get<StorageStatus>('/admin/storage')); toast('Проверил связь с хранилищем'); }
+          catch (e) { toast((e as Error).message); }
+          finally { setChecking(false); }
+        }}>{checking ? 'Проверяю…' : 'Проверить связь'}</button>
+        {storage?.enabled && (
+          <button className="btn small" onClick={async () => {
+            try { await api.post('/admin/storage/snapshot', {}); setStorage(await api.get<StorageStatus>('/admin/storage')); toast('Копия отправлена в облако ✓'); }
+            catch (e) { toast((e as Error).message); }
+          }}>Сохранить в облако сейчас</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Пользователи (только администратор) ----------
+function Users() {
+  const { user, toast } = useApp();
+  const [list, setList] = useState<UserT[]>([]);
+  const [form, setForm] = useState<{ login: string; name: string; password: string; role: 'admin' | 'user' } | null>(null);
+  const [error, setError] = useState('');
+
+  const load = () => api.get<UserT[]>('/auth/users').then(setList).catch(() => setList([]));
+  useEffect(() => { load(); }, []);
+
+  if (user?.role !== 'admin') {
+    return <div className="empty">Раздел доступен только администратору.</div>;
+  }
+
+  async function create() {
+    if (!form) return;
+    setError('');
+    try {
+      await api.post('/auth/users', form);
+      setForm(null); await load(); toast('Пользователь создан');
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function resetPassword(u: UserT) {
+    const pass = prompt(`Новый пароль для «${u.login}»:`);
+    if (!pass) return;
+    try {
+      await api.patch(`/auth/users/${u.id}`, { password: pass });
+      toast('Пароль обновлён — передайте его пользователю');
+    } catch (e) { toast((e as Error).message); }
+  }
+
+  return (
+    <div>
+      <div className="page-title">
+        <div>
+          <h1>👤 Пользователи</h1>
+          <div className="sub">Публичной регистрации нет — аккаунты создаёте только вы</div>
+        </div>
+        <button className="btn primary" onClick={() => setForm({ login: '', name: '', password: '', role: 'user' })}>+ Пользователь</button>
+      </div>
+
+      {list.map(u => (
+        <div key={u.id} className="card" style={{ padding: 14, marginBottom: 8 }}>
+          <div className="flex" style={{ justifyContent: 'space-between' }}>
+            <div>
+              <b>{u.name || u.login}</b> <span className="muted small">@{u.login}</span>
+              <div className="small muted">
+                {u.role === 'admin' ? '👑 администратор' : 'пользователь'}
+                {!u.active ? ' · отключён' : ''}
+                {u.must_change_password ? ' · пароль временный' : ''}
+              </div>
+            </div>
+            <div className="row-actions">
+              <button className="btn small" onClick={() => resetPassword(u)}>Сменить пароль</button>
+              {u.id !== user?.id && (
+                <button className="btn small ghost danger" onClick={async () => {
+                  if (!confirm(`Удалить «${u.login}» вместе со всеми его задачами и проектами?`)) return;
+                  try { await api.del(`/auth/users/${u.id}`); await load(); toast('Удалён'); }
+                  catch (e) { toast((e as Error).message); }
+                }}>Удалить</button>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {form && (
+        <div className="overlay" onClick={() => setForm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-head"><h2>Новый пользователь</h2><button className="x" onClick={() => setForm(null)}>✕</button></div>
+            <div className="form-grid">
+              <div className="field"><label>Логин (латиницей)</label>
+                <input autoFocus value={form.login} onChange={e => setForm({ ...form, login: e.target.value })} placeholder="sergey" /></div>
+              <div className="field"><label>Имя</label>
+                <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Мастер Сергей" /></div>
+              <div className="field"><label>Пароль</label>
+                <input value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
+              <div className="field"><label>Права</label>
+                <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value as 'admin' | 'user' })}>
+                  <option value="user">Пользователь</option>
+                  <option value="admin">Администратор</option>
+                </select></div>
+            </div>
+            {error && <div className="login-error">{error}</div>}
+            <p className="small muted mt8">
+              У каждого пользователя свои задачи, проекты, заметки, напоминания и свой Telegram-бот.
+            </p>
+            <div className="flex mt16" style={{ justifyContent: 'flex-end' }}>
+              <button className="btn primary" onClick={create}>Создать</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

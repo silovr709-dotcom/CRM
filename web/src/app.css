@@ -465,3 +465,99 @@ input, select, textarea { background: var(--input-bg); border-color: var(--borde
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 28%, transparent); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ============ вход и аккаунты ============ */
+.login-screen {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: 20px; background: var(--bg);
+}
+.login-card { width: 100%; max-width: 380px; padding: 28px 24px; }
+.login-card .brand { display: flex; align-items: center; gap: 8px; font-family: var(--font-display); font-size: 22px; font-weight: 800; }
+.login-error {
+  margin-top: 12px; padding: 9px 12px; border-radius: 10px;
+  background: var(--red-soft); color: var(--red); font-size: 13px;
+}
+.sidebar-user {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.12);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 13px; color: rgba(255,255,255,0.75);
+}
+.sidebar-user .btn { color: inherit; }
+.kbd {
+  margin-left: auto; font-size: 10.5px; padding: 2px 6px; border-radius: 6px;
+  background: rgba(255,255,255,0.14); letter-spacing: 0.4px;
+}
+
+/* ============ глобальный поиск ============ */
+.search-overlay { align-items: flex-start; padding-top: 8vh; }
+.search-box { width: min(620px, 94vw); padding: 0; overflow: hidden; }
+.search-input-row { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.search-input-row input { flex: 1; border: none; outline: none; font-size: 16px; background: transparent; padding: 4px 0; }
+.search-ico { font-size: 16px; }
+.search-results { max-height: 60vh; overflow: auto; padding-bottom: 8px; }
+.search-group { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--faint); padding: 12px 16px 4px; font-weight: 700; }
+.search-item {
+  display: flex; width: 100%; justify-content: space-between; gap: 12px; align-items: center;
+  padding: 9px 16px; background: none; border: none; text-align: left; font-size: 14px; color: var(--text); cursor: pointer;
+}
+.search-item:hover { background: var(--accent-soft); }
+
+/* ============ тост с отменой ============ */
+.toast { display: flex; align-items: center; gap: 14px; }
+.toast-undo {
+  background: rgba(255,255,255,0.18); color: inherit; border: none; cursor: pointer;
+  padding: 5px 11px; border-radius: 8px; font-size: 13px; font-weight: 650; white-space: nowrap;
+}
+.toast-undo:hover { background: rgba(255,255,255,0.3); }
+
+/* ============ свайпы ============ */
+.swipe-wrap { position: relative; overflow: hidden; }
+.swipe-wrap .task-row { transition: transform 0.12s ease-out; background: var(--card); position: relative; z-index: 1; }
+.swipe-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; padding: 0 18px;
+  font-size: 13.5px; font-weight: 700; z-index: 0;
+}
+.swipe-hint.left { justify-content: flex-start; background: var(--green-soft); color: var(--green); }
+.swipe-hint.right { justify-content: flex-end; background: var(--amber-soft, #fef3c7); color: var(--amber); }
+
+/* ============ деньги ============ */
+.money-summary {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; margin-bottom: 14px; font-size: 14px;
+}
+.money-summary b { font-size: 18px; color: var(--red); font-family: var(--font-display); }
+.money-card {
+  display: flex; flex-wrap: wrap; gap: 18px; align-items: center;
+  padding: 14px 16px; margin-bottom: 16px;
+}
+.money-card > div { display: flex; flex-direction: column; gap: 2px; }
+.money-card .lbl { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.money-card b { font-size: 17px; font-family: var(--font-display); }
+.money-card b.ok { color: var(--green); }
+.money-card b.danger { color: var(--red); }
+.money-card .btn { margin-left: auto; }
+
+/* ============ конвейер заказа ============ */
+.stages { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.stages .stage {
+  padding: 6px 13px; border-radius: 16px; border: 1px solid var(--border);
+  background: var(--card); font-size: 12.5px; color: var(--muted); cursor: pointer; font-weight: 600;
+}
+.stages .stage.done { background: var(--green-soft); color: var(--green); border-color: transparent; }
+.stages .stage.on { background: var(--accent); color: #fff; border-color: transparent; }
+
+/* ============ маршрут дня ============ */
+.route-card { padding: 16px; }
+.route-depart { font-size: 14px; margin-bottom: 10px; }
+.route-list { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.route-list li { display: flex; gap: 12px; align-items: flex-start; }
+.route-time { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 46px; color: var(--accent-ink); }
+.route-body { display: flex; flex-direction: column; gap: 2px; }
+
+/* ============ телефон и теги ============ */
+.phone-link { color: var(--accent-ink); text-decoration: none; font-weight: 600; }
+.phone-link:hover { text-decoration: underline; }
+.chip.tag { background: var(--accent-soft); color: var(--accent-ink); }
+.chip.tag.clickable { cursor: pointer; border: none; }
+.chip.tag.on { background: var(--accent); color: #fff; }
+.tag-bar { margin-bottom: 12px; gap: 6px; }

@@ -1,0 +1,17 @@
+# Настройки развёртывания на Amvera Cloud (https://cloud.amvera.ru)
+# Приложение собирается из Dockerfile в корне репозитория.
+meta:
+  environment: docker
+  toolchain:
+    name: docker
+
+build:
+  dockerfile: Dockerfile
+  skip: false
+
+run:
+  # Постоянное хранилище: база SQLite и загруженные файлы лежат в /data
+  # и НЕ пропадают при перезапуске и пересборке приложения.
+  persistenceMount: /data
+  # Порт, который слушает сервер внутри контейнера (см. ENV PORT в Dockerfile)
+  containerPort: 3000

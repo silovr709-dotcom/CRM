@@ -16,14 +16,21 @@ const MODES: { id: Mode; label: string }[] = [
 export default function Calendar() {
   const { version, openTask, refresh, toast } = useApp();
   const [dragOver, setDragOver] = useState<string | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
 
   async function dropOn(date: string, e: React.DragEvent) {
     e.preventDefault();
     setDragOver(null);
     const id = e.dataTransfer.getData('text/task-id');
     if (!id) return;
+    const before = tasks.find(t => t.id === Number(id));
     await api.patch(`/tasks/${id}`, { date });
-    toast(`Перенесено на ${humanDate(date)}`);
+    toast(`Перенесено на ${humanDate(date)}`, before ? {
+      run: async () => {
+        await api.patch(`/tasks/${id}`, { date: before.date, time: before.time });
+        refresh();
+      },
+    } : undefined);
     refresh();
   }
   const dropProps = (d: string) => ({
@@ -33,7 +40,6 @@ export default function Calendar() {
   });
   const [mode, setMode] = useState<Mode>('day');
   const [anchor, setAnchor] = useState(todayStr());
-  const [tasks, setTasks] = useState<Task[]>([]);
 
   const range = useMemo(() => {
     if (mode === 'day') return { from: anchor, to: anchor };
