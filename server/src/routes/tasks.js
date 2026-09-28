@@ -1,9 +1,17 @@
 import { Router } from 'express';
 import * as tasks from '../services/tasks.js';
+import { smartCreate } from '../services/nl/quick.js';
 
 const r = Router();
 
 r.get('/', (req, res) => res.json(tasks.listTasks(req.query)));
+
+// Умная строка: «завтра в 10:00 замер у Петровых» → готовая задача
+r.post('/smart', (req, res) => {
+  const text = String(req.body.text || req.body.title || '').trim();
+  if (!text) return res.status(400).json({ error: 'text required' });
+  res.status(201).json(smartCreate(text, { project_id: req.body.project_id ?? null }));
+});
 r.get('/:id', (req, res) => {
   const t = tasks.getTask(req.params.id);
   if (!t) return res.status(404).json({ error: 'not found' });

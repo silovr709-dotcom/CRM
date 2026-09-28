@@ -1,13 +1,23 @@
 const BASE = '/api';
 
+// 401 → показываем экран входа (ловится в store)
+export const AUTH_EVENT = 'myday-unauthorized';
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     ...options,
   });
+  if (res.status === 401) {
+    window.dispatchEvent(new Event(AUTH_EVENT));
+    throw new Error('Нужно войти');
+  }
   if (!res.ok) {
+    let message = `Ошибка ${res.status}`;
     const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
+    try { message = JSON.parse(body).error || message; } catch { /* текст как есть */ }
+    throw new Error(message);
   }
   return res.json();
 }
@@ -46,6 +56,11 @@ export function humanDate(dateStr: string | null, withWd = true): string {
   const dt = new Date(y, m - 1, d);
   const base = `${d} ${MONTHS[m - 1]}${y !== new Date().getFullYear() ? ' ' + y : ''}`;
   return withWd ? `${base}, ${WD_SHORT[dt.getDay()]}` : base;
+}
+
+export function money(v: number | null | undefined): string {
+  if (v == null) return '';
+  return `${Math.round(v).toLocaleString('ru-RU')} ₽`;
 }
 
 export function humanDuration(min: number | null | undefined): string {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, humanDate } from '../api';
+import { api, humanDate, money } from '../api';
 import { typeIcon } from '../meta';
 import { useApp, useRoute } from '../store';
 import type { Project } from '../types';
@@ -24,6 +24,10 @@ export default function Projects() {
     toast('Проект создан');
   }
 
+  const totalDebt = projects
+    .filter(p => ['active', 'paused'].includes(p.status))
+    .reduce((sum, p) => sum + (p.debt ?? 0), 0);
+
   const statusChip = (p: Project) =>
     p.status === 'paused' ? <span className="chip amber">⏸ пауза{p.pause_until ? ` до ${humanDate(p.pause_until)}` : ''}</span>
     : p.status === 'done' ? <span className="chip green">завершён</span>
@@ -39,6 +43,13 @@ export default function Projects() {
           <button className="btn primary" onClick={() => setCreating(true)}>+ Проект</button>
         </div>
       </div>
+
+      {totalDebt > 0 && (
+        <div className="card money-summary">
+          <span>💰 Клиенты должны всего</span>
+          <b>{money(totalDebt)}</b>
+        </div>
+      )}
 
       {creating && (
         <div className="card" style={{ padding: 14, marginBottom: 14 }}>
@@ -63,7 +74,13 @@ export default function Projects() {
                 <h3>{p.icon ? p.icon + ' ' : ''}{p.name}</h3>
                 {statusChip(p)}
               </div>
-              {p.deadline && <span className="chip amber small">до {humanDate(p.deadline)}</span>}
+              <div className="flex wrap">
+                {p.stage && <span className="chip accent small">{p.stage}</span>}
+                {p.deadline && <span className="chip amber small">до {humanDate(p.deadline)}</span>}
+                {(p.debt ?? 0) > 0 && <span className="chip red small">должны {money(p.debt!)}</span>}
+                {p.price != null && (p.debt ?? 0) === 0 && <span className="chip green small">оплачено</span>}
+                {p.contact && <span className="chip small">🤝 {p.contact.name}</span>}
+              </div>
               <div className="progress"><div style={{ width: `${p.progress}%`, background: p.color }} /></div>
               <div className="small muted">{p.tasks_done} из {p.tasks_total} задач · {p.progress}%</div>
               {p.next_action ? (

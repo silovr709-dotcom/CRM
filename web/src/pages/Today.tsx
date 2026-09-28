@@ -42,13 +42,25 @@ export default function Today() {
   async function carryOver() {
     if (!v) return;
     const ids = v.evening.undone.map(u => u.id);
+    const from = v.date;
     await api.post('/planner/carry-over', { task_ids: ids, to_date: addDays(todayStr(), 1) });
-    toast(`Перенесено на завтра: ${ids.length}`);
+    toast(`Перенесено на завтра: ${ids.length}`, {
+      run: async () => {
+        await api.post('/planner/carry-over', { task_ids: ids, to_date: from });
+        refresh();
+      },
+    });
     refresh();
   }
 
   async function closeReminder(id: number) {
     await api.patch(`/reminders/${id}`, { status: 'done' });
+    refresh();
+  }
+
+  async function snoozeReminder(id: number, title: string) {
+    await api.post(`/reminders/${id}/snooze`, { minutes: 60 });
+    toast(`💤 «${title}» — напомню через час`);
     refresh();
   }
 
@@ -114,6 +126,52 @@ export default function Today() {
         <button className="btn" onClick={() => openAi('Что я забыл?')}>🤔 Что я забыл?</button>
       </div>
 
+      {/* Маршрут дня */}
+      {v.route && (
+        <div className="section">
+          <div className="section-head"><h3>🚗 Маршрут дня</h3><span className="small muted">{v.route.points.length} точки</span></div>
+          <div className="card route-card">
+            {v.route.departure_time && (
+              <div className="route-depart">Выезд в <b>{v.route.departure_time}</b> <span className="muted small">(дорога ~{v.route.travel_min} мин)</span></div>
+            )}
+            <ol className="route-list">
+              {v.route.points.map(pt => (
+                <li key={pt.task_id}>
+                  <span className="route-time">{pt.time ?? '—'}</span>
+                  <span className="route-body">
+                    <b>{typeIcon(pt.type)} {pt.title}</b>
+                    <span className="muted small">📍 {pt.address}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+            <a className="btn primary" href={v.route.yandex_url} target="_blank" rel="noreferrer">🗺 Открыть в Яндекс.Картах</a>
+          </div>
+        </div>
+      )}
+
+      {/* Проект молчит */}
+      {v.silent_projects.length > 0 && (
+        <div className="section">
+          <div className="section-head"><h3>😴 Проект молчит</h3></div>
+          <div className="card list-plain">
+            {v.silent_projects.map(sp => (
+              <div key={sp.id} className="task-row" onClick={() => { location.hash = `/projects/${sp.id}`; }}>
+                <div className="t-body">
+                  <div className="t-title">{sp.icon ? sp.icon + ' ' : '📁 '}{sp.name}</div>
+                  <div className="t-meta">
+                    <span className="chip amber">нет движения {sp.days} дн.</span>
+                    {sp.stage && <span className="chip">этап: {sp.stage}</span>}
+                    <span className="muted">последнее: {humanDate(sp.last_activity)}</span>
+                  </div>
+                </div>
+                <button className="btn small" onClick={e => { e.stopPropagation(); openTask({ project_id: sp.id }); }}>+ Задача</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Требует внимания */}
       {v.attention.length > 0 && (
         <div className="section">
@@ -135,7 +193,10 @@ export default function Today() {
                   <div className="t-title">⏰ {r.title}</div>
                   <div className="t-meta"><span>{humanDate(r.remind_date)}{r.remind_time ? ` в ${r.remind_time}` : ''}</span></div>
                 </div>
-                <button className="btn small" onClick={() => closeReminder(r.id)}>OK</button>
+                <div className="row-actions">
+                  <button className="btn small" onClick={() => snoozeReminder(r.id, r.title)}>💤 Через час</button>
+                  <button className="btn small" onClick={() => closeReminder(r.id)}>OK</button>
+                </div>
               </div>
             ))}
           </div>

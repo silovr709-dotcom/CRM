@@ -1,10 +1,20 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
-import { api } from './api';
-import type { Category, Project, Task, Contact } from './types';
+import { api, AUTH_EVENT } from './api';
+import type { Category, Project, Task, Contact, User } from './types';
+
+export interface ToastState {
+  msg: string;
+  undoLabel?: string;
+  onUndo?: () => void | Promise<void>;
+}
 
 interface AppCtx {
   version: number;
   refresh: () => void;
+  user: User | null;
+  setUser: (u: User | null) => void;
+  logout: () => Promise<void>;
+  authReady: boolean;
   categories: Category[];
   projects: Project[];
   contacts: Contact[];
@@ -17,8 +27,11 @@ interface AppCtx {
   closeAi: () => void;
   quickOpen: boolean;
   setQuickOpen: (v: boolean) => void;
-  toast: (msg: string) => void;
-  toastMsg: string | null;
+  searchOpen: boolean;
+  setSearchOpen: (v: boolean) => void;
+  toast: (msg: string, undo?: { label?: string; run: () => void | Promise<void> }) => void;
+  toastState: ToastState | null;
+  closeToast: () => void;
   theme: 'light' | 'dark';
   toggleTheme: () => void;
 }
@@ -28,6 +41,8 @@ export const useApp = () => useContext(Ctx);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [version, setVersion] = useState(0);
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -35,7 +50,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrefill, setAiPrefill] = useState('');
   const [quickOpen, setQuickOpen] = useState(false);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [toastState, setToastState] = useState<ToastState | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('theme');
     if (saved === 'light' || saved === 'dark') return saved;
@@ -51,19 +67,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const toggleTheme = useCallback(() => setTheme(t => (t === 'dark' ? 'light' : 'dark')), []);
 
+  // Кто вошёл
   useEffect(() => {
+    api.get<{ user: User }>('/auth/me')
+      .then(r => setUser(r.user))
+      .catch(() => setUser(null))
+      .finally(() => setAuthReady(true));
+    const onUnauthorized = () => setUser(null);
+    window.addEventListener(AUTH_EVENT, onUnauthorized);
+    return () => window.removeEventListener(AUTH_EVENT, onUnauthorized);
+  }, []);
+
+  const logout = useCallback(async () => {
+    await api.post('/auth/logout').catch(() => {});
+    setUser(null);
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
     api.get<Category[]>('/categories').then(setCategories).catch(() => {});
     api.get<Project[]>('/projects').then(setProjects).catch(() => {});
     api.get<Contact[]>('/contacts').then(setContacts).catch(() => {});
-  }, [version]);
+  }, [version, user]);
 
-  const toast = useCallback((msg: string) => {
-    setToastMsg(msg);
-    window.setTimeout(() => setToastMsg(null), 3200);
+  const toast = useCallback((msg: string, undo?: { label?: string; run: () => void | Promise<void> }) => {
+    setToastState({ msg, undoLabel: undo?.label ?? 'Отменить', onUndo: undo?.run });
+    const delay = undo ? 7000 : 3200;
+    const id = window.setTimeout(() => setToastState(cur => (cur && cur.msg === msg ? null : cur)), delay);
+    return () => window.clearTimeout(id);
   }, []);
+
+  const closeToast = useCallback(() => setToastState(null), []);
 
   // Живые напоминания: раз в минуту проверяем, не подошло ли время
   useEffect(() => {
+    if (!user) return;
     const notified = new Set<number>(JSON.parse(sessionStorage.getItem('notified') || '[]'));
     const check = async () => {
       try {
@@ -76,7 +114,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (due && !notified.has(r.id)) {
             notified.add(r.id);
             sessionStorage.setItem('notified', JSON.stringify([...notified]));
-            toast(`⏰ Напоминание: ${r.title}`);
+            // тост с кнопкой «💤 Через час»
+            setToastState({
+              msg: `⏰ Напоминание: ${r.title}`,
+              undoLabel: '💤 Через час',
+              onUndo: async () => {
+                await api.post(`/reminders/${r.id}/snooze`, { minutes: 60 });
+                notified.delete(r.id);
+                sessionStorage.setItem('notified', JSON.stringify([...notified]));
+                refresh();
+              },
+            });
+            window.setTimeout(() => setToastState(cur => (cur && cur.msg.includes(r.title) ? null : cur)), 15000);
             // системное уведомление, если пользователь разрешил
             if ('Notification' in window && Notification.permission === 'granted') {
               try { new Notification('⏰ Напоминание', { body: r.title, icon: '/icons/icon-192.png' }); } catch { /* ignore */ }
@@ -89,19 +138,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     check();
     const iv = window.setInterval(check, 60000);
     return () => window.clearInterval(iv);
-  }, [toast]);
+  }, [user, refresh]);
 
   const value = useMemo<AppCtx>(() => ({
-    version, refresh, categories, projects, contacts,
+    version, refresh, user, setUser, logout, authReady,
+    categories, projects, contacts,
     editingTask, openTask: setEditingTask,
     aiOpen,
     aiPrefill,
     openAi: (p?: string) => { setAiPrefill(p || ''); setAiOpen(true); },
     closeAi: () => setAiOpen(false),
     quickOpen, setQuickOpen,
-    toast, toastMsg,
+    searchOpen, setSearchOpen,
+    toast, toastState, closeToast,
     theme, toggleTheme,
-  }), [version, categories, projects, contacts, editingTask, aiOpen, aiPrefill, quickOpen, toastMsg, theme]);
+  }), [version, user, authReady, categories, projects, contacts, editingTask, aiOpen, aiPrefill,
+    quickOpen, searchOpen, toastState, theme, refresh, logout, toast, closeToast, toggleTheme]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

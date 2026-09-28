@@ -12,13 +12,15 @@ interface Msg {
   chosenTask?: number;
 }
 
-const SUGGESTIONS = [
+const DEFAULT_SUGGESTIONS = [
   'Что у меня сегодня?',
+  'Что на неделе?',
   'Что я забыл?',
   'Что просрочено?',
+  'Статистика недели',
+  'Итоги месяца',
   'Распланируй мой день',
-  'Что мне нужно купить?',
-  'Когда у меня есть три свободных часа?',
+  'Что ты умеешь?',
 ];
 
 export default function AiModal() {
@@ -27,6 +29,7 @@ export default function AiModal() {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>(DEFAULT_SUGGESTIONS);
   const bottomRef = useRef<HTMLDivElement>(null);
   const recRef = useRef<{ stop: () => void } | null>(null);
 
@@ -64,7 +67,7 @@ export default function AiModal() {
   useEffect(() => {
     if (aiOpen) {
       if (!msgs.length) {
-        setMsgs([{ role: 'bot', text: 'Опишите обычным языком, что нужно сделать — я разберу это на задачи и предложу план. Или задайте вопрос о ваших делах.' }]);
+        setMsgs([{ role: 'bot', text: 'Привет! Опишите обычным языком, что нужно сделать — разберу на задачи и предложу план. Или спросите о делах: «что на неделе», «итоги месяца», «когда монтаж». Список возможностей — «что ты умеешь».' }]);
       }
       if (aiPrefill) {
         // фраза передана извне (быстрое добавление / кнопки «Сегодня») — отправляем сразу
@@ -72,6 +75,12 @@ export default function AiModal() {
       }
     }
   }, [aiOpen]);
+
+  useEffect(() => {
+    api.get<{ suggestions: string[] }>('/assistant/suggestions')
+      .then(r => { if (r.suggestions?.length) setSuggestions(r.suggestions); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs]);
 
@@ -275,7 +284,7 @@ export default function AiModal() {
         </div>
 
         <div className="ai-suggest">
-          {SUGGESTIONS.map(s => <button key={s} onClick={() => send(s)}>{s}</button>)}
+          {suggestions.map(s => <button key={s} onClick={() => send(s)}>{s}</button>)}
         </div>
         <div className="ai-input">
           <input

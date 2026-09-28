@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { api, humanDate, todayStr, addDays } from '../api';
+import { api, humanDate, todayStr, addDays, money } from '../api';
 import { useApp, useRoute } from '../store';
 import TaskRow from '../components/TaskRow';
 import Attachments from '../components/Attachments';
-import type { Project, Template } from '../types';
+import type { Project, Template, Contact } from '../types';
+import { STAGES } from '../types';
 
 const ACTIONS: Record<string, string> = {
   created: 'создано', updated: 'изменено', rescheduled: 'перенесено', completed: 'выполнено',
@@ -20,10 +21,13 @@ export default function ProjectView({ id }: { id: number }) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [tplPick, setTplPick] = useState('');
   const [showDone, setShowDone] = useState(false);
+  const [moneyForm, setMoneyForm] = useState<{ price: string; prepaid: string; contact_id: string } | null>(null);
+  const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
     api.get<Project>(`/projects/${id}`).then(setP).catch(() => {});
     api.get<Template[]>('/templates').then(setTemplates).catch(() => {});
+    api.get<Contact[]>('/contacts').then(setContacts).catch(() => {});
   }, [id, version]);
 
   if (!p) return <div className="empty">Загрузка…</div>;
@@ -32,6 +36,23 @@ export default function ProjectView({ id }: { id: number }) {
     await api.patch(`/projects/${id}`, { status, pause_until: pauseUntil ?? null });
     refresh();
     toast(status === 'paused' ? 'Проект на паузе' : status === 'active' ? 'Проект возобновлён' : 'Статус обновлён');
+  }
+
+  async function setStage(stage: string) {
+    const next = p!.stage === stage ? null : stage;
+    await api.patch(`/projects/${id}`, { stage: next });
+    refresh();
+    toast(next ? `Этап: ${next}` : 'Этап снят');
+  }
+
+  async function saveMoney() {
+    if (!moneyForm) return;
+    await api.patch(`/projects/${id}`, {
+      price: moneyForm.price === '' ? null : Number(moneyForm.price),
+      prepaid: moneyForm.prepaid === '' ? null : Number(moneyForm.prepaid),
+      contact_id: moneyForm.contact_id === '' ? null : Number(moneyForm.contact_id),
+    });
+    setMoneyForm(null); refresh(); toast('Сохранено');
   }
 
   async function addNote() {
@@ -84,6 +105,65 @@ export default function ProjectView({ id }: { id: number }) {
           <div className="next-action mt8" style={{ color: 'var(--amber)' }}>⚠ Нет следующего действия — проект может «потеряться». Добавьте задачу.</div>
         )}
       </div>
+
+      {/* Конвейер заказа */}
+      <div className="stages">
+        {STAGES.map((st, i) => {
+          const current = p!.stage ? STAGES.indexOf(p!.stage as typeof STAGES[number]) : -1;
+          const cls = current >= 0 && i < current ? 'stage done' : p!.stage === st ? 'stage on' : 'stage';
+          return (
+            <button key={st} className={cls} onClick={() => setStage(st)} title="Нажмите, чтобы отметить этап">
+              {st}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Деньги по заказу */}
+      <div className="card money-card">
+        <div><span className="lbl">Сумма заказа</span><b>{p.price != null ? money(p.price) : '—'}</b></div>
+        <div><span className="lbl">Аванс / оплачено</span><b className="ok">{p.prepaid != null ? money(p.prepaid) : '—'}</b></div>
+        <div>
+          <span className="lbl">Остаток</span>
+          <b className={(p.debt ?? 0) > 0 ? 'danger' : 'ok'}>
+            {p.price == null ? '—' : (p.debt ?? 0) > 0 ? money(p.debt!) : 'оплачено ✅'}
+          </b>
+        </div>
+        <button className="btn small" onClick={() => setMoneyForm({
+          price: p!.price == null ? '' : String(p!.price),
+          prepaid: p!.prepaid == null ? '' : String(p!.prepaid),
+          contact_id: p!.contact_id == null ? '' : String(p!.contact_id),
+        })}>Изменить</button>
+      </div>
+
+      {p.contact && (
+        <div className="small muted" style={{ margin: '-6px 0 14px' }}>
+          Клиент: <a href={`#/clients/${p.contact.id}`} style={{ color: 'var(--accent-ink)' }}>{p.contact.name}</a>
+          {p.contact.phone && <> · <a className="phone-link" href={`tel:${p.contact.phone.replace(/[^\d+]/g, '')}`}>📞 {p.contact.phone}</a></>}
+        </div>
+      )}
+
+      {moneyForm && (
+        <div className="overlay" onClick={() => setMoneyForm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-head"><h2>Деньги по заказу</h2><button className="x" onClick={() => setMoneyForm(null)}>✕</button></div>
+            <div className="form-grid">
+              <div className="field"><label>Сумма заказа, ₽</label>
+                <input inputMode="numeric" value={moneyForm.price} onChange={e => setMoneyForm({ ...moneyForm, price: e.target.value.replace(/[^\d.]/g, '') })} /></div>
+              <div className="field"><label>Аванс / оплачено, ₽</label>
+                <input inputMode="numeric" value={moneyForm.prepaid} onChange={e => setMoneyForm({ ...moneyForm, prepaid: e.target.value.replace(/[^\d.]/g, '') })} /></div>
+              <div className="field full"><label>Клиент</label>
+                <select value={moneyForm.contact_id} onChange={e => setMoneyForm({ ...moneyForm, contact_id: e.target.value })}>
+                  <option value="">— не указан —</option>
+                  {contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select></div>
+            </div>
+            <div className="flex mt16" style={{ justifyContent: 'flex-end' }}>
+              <button className="btn primary" onClick={saveMoney}>Сохранить</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="tab-pills">
         <button className={tab === 'tasks' ? 'on' : ''} onClick={() => setTab('tasks')}>Задачи ({openTasks.length})</button>

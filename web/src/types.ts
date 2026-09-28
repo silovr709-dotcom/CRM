@@ -73,12 +73,69 @@ export interface StockMove {
   id: number; item_id: number; delta: number; reason: string; project_name?: string; created_at: string;
 }
 
+export interface User {
+  id: number;
+  login: string;
+  name: string;
+  role: 'admin' | 'user';
+  must_change_password?: number;
+  active?: number;
+  created_at?: string;
+}
+
+export const STAGES = ['Замер', 'Проект', 'Договор', 'Производство', 'Доставка', 'Монтаж', 'Сдано'] as const;
+export type Stage = typeof STAGES[number];
+
+export interface SearchResult {
+  query: string;
+  tasks: { id: number; title: string; type: string; status: string; date: string | null; time: string | null; project_id: number | null }[];
+  projects: { id: number; name: string; status: string; color: string; icon: string; stage: string | null }[];
+  notes: { id: number; title: string; content: string; project_id: number | null }[];
+  contacts: { id: number; name: string; phone: string }[];
+}
+
+export interface RoutePoint {
+  order: number; task_id: number; title: string; time: string | null; address: string; type: string;
+}
+
+export interface DayRoute {
+  departure_time: string | null;
+  travel_min: number;
+  points: RoutePoint[];
+  yandex_url: string;
+}
+
+export interface SilentProject {
+  id: number; name: string; color: string; icon: string; stage: string | null; days: number; last_activity: string;
+}
+
+export interface ClientFull {
+  id: number;
+  name: string;
+  phone: string;
+  email: string;
+  address: string;
+  projects: (Project & { debt: number })[];
+  tasks: Task[];
+  notes: Note[];
+  files: Attachment[];
+  debt: number;
+  total_price: number;
+  total_paid: number;
+}
+
 export interface Project {
   id: number;
   name: string;
   description: string;
   status: 'active' | 'paused' | 'done' | 'archived';
   deadline: string | null;
+  price: number | null;
+  prepaid: number | null;
+  debt?: number;
+  stage: string | null;
+  contact_id: number | null;
+  contact?: { id: number; name: string; phone: string } | null;
   color: string;
   icon: string;
   pause_until: string | null;
@@ -116,7 +173,10 @@ export interface Reminder {
 }
 
 export interface Category { id: number; name: string; color: string; icon: string; builtin: number; }
-export interface Contact { id: number; name: string; phone: string; email: string; address: string; notes: string; }
+export interface Contact {
+  id: number; name: string; phone: string; email: string; address: string; notes: string;
+  projects_count?: number; debt?: number; open_tasks?: number;
+}
 
 export interface TemplateStep { id: number; ord: number; title: string; type: string; offset_days: number; workdays: number; duration_min: number | null; depends_prev: number; }
 export interface Template { id: number; name: string; description: string; builtin: number; steps: TemplateStep[]; }
@@ -150,6 +210,8 @@ export interface TodayView {
   attention: Task[];
   reminders: Reminder[];
   free_min: number;
+  route: DayRoute | null;
+  silent_projects: SilentProject[];
   free_slots: { start: string; end: string; minutes: number }[];
   briefing: {
     events_count: number; tasks_count: number; trips_count: number; overdue_count: number;
@@ -165,6 +227,7 @@ export interface PlanItem {
 }
 
 export interface AiResponse {
+  hints?: string[];
   kind: 'plan' | 'answer' | 'command' | 'plan_day' | 'unload';
   text?: string;
   summary?: string;

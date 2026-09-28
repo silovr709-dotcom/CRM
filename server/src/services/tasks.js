@@ -1,4 +1,5 @@
 import { db } from '../db.js';
+import { uid } from '../ctx.js';
 import { log } from './activity.js';
 import { nextOccurrence } from './recurrence.js';
 import { runAutomations } from './automations.js';
@@ -33,11 +34,11 @@ export function attachMeta(tasks) {
     FROM tasks WHERE parent_id IN (${ph}) GROUP BY parent_id`).all(...ids);
   const projIds = [...new Set(tasks.map(t => t.project_id).filter(Boolean))];
   const projects = projIds.length
-    ? db.prepare(`SELECT id, name, color FROM projects WHERE id IN (${projIds.map(() => '?').join(',')})`).all(...projIds)
+    ? db.prepare(`SELECT id, name, color FROM projects WHERE user_id = ? AND id IN (${projIds.map(() => '?').join(',')})`).all(uid(), ...projIds)
     : [];
   const catIds = [...new Set(tasks.map(t => t.category_id).filter(Boolean))];
   const cats = catIds.length
-    ? db.prepare(`SELECT id, name, color, icon FROM categories WHERE id IN (${catIds.map(() => '?').join(',')})`).all(...catIds)
+    ? db.prepare(`SELECT id, name, color, icon FROM categories WHERE user_id = ? AND id IN (${catIds.map(() => '?').join(',')})`).all(uid(), ...catIds)
     : [];
   const pMap = Object.fromEntries(projects.map(p => [p.id, p]));
   const cMap = Object.fromEntries(cats.map(c => [c.id, c]));
@@ -54,8 +55,8 @@ export function attachMeta(tasks) {
 }
 
 export function listTasks(filters = {}) {
-  const where = [];
-  const params = [];
+  const where = ['user_id = ?'];
+  const params = [uid()];
   if (filters.date) { where.push('date = ?'); params.push(filters.date); }
   if (filters.from) { where.push('date >= ?'); params.push(filters.from); }
   if (filters.to) { where.push('date <= ?'); params.push(filters.to); }
@@ -67,9 +68,23 @@ export function listTasks(filters = {}) {
   if (filters.type) { where.push('type = ?'); params.push(filters.type); }
   if (filters.project_id) { where.push('project_id = ?'); params.push(Number(filters.project_id)); }
   if (filters.category_id) { where.push('category_id = ?'); params.push(Number(filters.category_id)); }
+  if (filters.contact_id || (filters.project_ids && filters.project_ids.length)) {
+    const parts = [];
+    if (filters.contact_id) { parts.push('contact_id = ?'); params.push(Number(filters.contact_id)); }
+    if (filters.project_ids?.length) {
+      parts.push(`project_id IN (${filters.project_ids.map(() => '?').join(',')})`);
+      params.push(...filters.project_ids.map(Number));
+    }
+    where.push(parts.join(' OR '));
+  }
   if (filters.search) {
     where.push('(nlower(title) LIKE nlower(?) OR nlower(description) LIKE nlower(?))');
     params.push(`%${filters.search}%`, `%${filters.search}%`);
+  }
+  if (filters.tag) {
+    // теги вида #замер — ищем как подстроку (кириллица корректно через nlower)
+    where.push('nlower(title) LIKE nlower(?)');
+    params.push(`%#${String(filters.tag).replace(/^#/, '')}%`);
   }
   if (filters.overdue) {
     where.push(`status NOT IN ('done','cancelled') AND (
@@ -94,7 +109,7 @@ export function listTasks(filters = {}) {
 }
 
 export function getTask(id) {
-  const row = rowToTask(db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(id)));
+  const row = rowToTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(Number(id), uid()));
   if (!row) return null;
   attachMeta([row]);
   row.subtasks = attachMeta(
@@ -105,7 +120,7 @@ export function getTask(id) {
   row.notes = db.prepare('SELECT * FROM notes WHERE task_id = ? ORDER BY id DESC').all(row.id);
   row.reminders = db.prepare('SELECT * FROM reminders WHERE task_id = ? ORDER BY remind_date, remind_time').all(row.id);
   row.contact = row.contact_id
-    ? db.prepare('SELECT * FROM contacts WHERE id = ?').get(row.contact_id) : null;
+    ? db.prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?').get(row.contact_id, uid()) : null;
   return row;
 }
 
@@ -126,6 +141,7 @@ export function createTask(data, { silent = false } = {}) {
     if (v !== undefined) { cols.push(f); vals.push(v); }
   }
   if (!cols.includes('title')) throw new Error('title is required');
+  cols.push('user_id'); vals.push(uid());
   const res = db.prepare(
     `INSERT INTO tasks (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
   const id = Number(res.lastInsertRowid);
@@ -135,8 +151,8 @@ export function createTask(data, { silent = false } = {}) {
   }
   if (Array.isArray(data.reminders)) {
     for (const r of data.reminders) {
-      db.prepare('INSERT INTO reminders (title, remind_date, remind_time, task_id) VALUES (?, ?, ?, ?)')
-        .run(r.title || data.title, r.remind_date, r.remind_time || null, id);
+      db.prepare('INSERT INTO reminders (title, remind_date, remind_time, task_id, user_id) VALUES (?, ?, ?, ?, ?)')
+        .run(r.title || data.title, r.remind_date, r.remind_time || null, id, uid());
     }
   }
   if (!silent) log('task', id, 'created', data.title);
@@ -146,7 +162,7 @@ export function createTask(data, { silent = false } = {}) {
 }
 
 export function updateTask(id, patch) {
-  const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(id));
+  const existing = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(Number(id), uid());
   if (!existing) return null;
 
   const sets = [];
@@ -183,7 +199,7 @@ export function updateTask(id, patch) {
 }
 
 export function setStatus(id, status) {
-  const t = db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(id));
+  const t = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(Number(id), uid());
   if (!t) return null;
   if (status === 'done') return completeTask(id);
   db.prepare(`UPDATE tasks SET status = ?, completed_at = NULL, updated_at = datetime('now') WHERE id = ?`)
@@ -194,7 +210,7 @@ export function setStatus(id, status) {
 }
 
 export function completeTask(id) {
-  const t = rowToTask(db.prepare('SELECT * FROM tasks WHERE id = ?').get(Number(id)));
+  const t = rowToTask(db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(Number(id), uid()));
   if (!t) return null;
   db.prepare(`UPDATE tasks SET status = 'done', completed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`)
     .run(Number(id));
@@ -239,7 +255,7 @@ export function completeTask(id) {
 }
 
 export function deleteTask(id) {
-  const t = db.prepare('SELECT title FROM tasks WHERE id = ?').get(Number(id));
+  const t = db.prepare('SELECT title FROM tasks WHERE id = ? AND user_id = ?').get(Number(id), uid());
   if (!t) return false;
   db.prepare('DELETE FROM tasks WHERE id = ?').run(Number(id));
   log('task', id, 'deleted', t.title);
@@ -259,8 +275,8 @@ export function removeDependency(taskId, dependsOnId) {
 
 export function findTaskByTitle(fragment) {
   const rows = db.prepare(`
-    SELECT * FROM tasks WHERE status NOT IN ('done','cancelled') AND nlower(title) LIKE nlower(?)
+    SELECT * FROM tasks WHERE user_id = ? AND status NOT IN ('done','cancelled') AND nlower(title) LIKE nlower(?)
     ORDER BY CASE WHEN date IS NULL THEN 1 ELSE 0 END, date LIMIT 5`)
-    .all(`%${fragment}%`).map(rowToTask);
+    .all(uid(), `%${fragment}%`).map(rowToTask);
   return attachMeta(rows);
 }

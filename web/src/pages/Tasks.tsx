@@ -20,7 +20,11 @@ export default function Tasks() {
   const [filter, setFilter] = useState<Filter>('active');
   const [type, setType] = useState('');
   const [search, setSearch] = useState('');
+  const [tag, setTag] = useState('');
+  const [tags, setTags] = useState<{ tag: string; count: number }[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+
+  useEffect(() => { api.get<{ tag: string; count: number }[]>('/tags').then(setTags).catch(() => {}); }, [version]);
 
   useEffect(() => {
     let q = '';
@@ -32,10 +36,11 @@ export default function Tasks() {
     if (filter === 'done') q = '?status=done&limit=100';
     if (type) q += `&type=${type}`;
     if (search) q += `&search=${encodeURIComponent(search)}`;
+    if (tag) q += `&tag=${encodeURIComponent(tag)}`;
     api.get<Task[]>(`/tasks${q}`).then(list => {
       setTasks(filter === 'nodate' ? list.filter(t => !t.date && !t.deadline) : list);
     }).catch(() => {});
-  }, [filter, type, search, version]);
+  }, [filter, type, search, tag, version]);
 
   const groups = useMemo(() => {
     const m = new Map<string, Task[]>();
@@ -57,6 +62,19 @@ export default function Tasks() {
       <div className="tab-pills">
         {FILTERS.map(f => <button key={f.id} className={filter === f.id ? 'on' : ''} onClick={() => setFilter(f.id)}>{f.label}</button>)}
       </div>
+
+      {tags.length > 0 && (
+        <div className="flex wrap tag-bar">
+          <span className="small muted">Теги:</span>
+          {tags.map(t => (
+            <button key={t.tag} className={`chip tag clickable${tag === t.tag ? ' on' : ''}`}
+              onClick={() => setTag(tag === t.tag ? '' : t.tag)}>
+              #{t.tag} <span className="muted">{t.count}</span>
+            </button>
+          ))}
+          {tag && <button className="btn ghost small" onClick={() => setTag('')}>сбросить</button>}
+        </div>
+      )}
 
       <div className="flex wrap" style={{ marginBottom: 14 }}>
         <input

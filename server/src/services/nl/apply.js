@@ -1,6 +1,7 @@
 // Применение подтверждённого AI-плана: создание задач с зависимостями и напоминаниями.
 // Используется и HTTP-маршрутом, и Telegram-ботом — единая бизнес-логика.
 
+import { uid } from '../../ctx.js';
 import { db } from '../../db.js';
 import { createTask } from '../tasks.js';
 import { log } from '../activity.js';
@@ -24,8 +25,8 @@ export function applyPlanItems(items = [], projectId = null) {
       description: 'Создано через AI-ввод',
     });
     if (it.is_reminder) {
-      db.prepare('INSERT INTO reminders (title, remind_date, remind_time, task_id) VALUES (?, ?, ?, ?)')
-        .run(task.title, it.date, it.time || null, task.id);
+      db.prepare('INSERT INTO reminders (title, remind_date, remind_time, task_id, user_id) VALUES (?, ?, ?, ?, ?)')
+        .run(task.title, it.date, it.time || null, task.id, uid());
     }
     created.push(task);
     prevId = task.id;

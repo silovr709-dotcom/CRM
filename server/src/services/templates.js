@@ -1,3 +1,4 @@
+import { uid } from '../ctx.js';
 import { db } from '../db.js';
 import { log } from './activity.js';
 import { addDays, addWorkdays, todayStr } from '../util/dates.js';
@@ -5,7 +6,7 @@ import { createTask } from './tasks.js';
 
 // Инстанцирование шаблона: создаёт цепочку задач с зависимостями.
 export function instantiateTemplate(templateId, { startDate, projectId, contextTitle, contactId, categoryId } = {}) {
-  const tpl = db.prepare('SELECT * FROM templates WHERE id = ?').get(Number(templateId));
+  const tpl = db.prepare('SELECT * FROM templates WHERE id = ? AND user_id = ?').get(Number(templateId), uid());
   if (!tpl) throw new Error('template not found');
   const steps = db.prepare('SELECT * FROM template_steps WHERE template_id = ? ORDER BY ord').all(tpl.id);
   const base = startDate || todayStr();

@@ -14,6 +14,7 @@ export default function Attachments({ taskId, projectId }: { taskId?: number; pr
   const [files, setFiles] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
 
   const query = taskId ? `task_id=${taskId}` : `project_id=${projectId}`;
 
@@ -44,6 +45,7 @@ export default function Attachments({ taskId, projectId }: { taskId?: number; pr
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = '';
+      if (cameraRef.current) cameraRef.current.value = '';
     }
   }
 
@@ -64,8 +66,13 @@ export default function Attachments({ taskId, projectId }: { taskId?: number; pr
           <button className="btn small ghost danger" onClick={() => remove(f.id)}>✕</button>
         </div>
       ))}
-      <div className="mt8">
+      <div className="flex mt8">
         <input ref={inputRef} type="file" style={{ display: 'none' }} onChange={onPick} />
+        {/* capture=environment открывает сразу камеру телефона */}
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={onPick} />
+        <button className="btn small" disabled={uploading} onClick={() => cameraRef.current?.click()}>
+          {uploading ? 'Загрузка…' : '📷 Фото'}
+        </button>
         <button className="btn small" disabled={uploading} onClick={() => inputRef.current?.click()}>
           {uploading ? 'Загрузка…' : '+ Прикрепить файл'}
         </button>

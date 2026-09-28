@@ -1,10 +1,18 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, isAbsolute } from 'node:path';
+import { uid } from './ctx.js';
+import { hashPassword } from './util/password.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const dataDir = join(__dirname, '..', 'data');
+// DATA_DIR — постоянный диск в облаке (Amvera: /data, Timeweb: /app/data).
+// Локально — server/data. База и файлы должны лежать ТОЛЬКО там, иначе
+// при перезапуске контейнера данные пропадут.
+const envDir = process.env.DATA_DIR;
+export const dataDir = envDir
+  ? (isAbsolute(envDir) ? envDir : join(process.cwd(), envDir))
+  : join(__dirname, '..', 'data');
 mkdirSync(dataDir, { recursive: true });
 
 export const db = new DatabaseSync(join(dataDir, 'organizer.db'));
@@ -206,23 +214,103 @@ CREATE TABLE IF NOT EXISTS stock_moves (
 );
 `);
 
+// ---------- Аккаунты ----------
+db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  login TEXT NOT NULL UNIQUE,
+  name TEXT DEFAULT '',
+  role TEXT DEFAULT 'user',            -- admin | user
+  pass_salt TEXT NOT NULL,
+  pass_hash TEXT NOT NULL,
+  must_change_password INTEGER DEFAULT 0,
+  active INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT DEFAULT (datetime('now')),
+  last_seen TEXT DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL
+);
+
+-- Настройки у каждого пользователя свои (в т.ч. свой Telegram-бот)
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  value TEXT,
+  PRIMARY KEY (user_id, key)
+);
+`);
+
 // Миграции для существующих баз
 try { db.exec(`ALTER TABLE reminders ADD COLUMN notified_at TEXT`); } catch { /* уже есть */ }
 
+// Деньги и этапы заказа в проектах + привязка проекта к клиенту
+const PROJECT_COLUMNS = [
+  ['price', 'REAL'],            // сумма заказа, ₽
+  ['prepaid', 'REAL'],          // получено (аванс и доплаты), ₽
+  ['stage', 'TEXT'],            // этап конвейера заказа
+  ['contact_id', 'INTEGER'],    // клиент
+];
+for (const [col, type] of PROJECT_COLUMNS) {
+  try { db.exec(`ALTER TABLE projects ADD COLUMN ${col} ${type}`); } catch { /* уже есть */ }
+}
+
+// Разделение данных по пользователям
+const OWNED_TABLES = [
+  'tasks', 'projects', 'notes', 'reminders', 'contacts', 'categories',
+  'attachments', 'stock_items', 'stock_moves', 'templates', 'automations',
+  'activity_log', 'locations',
+];
+for (const t of OWNED_TABLES) {
+  try { db.exec(`ALTER TABLE ${t} ADD COLUMN user_id INTEGER`); } catch { /* уже есть */ }
+}
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id)`); } catch { /* ignore */ }
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id)`); } catch { /* ignore */ }
+
+// ---------- Первый запуск: администратор ----------
+// Пароль берётся из переменной окружения ADMIN_PASSWORD (в облаке задаётся
+// в панели управления и в репозиторий НЕ попадает). Если её нет — временный
+// пароль «admin», который приложение попросит сменить при первом входе.
+function bootstrapAdmin() {
+  const existing = db.prepare('SELECT COUNT(*) AS c FROM users').get();
+  if (existing.c > 0) return;
+  const envPass = (process.env.ADMIN_PASSWORD || '').trim();
+  const login = (process.env.ADMIN_LOGIN || 'admin').trim() || 'admin';
+  const { salt, hash } = hashPassword(envPass || 'admin');
+  db.prepare(`INSERT INTO users (login, name, role, pass_salt, pass_hash, must_change_password)
+              VALUES (?, ?, 'admin', ?, ?, ?)`)
+    .run(login, 'Администратор', salt, hash, envPass ? 0 : 1);
+  console.log(envPass
+    ? `Создан администратор «${login}» с паролем из ADMIN_PASSWORD.`
+    : `Создан администратор «${login}» с временным паролем «admin» — смените его после входа.`);
+}
+bootstrapAdmin();
+
+// Данные, созданные до появления аккаунтов, отдаём администратору
+function assignLegacyData() {
+  const admin = db.prepare(`SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1`).get();
+  if (!admin) return;
+  for (const t of OWNED_TABLES) {
+    try { db.prepare(`UPDATE ${t} SET user_id = ? WHERE user_id IS NULL`).run(admin.id); } catch { /* ignore */ }
+  }
+  // Старые общие настройки → в личные настройки администратора
+  const legacy = db.prepare('SELECT key, value FROM settings').all();
+  const ins = db.prepare('INSERT OR IGNORE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)');
+  for (const s of legacy) ins.run(admin.id, s.key, s.value);
+}
+
 // ---------- сид данных ----------
-function seed() {
-  const has = db.prepare('SELECT COUNT(*) AS c FROM settings').get();
+// Стартовый набор для КАЖДОГО нового пользователя: категории, шаблоны, автоматизации.
+export function seedUserData(userId) {
+  const has = db.prepare('SELECT COUNT(*) AS c FROM categories WHERE user_id = ?').get(userId);
   if (has.c > 0) return;
 
-  const setSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
-  setSetting.run('work_start', '09:00');
-  setSetting.run('work_end', '19:00');
-  setSetting.run('plan_buffer_min', '15');     // буфер между задачами при планировании
-  setSetting.run('plan_fill_ratio', '0.8');    // не забивать день больше чем на 80%
-  setSetting.run('default_travel_min', '30');  // время на дорогу по умолчанию
-  setSetting.run('user_name', '');
-
-  const cat = db.prepare('INSERT INTO categories (name, color, icon, builtin) VALUES (?, ?, ?, 1)');
+  const cat0 = db.prepare('INSERT INTO categories (name, color, icon, builtin, user_id) VALUES (?, ?, ?, 1, ?)');
+  const cat = { run: (...a) => cat0.run(...a, userId) };
   cat.run('Работа', '#4f46e5', '💼');
   cat.run('Клиенты', '#0891b2', '🤝');
   cat.run('Личное', '#16a34a', '🏠');
@@ -231,7 +319,8 @@ function seed() {
   cat.run('Здоровье', '#dc2626', '❤️');
 
   // Встроенные шаблоны
-  const tpl = db.prepare('INSERT INTO templates (name, description, builtin) VALUES (?, ?, 1)');
+  const tpl0 = db.prepare('INSERT INTO templates (name, description, builtin, user_id) VALUES (?, ?, 1, ?)');
+  const tpl = { run: (...a) => tpl0.run(...a, userId) };
   const step = db.prepare(
     'INSERT INTO template_steps (template_id, ord, title, type, offset_days, workdays, duration_min, depends_prev) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
 
@@ -285,8 +374,9 @@ function seed() {
     .forEach((s, i) => step.run(id, i, s[0], s[1], s[2], s[3], s[4], s[5]));
 
   // Пример автоматизации: производство → контроль статуса
-  const auto = db.prepare(
-    'INSERT INTO automations (name, enabled, trigger_type, conditions, action_type, action_params) VALUES (?, 1, ?, ?, ?, ?)');
+  const auto0 = db.prepare(
+    'INSERT INTO automations (name, enabled, trigger_type, conditions, action_type, action_params, user_id) VALUES (?, 1, ?, ?, ?, ?, ?)');
+  const auto = { run: (...a) => auto0.run(...a, userId) };
   auto.run(
     'Контроль производства',
     'task_completed',
@@ -303,25 +393,50 @@ function seed() {
   );
 }
 
-seed();
-
-// Настройки, добавляемые в существующие базы
-function ensureSettings() {
+// Значения настроек по умолчанию (общие, дальше каждый пользователь меняет своё)
+const DEFAULT_SETTINGS = {
+  work_start: '09:00',
+  work_end: '19:00',
+  plan_buffer_min: '15',      // буфер между задачами при планировании
+  plan_fill_ratio: '0.8',     // не забивать день больше чем на 80%
+  default_travel_min: '30',   // время на дорогу по умолчанию
+  user_name: '',
+  telegram_token: '',
+  telegram_chat_id: '',
+  brief_morning: '08:00',
+  brief_evening: '20:30',
+  notify_before_min: '15',
+  monthly_report: '1',        // присылать итоги месяца 1-го числа
+};
+{
   const ins = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
-  ins.run('telegram_token', '');
-  ins.run('telegram_chat_id', '');
-  ins.run('brief_morning', '08:00');
-  ins.run('brief_evening', '20:30');
-  ins.run('notify_before_min', '15');
+  for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) ins.run(k, v);
 }
-ensureSettings();
 
-export function getSetting(key, fallback = null) {
+// Перенос данных «до аккаунтов» администратору + его стартовый набор
+assignLegacyData();
+{
+  const admin = db.prepare(`SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1`).get();
+  if (admin) seedUserData(admin.id);
+}
+
+// Настройка текущего пользователя: личное значение → общее значение по умолчанию → fallback
+export function getSetting(key, fallback = null, userId = uid()) {
+  const own = db.prepare('SELECT value FROM user_settings WHERE user_id = ? AND key = ?').get(userId, key);
+  if (own && own.value !== null) return own.value;
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : fallback;
 }
 
-export function setSetting(key, value) {
-  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-    .run(key, String(value));
+export function setSetting(key, value, userId = uid()) {
+  db.prepare(`INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
+              ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`)
+    .run(userId, key, String(value));
+}
+
+export function allSettings(userId = uid()) {
+  const out = {};
+  for (const row of db.prepare('SELECT key, value FROM settings').all()) out[row.key] = row.value;
+  for (const row of db.prepare('SELECT key, value FROM user_settings WHERE user_id = ?').all(userId)) out[row.key] = row.value;
+  return out;
 }
