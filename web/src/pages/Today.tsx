@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, humanDate, humanDuration, todayStr, addDays } from '../api';
+import { api, humanDate, humanDuration, todayStr, addDays, money } from '../api';
 import { typeIcon } from '../meta';
 import { useApp } from '../store';
 import TaskRow from '../components/TaskRow';
@@ -166,6 +166,62 @@ export default function Today() {
                   </div>
                 </div>
                 <button className="btn small" onClick={e => { e.stopPropagation(); openTask({ project_id: sp.id }); }}>+ Задача</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Деньги: пора забрать оплату */}
+      {(v.money_alerts?.length ?? 0) > 0 && (
+        <div className="section">
+          <div className="section-head"><h3>💰 Пора забрать оплату</h3>
+            <button className="btn ghost small" onClick={() => { location.hash = '/money'; }}>Все деньги</button>
+          </div>
+          <div className="card list-plain">
+            {v.money_alerts!.map(m => (
+              <div key={m.id} className="task-row" onClick={() => { location.hash = `/projects/${m.id}`; }}>
+                <div className="t-body">
+                  <div className="t-title">{m.name}</div>
+                  <div className="t-meta">
+                    <span className="chip red">должны {money(m.debt)}</span>
+                    {m.stage && <span className="chip">этап: {m.stage}</span>}
+                    {m.contact_name && <span className="chip">🤝 {m.contact_name}</span>}
+                    <span className="muted">{m.stage === 'Сдано' ? 'заказ сдан — деньги не получены' : 'монтаж идёт — пора брать остаток'}</span>
+                  </div>
+                </div>
+                {m.contact_phone && <a className="btn small" href={`tel:${m.contact_phone}`} onClick={e => e.stopPropagation()}>📞</a>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Поручения */}
+      {(v.delegation && (v.delegation.assigned.length > 0 || v.delegation.delegated.length > 0)) && (
+        <div className="section">
+          <div className="section-head"><h3>👥 Поручения</h3></div>
+          <div className="card list-plain">
+            {v.delegation.assigned.map(t => (
+              <div key={`a${t.id}`} className="task-row" onClick={() => openTask(t)}>
+                <div className="t-body">
+                  <div className="t-title">{t.title}</div>
+                  <div className="t-meta">
+                    <span className="chip accent">поручил: {t.author ?? '—'}</span>
+                    {t.date && <span className="chip">{humanDate(t.date)}</span>}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {v.delegation.delegated.map(t => (
+              <div key={`d${t.id}`} className="task-row" onClick={() => { location.hash = '/tasks'; }}>
+                <div className="t-body">
+                  <div className="t-title">{t.title}</div>
+                  <div className="t-meta">
+                    <span className="chip">👤 у {t.assignee ?? '—'}</span>
+                    {t.date && <span className="chip">{humanDate(t.date)}</span>}
+                  </div>
+                </div>
               </div>
             ))}
           </div>

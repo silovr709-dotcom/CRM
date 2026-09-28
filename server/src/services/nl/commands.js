@@ -6,6 +6,7 @@ import { db } from '../../db.js';
 import { extractDate, R } from './parser.js';
 import { findTaskByTitle, updateTask, deleteTask, setStatus, completeTask } from '../tasks.js';
 import { todayStr, addDays, humanDate, nextWeekday } from '../../util/dates.js';
+import { addPayment } from '../money.js';
 
 const norm = (s) => s.toLowerCase().replace(/ё/g, 'е').trim();
 
@@ -20,6 +21,36 @@ function resolveTask(fragment) {
 
 export function parseCommand(text) {
   const s = norm(text);
+
+  // Оплата: «оплата 50000 Петровы», «получил 50 000 от Петровых», «внеси оплату 30000 по кухне Ивановых»
+  let pm = s.match(/^(?:оплата|получил|получила|получено|принял|внеси оплату|запиши оплату|плат[её]ж)\s*:?\s*([\d][\d\s.]*)\s*(?:р|руб|руб\.|рублей|₽)?\s*(?:от|по|за|на|для)?\s*(.*)$/);
+  if (pm) {
+    const amount = Number(String(pm[1]).replace(/[\s.]/g, ''));
+    const frag = (pm[2] || '')
+      .replace(R(/(проекту|проект|заказу|заказ|кухне|кухня|клиента|клиент)/g), ' ')
+      .replace(/\s+/g, ' ').trim();
+    if (amount > 0) {
+      const rows = frag
+        ? db.prepare(`SELECT p.id, p.name, COALESCE(p.price,0) AS price, COALESCE(p.prepaid,0) AS paid
+                      FROM projects p LEFT JOIN contacts c ON c.id = p.contact_id
+                      WHERE p.user_id = ? AND p.status IN ('active','paused','done')
+                        AND (nlower(p.name) LIKE nlower(?) OR nlower(COALESCE(c.name,'')) LIKE nlower(?))
+                      ORDER BY p.status = 'active' DESC LIMIT 5`).all(uid(), `%${frag}%`, `%${frag}%`)
+        : [];
+      if (!rows.length) {
+        return { kind: 'answer', text: frag
+          ? `Не нашёл заказ или клиента «${frag}». Откройте заказ и нажмите «+ Оплата».`
+          : 'Уточните, по какому заказу оплата: например «оплата 50000 Петровы».' };
+      }
+      const p0 = rows[0];
+      const left = Math.max(0, p0.price - p0.paid - amount);
+      return {
+        kind: 'command', command: 'add_payment', project_id: p0.id, amount,
+        text: `Записать оплату ${amount.toLocaleString('ru-RU')} ₽ по заказу «${p0.name}»?` +
+          (p0.price ? ` Останется долг ${left.toLocaleString('ru-RU')} ₽.` : ''),
+      };
+    }
+  }
 
   // распланируй
   if (/^(распланируй|спланируй|распланировать)( мой)?( день| завтра)?(\s|$)/.test(s)) {
@@ -243,6 +274,18 @@ export function executeCommand(cmd) {
       db.prepare(`UPDATE reminders SET remind_date = ?, remind_time = ?, status = 'pending', notified_at = NULL WHERE id = ?`)
         .run(date, time, rem.id);
       return { ok: true, text: `💤 Напомню ещё раз в ${time}.` };
+    }
+    case 'add_payment': {
+      const pr = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(cmd.project_id, uid());
+      if (!pr) return { ok: false, text: 'Заказ не найден.' };
+      addPayment(pr.id, { amount: cmd.amount, note: 'записано ассистентом' });
+      const after = db.prepare('SELECT COALESCE(price,0) AS price, COALESCE(prepaid,0) AS paid FROM projects WHERE id = ?').get(pr.id);
+      const debt = Math.max(0, after.price - after.paid);
+      return {
+        ok: true,
+        text: `💰 Записал ${Number(cmd.amount).toLocaleString('ru-RU')} ₽ по заказу «${pr.name}». ` +
+          (after.price ? (debt > 0 ? `Остаток долга: ${debt.toLocaleString('ru-RU')} ₽.` : 'Заказ оплачен полностью ✅') : ''),
+      };
     }
     case 'carry_over_ids': {
       const to = cmd.date || addDays(todayStr(), 1);

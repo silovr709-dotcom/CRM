@@ -561,3 +561,55 @@ input, select, textarea { background: var(--input-bg); border-color: var(--borde
 .chip.tag.clickable { cursor: pointer; border: none; }
 .chip.tag.on { background: var(--accent); color: #fff; }
 .tag-bar { margin-bottom: 12px; gap: 6px; }
+
+/* ── Доска заказов по этапам ───────────────────────────────────────── */
+.board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(250px, 1fr);
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+  align-items: start;
+}
+.board-col {
+  background: color-mix(in srgb, var(--muted) 7%, transparent);
+  border: 1px solid transparent;
+  border-radius: 14px;
+  padding: 10px;
+  min-height: 120px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.board-col.over { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: var(--accent); }
+.board-head { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px 8px; }
+.board-debt { color: var(--red); padding: 0 4px 6px; font-weight: 560; }
+.board-items { display: flex; flex-direction: column; gap: 10px; }
+.board-empty { text-align: center; padding: 14px 6px; border: 1px dashed var(--border); border-radius: 11px; }
+.board .proj-card { cursor: grab; }
+.board .proj-card:active { cursor: grabbing; }
+.chip.small { font-size: 11.5px; padding: 2px 7px; }
+
+/* ── Деньги ────────────────────────────────────────────────────────── */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.kpi { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow); }
+.kpi .kpi-label { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.kpi .kpi-value { font-size: 22px; font-weight: 680; font-family: var(--font-display); }
+.kpi.red .kpi-value { color: var(--red); }
+.kpi.green .kpi-value { color: var(--green); }
+.kpi.amber .kpi-value { color: var(--amber); }
+
+.bars { display: flex; align-items: flex-end; gap: 10px; height: 170px; padding: 10px 4px 0; }
+.bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 6px; }
+.bar-col .bar-val { font-size: 11.5px; color: var(--muted); }
+.bar-col .bar { width: 100%; max-width: 46px; background: var(--accent); border-radius: 7px 7px 0 0; min-height: 3px; transition: height 0.2s; }
+.bar-col .bar-label { font-size: 11.5px; color: var(--muted); }
+
+.debtor-row, .pay-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 4px; border-bottom: 1px solid var(--border);
+}
+.debtor-row:last-child, .pay-row:last-child { border-bottom: none; }
+.debtor-row .grow, .pay-row .grow { flex: 1; min-width: 0; }
+.debtor-row .sum { font-weight: 640; color: var(--red); font-family: var(--font-display); }
+.pay-row .sum { font-weight: 640; color: var(--green); font-family: var(--font-display); }
+.pay-list { display: flex; flex-direction: column; }

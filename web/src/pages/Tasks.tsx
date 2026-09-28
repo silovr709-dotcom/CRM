@@ -5,18 +5,19 @@ import { useApp } from '../store';
 import TaskRow from '../components/TaskRow';
 import type { Task } from '../types';
 
-type Filter = 'active' | 'inbox' | 'today' | 'overdue' | 'nodate' | 'done';
+type Filter = 'active' | 'inbox' | 'today' | 'overdue' | 'nodate' | 'delegated' | 'done';
 const FILTERS: { id: Filter; label: string }[] = [
   { id: 'active', label: 'Активные' },
   { id: 'inbox', label: 'Входящие' },
   { id: 'today', label: 'Сегодня' },
   { id: 'overdue', label: 'Просроченные' },
   { id: 'nodate', label: 'Без даты' },
+  { id: 'delegated', label: 'Поручено мной' },
   { id: 'done', label: 'Выполненные' },
 ];
 
 export default function Tasks() {
-  const { version, openTask } = useApp();
+  const { version, openTask, refresh, toast } = useApp();
   const [filter, setFilter] = useState<Filter>('active');
   const [type, setType] = useState('');
   const [search, setSearch] = useState('');
@@ -34,6 +35,10 @@ export default function Tasks() {
     if (filter === 'overdue') q = '?overdue=1';
     if (filter === 'nodate') q = '?status=inbox,planned,in_progress,paused';
     if (filter === 'done') q = '?status=done&limit=100';
+    if (filter === 'delegated') {
+      api.get<Task[]>('/tasks/delegated').then(setTasks).catch(() => {});
+      return;
+    }
     if (type) q += `&type=${type}`;
     if (search) q += `&search=${encodeURIComponent(search)}`;
     if (tag) q += `&tag=${encodeURIComponent(tag)}`;
@@ -88,8 +93,38 @@ export default function Tasks() {
         </select>
       </div>
 
+      {filter === 'delegated' && (
+        <div className="small muted" style={{ marginBottom: 12 }}>
+          Задачи, которые вы передали жене или мастеру. Они лежат в их списках — здесь видно, что с ними происходит.
+        </div>
+      )}
+
       {tasks.length === 0 ? (
-        <div className="empty"><div className="big-icon">✨</div>Здесь пусто</div>
+        <div className="empty"><div className="big-icon">✨</div>
+          {filter === 'delegated' ? 'Вы пока никому ничего не поручали. Откройте задачу и нажмите «Поручить».' : 'Здесь пусто'}
+        </div>
+      ) : filter === 'delegated' ? (
+        <div className="card list-plain">
+          {tasks.map(t => (
+            <div key={t.id} className="task-row">
+              <div className="t-body" onClick={() => openTask(t)}>
+                <div className="t-title">{t.title}</div>
+                <div className="t-meta">
+                  <span className="chip accent">👤 {t.assignee ?? '—'}</span>
+                  {t.date && <span className="chip">{humanDate(t.date)}</span>}
+                  {t.status === 'in_progress' && <span className="chip green">в работе</span>}
+                  {t.status === 'paused' && <span className="chip amber">⏸ пауза</span>}
+                </div>
+              </div>
+              <div className="row-actions">
+                <button className="btn small ghost" onClick={async () => {
+                  await api.post(`/tasks/${t.id}/recall`);
+                  toast('Задача возвращена вам'); refresh();
+                }}>Забрать</button>
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         groups.map(([key, list]) => (
           <div key={key}>

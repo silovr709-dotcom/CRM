@@ -1,5 +1,7 @@
 import { uid } from '../ctx.js';
 import { db, getSetting } from '../db.js';
+import { moneyAlerts } from './money.js';
+import { delegationSummary } from './delegate.js';
 import { listTasks } from './tasks.js';
 import { freeSlots, freeMinutes, defaultDuration, eveningReview } from './planner.js';
 import { todayStr, nowTimeStr, timeToMin, minToTime, humanDuration, addDays, diffDays } from '../util/dates.js';
@@ -88,6 +90,8 @@ export function getTodayView(date = todayStr()) {
     reminders,
     route,
     silent_projects: silentProjects(),
+    money_alerts: isToday ? moneyAlerts() : [],
+    delegation: isToday ? delegationSummary() : { delegated: [], assigned: [] },
     free_min: freeMinutes(date, { fromNow: isToday }),
     free_slots: freeSlots(date, { fromNow: isToday }).map(s => ({ start: minToTime(s.start), end: minToTime(s.end), minutes: s.end - s.start })),
     briefing: {

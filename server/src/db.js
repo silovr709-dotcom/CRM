@@ -226,6 +226,18 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TEXT NOT NULL
 );
 
+-- Платежи по заказу: аванс, доплаты, окончательный расчёт
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  amount REAL NOT NULL,
+  date TEXT NOT NULL,
+  method TEXT DEFAULT 'наличные',   -- наличные | карта | перевод | другое
+  note TEXT DEFAULT '',
+  user_id INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 -- Настройки у каждого пользователя свои (в т.ч. свой Telegram-бот)
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -249,11 +261,21 @@ for (const [col, type] of PROJECT_COLUMNS) {
   try { db.exec(`ALTER TABLE projects ADD COLUMN ${col} ${type}`); } catch { /* уже есть */ }
 }
 
+// Делегирование задач: кто поставил и кому поручено
+const TASK_COLUMNS = [
+  ['created_by', 'INTEGER'],     // кто создал задачу (может быть другой пользователь)
+  ['assigned_at', 'TEXT'],       // когда поручена
+];
+for (const [col, type] of TASK_COLUMNS) {
+  try { db.exec(`ALTER TABLE tasks ADD COLUMN ${col} ${type}`); } catch { /* уже есть */ }
+}
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_payments_project ON payments(project_id)`); } catch { /* ignore */ }
+
 // Разделение данных по пользователям
 const OWNED_TABLES = [
   'tasks', 'projects', 'notes', 'reminders', 'contacts', 'categories',
   'attachments', 'stock_items', 'stock_moves', 'templates', 'automations',
-  'activity_log', 'locations',
+  'activity_log', 'locations', 'payments',
 ];
 for (const t of OWNED_TABLES) {
   try { db.exec(`ALTER TABLE ${t} ADD COLUMN user_id INTEGER`); } catch { /* уже есть */ }
@@ -291,6 +313,17 @@ function assignLegacyData() {
   const legacy = db.prepare('SELECT key, value FROM settings').all();
   const ins = db.prepare('INSERT OR IGNORE INTO user_settings (user_id, key, value) VALUES (?, ?, ?)');
   for (const s of legacy) ins.run(admin.id, s.key, s.value);
+}
+
+// Старое поле prepaid превращаем в первый платёж, чтобы история денег была полной
+function migratePrepaidToPayments() {
+  const rows = db.prepare(`
+    SELECT p.id, p.prepaid, p.user_id, p.created_at FROM projects p
+    WHERE COALESCE(p.prepaid, 0) > 0
+      AND NOT EXISTS (SELECT 1 FROM payments pay WHERE pay.project_id = p.id)`).all();
+  const ins = db.prepare(`INSERT INTO payments (project_id, amount, date, method, note, user_id)
+                          VALUES (?, ?, ?, 'другое', 'Перенесено из поля «получено»', ?)`);
+  for (const r of rows) ins.run(r.id, r.prepaid, String(r.created_at || '').slice(0, 10) || null, r.user_id);
 }
 
 // ---------- сид данных ----------
@@ -405,6 +438,7 @@ const DEFAULT_SETTINGS = {
 
 // Перенос данных «до аккаунтов» администратору + его стартовый набор
 assignLegacyData();
+migratePrepaidToPayments();
 {
   const admin = db.prepare(`SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1`).get();
   if (admin) seedUserData(admin.id);

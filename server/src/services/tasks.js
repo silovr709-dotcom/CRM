@@ -42,6 +42,12 @@ export function attachMeta(tasks) {
     : [];
   const pMap = Object.fromEntries(projects.map(p => [p.id, p]));
   const cMap = Object.fromEntries(cats.map(c => [c.id, c]));
+  // Кто поручил задачу (если это не я сам)
+  const authorIds = [...new Set(tasks.map(t => t.created_by).filter(a => a && a !== uid()))];
+  const authors = authorIds.length
+    ? db.prepare(`SELECT id, login, name FROM users WHERE id IN (${authorIds.map(() => '?').join(',')})`).all(...authorIds)
+    : [];
+  const aMap = Object.fromEntries(authors.map(u => [u.id, u.name || u.login]));
   for (const t of tasks) {
     t.dependencies = deps.filter(d => d.task_id === t.id);
     t.blocked = t.dependencies.some(d => d.kind !== 'with' && d.dep_status !== 'done' && d.dep_status !== 'cancelled');
@@ -50,6 +56,7 @@ export function attachMeta(tasks) {
     t.subtasks_done = s ? s.done : 0;
     t.project = t.project_id ? pMap[t.project_id] || null : null;
     t.category = t.category_id ? cMap[t.category_id] || null : null;
+    t.author = t.created_by && t.created_by !== uid() ? aMap[t.created_by] || null : null;
   }
   return tasks;
 }
@@ -142,6 +149,7 @@ export function createTask(data, { silent = false } = {}) {
   }
   if (!cols.includes('title')) throw new Error('title is required');
   cols.push('user_id'); vals.push(uid());
+  cols.push('created_by'); vals.push(uid());
   const res = db.prepare(
     `INSERT INTO tasks (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
   const id = Number(res.lastInsertRowid);

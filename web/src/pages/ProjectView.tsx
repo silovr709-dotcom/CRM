@@ -3,7 +3,7 @@ import { api, humanDate, todayStr, addDays, money } from '../api';
 import { useApp, useRoute } from '../store';
 import TaskRow from '../components/TaskRow';
 import Attachments from '../components/Attachments';
-import type { Project, Template, Contact } from '../types';
+import type { Project, Template, Contact, Payment } from '../types';
 import { STAGES } from '../types';
 
 const ACTIONS: Record<string, string> = {
@@ -21,7 +21,8 @@ export default function ProjectView({ id }: { id: number }) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [tplPick, setTplPick] = useState('');
   const [showDone, setShowDone] = useState(false);
-  const [moneyForm, setMoneyForm] = useState<{ price: string; prepaid: string; contact_id: string } | null>(null);
+  const [moneyForm, setMoneyForm] = useState<{ price: string; contact_id: string } | null>(null);
+  const [payForm, setPayForm] = useState<{ amount: string; date: string; method: string; note: string } | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
@@ -49,10 +50,28 @@ export default function ProjectView({ id }: { id: number }) {
     if (!moneyForm) return;
     await api.patch(`/projects/${id}`, {
       price: moneyForm.price === '' ? null : Number(moneyForm.price),
-      prepaid: moneyForm.prepaid === '' ? null : Number(moneyForm.prepaid),
       contact_id: moneyForm.contact_id === '' ? null : Number(moneyForm.contact_id),
     });
     setMoneyForm(null); refresh(); toast('Сохранено');
+  }
+
+  async function savePayment() {
+    if (!payForm) return;
+    const amount = Number(payForm.amount);
+    if (!amount) { toast('Укажите сумму'); return; }
+    try {
+      await api.post(`/projects/${id}/payments`, { ...payForm, amount });
+      setPayForm(null); refresh();
+      toast(`Оплата ${money(amount)} записана`);
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  }
+
+  async function removePayment(pay: Payment) {
+    if (!confirm(`Удалить платёж ${money(pay.amount)} от ${humanDate(pay.date)}?`)) return;
+    await api.del(`/projects/${id}/payments/${pay.id}`);
+    refresh(); toast('Платёж удалён');
   }
 
   async function addNote() {
@@ -122,19 +141,38 @@ export default function ProjectView({ id }: { id: number }) {
       {/* Деньги по заказу */}
       <div className="card money-card">
         <div><span className="lbl">Сумма заказа</span><b>{p.price != null ? money(p.price) : '—'}</b></div>
-        <div><span className="lbl">Аванс / оплачено</span><b className="ok">{p.prepaid != null ? money(p.prepaid) : '—'}</b></div>
+        <div><span className="lbl">Получено</span><b className="ok">{money(p.prepaid ?? 0)}</b></div>
         <div>
           <span className="lbl">Остаток</span>
           <b className={(p.debt ?? 0) > 0 ? 'danger' : 'ok'}>
             {p.price == null ? '—' : (p.debt ?? 0) > 0 ? money(p.debt!) : 'оплачено ✅'}
           </b>
         </div>
-        <button className="btn small" onClick={() => setMoneyForm({
-          price: p!.price == null ? '' : String(p!.price),
-          prepaid: p!.prepaid == null ? '' : String(p!.prepaid),
-          contact_id: p!.contact_id == null ? '' : String(p!.contact_id),
-        })}>Изменить</button>
+        <div className="row-actions" style={{ marginLeft: 'auto' }}>
+          <button className="btn primary small" onClick={() => setPayForm({
+            amount: p!.price != null && (p!.debt ?? 0) > 0 ? String(Math.round(p!.debt!)) : '',
+            date: todayStr(), method: 'наличные', note: '',
+          })}>+ Оплата</button>
+          <button className="btn small" onClick={() => setMoneyForm({
+            price: p!.price == null ? '' : String(p!.price),
+            contact_id: p!.contact_id == null ? '' : String(p!.contact_id),
+          })}>Изменить</button>
+        </div>
       </div>
+
+      {(p.payments ?? []).length > 0 && (
+        <div className="card pay-list">
+          {p.payments!.map(pay => (
+            <div key={pay.id} className="pay-row">
+              <span className="pay-date small muted">{humanDate(pay.date)}</span>
+              <span className="pay-sum green"><b>+{money(pay.amount)}</b></span>
+              <span className="chip small">{pay.method}</span>
+              <span className="pay-proj small muted">{pay.note}</span>
+              <button className="btn ghost small danger" onClick={() => removePayment(pay)} title="Удалить платёж">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {p.contact && (
         <div className="small muted" style={{ margin: '-6px 0 14px' }}>
@@ -150,8 +188,8 @@ export default function ProjectView({ id }: { id: number }) {
             <div className="form-grid">
               <div className="field"><label>Сумма заказа, ₽</label>
                 <input inputMode="numeric" value={moneyForm.price} onChange={e => setMoneyForm({ ...moneyForm, price: e.target.value.replace(/[^\d.]/g, '') })} /></div>
-              <div className="field"><label>Аванс / оплачено, ₽</label>
-                <input inputMode="numeric" value={moneyForm.prepaid} onChange={e => setMoneyForm({ ...moneyForm, prepaid: e.target.value.replace(/[^\d.]/g, '') })} /></div>
+              <div className="field"><label>Клиент платит частями?</label>
+                <div className="small muted" style={{ paddingTop: 8 }}>Полученные деньги добавляйте кнопкой «+ Оплата» — так видно всю историю.</div></div>
               <div className="field full"><label>Клиент</label>
                 <select value={moneyForm.contact_id} onChange={e => setMoneyForm({ ...moneyForm, contact_id: e.target.value })}>
                   <option value="">— не указан —</option>
@@ -160,6 +198,36 @@ export default function ProjectView({ id }: { id: number }) {
             </div>
             <div className="flex mt16" style={{ justifyContent: 'flex-end' }}>
               <button className="btn primary" onClick={saveMoney}>Сохранить</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {payForm && (
+        <div className="overlay" onClick={() => setPayForm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-head"><h2>Получена оплата</h2><button className="x" onClick={() => setPayForm(null)}>✕</button></div>
+            <div className="form-grid">
+              <div className="field"><label>Сумма, ₽</label>
+                <input autoFocus inputMode="numeric" value={payForm.amount}
+                  onChange={e => setPayForm({ ...payForm, amount: e.target.value.replace(/[^\d.]/g, '') })} /></div>
+              <div className="field"><label>Дата</label>
+                <input type="date" value={payForm.date} onChange={e => setPayForm({ ...payForm, date: e.target.value })} /></div>
+              <div className="field"><label>Как получили</label>
+                <select value={payForm.method} onChange={e => setPayForm({ ...payForm, method: e.target.value })}>
+                  {['наличные', 'карта', 'перевод', 'другое'].map(m => <option key={m} value={m}>{m}</option>)}
+                </select></div>
+              <div className="field"><label>Комментарий</label>
+                <input value={payForm.note} placeholder="аванс, доплата, окончательный расчёт…"
+                  onChange={e => setPayForm({ ...payForm, note: e.target.value })} /></div>
+            </div>
+            {p.price != null && (
+              <p className="small muted mt8">
+                По заказу на {money(p.price)} получено {money(p.prepaid ?? 0)}, остаток {money(p.debt ?? 0)}.
+              </p>
+            )}
+            <div className="flex mt16" style={{ justifyContent: 'flex-end' }}>
+              <button className="btn primary" onClick={savePayment}>Записать оплату</button>
             </div>
           </div>
         </div>

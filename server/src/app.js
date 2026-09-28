@@ -13,6 +13,7 @@ import telegramRouter from './routes/telegram.js';
 import stockRouter from './routes/stock.js';
 import authRouter from './routes/auth.js';
 import adminRouter from './routes/admin.js';
+import exportRouter from './routes/export.js';
 import { startTelegramLoop, startTelegramScheduler } from './services/telegram.js';
 import { sessionUser, cleanupSessions, COOKIE_NAME } from './services/users.js';
 import { als } from './ctx.js';
@@ -74,6 +75,7 @@ app.use((req, res, next) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/export', exportRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/assistant', assistantRouter);

@@ -18,6 +18,9 @@ export interface Dependency {
 }
 
 export interface Task {
+  created_by?: number | null;
+  author?: string | null;
+  assignee?: string | null;
   id: number;
   title: string;
   description: string;
@@ -125,6 +128,7 @@ export interface ClientFull {
 }
 
 export interface Project {
+  payments?: Payment[];
   id: number;
   name: string;
   description: string;
@@ -212,6 +216,8 @@ export interface TodayView {
   free_min: number;
   route: DayRoute | null;
   silent_projects: SilentProject[];
+  money_alerts: MoneyAlert[];
+  delegation: { delegated: Task[]; assigned: Task[] };
   free_slots: { start: string; end: string; minutes: number }[];
   briefing: {
     events_count: number; tasks_count: number; trips_count: number; overdue_count: number;
@@ -253,3 +259,58 @@ export interface AiResponse {
   // unload
   suggestions?: { task_id?: number; task_ids?: number[]; title: string; action: string; to_date?: string; reason: string }[];
 }
+
+
+// ---------- Деньги ----------
+export interface Payment {
+  id: number;
+  project_id: number;
+  amount: number;
+  date: string;
+  method: string;
+  note: string;
+  created_at?: string;
+  project_name?: string;
+  contact_name?: string | null;
+}
+
+export interface Debtor {
+  id: number;
+  name: string;
+  stage: string | null;
+  status: string;
+  deadline: string | null;
+  price: number;
+  paid: number;
+  debt: number;
+  contact_id: number | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  last_payment: string | null;
+}
+
+export interface MoneyReport {
+  today: string;
+  received_this_month: number;
+  received_last_30: number;
+  active_price: number;
+  active_paid: number;
+  expected: number;
+  total_debt: number;
+  months: { month: string; received: number }[];
+  debtors: Debtor[];
+  recent: Payment[];
+  methods: string[];
+}
+
+export interface MoneyAlert {
+  id: number;
+  name: string;
+  stage: string | null;
+  debt: number;
+  contact_name: string | null;
+  contact_phone: string | null;
+}
+
+// ---------- Поручения ----------
+export interface Assignee { id: number; login: string; name: string }

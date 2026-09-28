@@ -138,6 +138,8 @@ export default function TaskRow({ task, showDate, showTime = true, draggable }: 
             {task.status === 'paused' && <span className="chip">⏸ пауза</span>}
             {task.location && <span>📍 {task.location}</span>}
             {(task.location_from || task.location_to) && <span>📍 {task.location_from} → {task.location_to}</span>}
+            {task.author && <span className="chip accent">от {task.author}</span>}
+            {task.assignee && <span className="chip">👤 {task.assignee}</span>}
             {task.attention_reason && <span className="chip red">{task.attention_reason}</span>}
           </div>
         </div>

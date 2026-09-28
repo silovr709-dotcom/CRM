@@ -3,6 +3,7 @@ import { db } from '../db.js';
 import { uid } from '../ctx.js';
 import { log } from '../services/activity.js';
 import { listTasks } from '../services/tasks.js';
+import { listPayments, addPayment, deletePayment, moneyReport, PAYMENT_METHODS } from '../services/money.js';
 
 const r = Router();
 
@@ -50,6 +51,9 @@ r.get('/', (req, res) => {
   res.json(rows.map(projectStats));
 });
 
+// Полный отчёт по деньгам: получено за месяц, ожидается, должники, платежи
+r.get('/money/report', (req, res) => res.json({ ...moneyReport(), methods: PAYMENT_METHODS }));
+
 // Сводка по деньгам: сколько клиенты должны всего
 r.get('/money/summary', (req, res) => {
   const rows = db.prepare(`
@@ -72,6 +76,7 @@ r.get('/:id', (req, res) => {
       OR (a.entity_type = 'task' AND a.entity_id IN (SELECT id FROM tasks WHERE project_id = ?)))
     ORDER BY a.id DESC LIMIT 50`).all(uid(), p.id, p.id);
   full.stages = STAGES;
+  full.payments = listPayments(p.id);
   res.json(full);
 });
 
@@ -116,6 +121,31 @@ r.patch('/:id', (req, res) => {
       req.body.status === 'paused' && req.body.pause_until ? `до ${req.body.pause_until}` : p.name);
   } else if (sets.length) log('project', id, 'updated', p.name);
   res.json(projectStats(loadProject(id)));
+});
+
+// ---------- Платежи по заказу ----------
+r.get('/:id/payments', (req, res) => {
+  if (!loadProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  res.json(listPayments(req.params.id));
+});
+
+r.post('/:id/payments', (req, res) => {
+  const p = loadProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  try {
+    const payment = addPayment(p.id, req.body || {});
+    log('project', p.id, 'payment', `оплата ${Math.round(payment.amount).toLocaleString('ru-RU')} ₽`);
+    res.status(201).json({ payment, project: projectStats(loadProject(p.id)) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+r.delete('/:id/payments/:paymentId', (req, res) => {
+  const p = loadProject(req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  deletePayment(p.id, req.params.paymentId);
+  res.json({ ok: true, project: projectStats(loadProject(p.id)) });
 });
 
 r.delete('/:id', (req, res) => {

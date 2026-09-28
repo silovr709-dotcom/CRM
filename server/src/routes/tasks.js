@@ -1,10 +1,19 @@
 import { Router } from 'express';
 import * as tasks from '../services/tasks.js';
 import { smartCreate } from '../services/nl/quick.js';
+import { assignTask, recallTask, delegatedByMe, assignedToMe, assignableUsers } from '../services/delegate.js';
 
 const r = Router();
 
 r.get('/', (req, res) => res.json(tasks.listTasks(req.query)));
+
+// ---------- Поручения ----------
+// Кому можно поручить задачу
+r.get('/assignees', (req, res) => res.json(assignableUsers()));
+// Что я поручил другим
+r.get('/delegated', (req, res) => res.json(delegatedByMe({ includeDone: req.query.all === '1' })));
+// Что поручили мне
+r.get('/assigned', (req, res) => res.json(assignedToMe()));
 
 // Умная строка: «завтра в 10:00 замер у Петровых» → готовая задача
 r.post('/smart', (req, res) => {
@@ -37,6 +46,24 @@ r.post('/:id/status', (req, res) => {
   if (!t) return res.status(404).json({ error: 'not found' });
   res.json(t);
 });
+// Поручить задачу другому пользователю
+r.post('/:id/assign', (req, res) => {
+  try {
+    const result = assignTask(req.params.id, req.body.user_id);
+    if (!result) return res.status(404).json({ error: 'not found' });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Забрать поручение обратно себе
+r.post('/:id/recall', (req, res) => {
+  const result = recallTask(req.params.id);
+  if (!result) return res.status(404).json({ error: 'not found' });
+  res.json(result);
+});
+
 r.post('/:id/dependencies', (req, res) => {
   tasks.addDependency(req.params.id, req.body.depends_on_id, req.body.kind || 'after');
   res.json(tasks.getTask(req.params.id));

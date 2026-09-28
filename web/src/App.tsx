@@ -8,6 +8,7 @@ import ProjectView from './pages/ProjectView';
 import Clients from './pages/Clients';
 import ClientView from './pages/ClientView';
 import Notes from './pages/Notes';
+import Money from './pages/Money';
 import More from './pages/More';
 import TaskModal from './components/TaskModal';
 import AiModal from './components/AiModal';
@@ -19,8 +20,9 @@ const NAV = [
   { path: '/today', icon: '☀️', label: 'Сегодня' },
   { path: '/calendar', icon: '📅', label: 'Календарь' },
   { path: '/tasks', icon: '☑️', label: 'Задачи' },
-  { path: '/projects', icon: '📁', label: 'Проекты' },
+  { path: '/projects', icon: '📁', label: 'Заказы' },
   { path: '/clients', icon: '🤝', label: 'Клиенты' },
+  { path: '/money', icon: '💰', label: 'Деньги' },
   { path: '/notes', icon: '📝', label: 'Заметки' },
   { path: '/more', icon: '⋯', label: 'Ещё' },
 ];
@@ -48,6 +50,7 @@ function Shell() {
       else if (k === 'a' || k === 'ф') { e.preventDefault(); openAi(); }
       else if (k === 't' || k === 'е') { nav('/today'); }
       else if (k === 'c' || k === 'с') { nav('/calendar'); }
+      else if (k === 'm' || k === 'ь') { nav('/money'); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -60,6 +63,7 @@ function Shell() {
     if (parts[0] === 'projects') return <Projects />;
     if (parts[0] === 'clients' && parts[1]) return <ClientView id={Number(parts[1])} />;
     if (parts[0] === 'clients') return <Clients />;
+    if (parts[0] === 'money') return <Money />;
     if (parts[0] === 'notes') return <Notes />;
     if (parts[0] === 'more') return <More section={parts[1]} />;
     return <Today />;

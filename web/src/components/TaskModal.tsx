@@ -3,7 +3,7 @@ import { api, humanDate, todayStr } from '../api';
 import { TYPE_META, STATUS_META, PRIORITY_META, RECUR_OPTIONS, MODE_META } from '../meta';
 import { useApp } from '../store';
 import Attachments from './Attachments';
-import type { Task, Recurrence } from '../types';
+import type { Task, Recurrence, Assignee } from '../types';
 
 export default function TaskModal() {
   const { editingTask, openTask, refresh, toast, projects, categories, contacts } = useApp();
@@ -14,6 +14,7 @@ export default function TaskModal() {
   const [remDate, setRemDate] = useState('');
   const [openTasks, setOpenTasks] = useState<Task[]>([]);
   const [depPick, setDepPick] = useState('');
+  const [assignees, setAssignees] = useState<Assignee[]>([]);
 
   useEffect(() => {
     if (!editingTask) return;
@@ -23,6 +24,7 @@ export default function TaskModal() {
       api.get<Task>(`/tasks/${editingTask.id}`).then(ft => { setFull(ft); setT({ ...ft }); });
     }
     api.get<Task[]>('/tasks?status=inbox,planned,in_progress&limit=100').then(setOpenTasks).catch(() => {});
+    api.get<Assignee[]>('/tasks/assignees').then(setAssignees).catch(() => {});
   }, [editingTask?.id]);
 
   if (!editingTask) return null;
@@ -272,6 +274,25 @@ export default function TaskModal() {
               <Attachments taskId={t.id as number} />
             </div>
 
+            {assignees.length > 0 && (
+              <div className="field mt12">
+                <label>Поручить</label>
+                <div className="flex wrap mt8">
+                  {assignees.map(a => (
+                    <button key={a.id} className="btn small" onClick={async () => {
+                      if (!confirm(`Передать задачу «${t.title}» пользователю ${a.name}? Она уйдёт в его список.`)) return;
+                      try {
+                        await api.post(`/tasks/${t.id}/assign`, { user_id: a.id });
+                        openTask(null); refresh(); toast(`Поручено: ${a.name}`);
+                      } catch (e) { toast((e as Error).message); }
+                    }}>👤 {a.name}</button>
+                  ))}
+                </div>
+                <div className="small muted mt8">Задача перейдёт в список исполнителя, а у вас останется в разделе «Поручено мной».</div>
+              </div>
+            )}
+
+            {t.author && <div className="small muted mt12">Задачу поручил: <b>{t.author}</b></div>}
             {t.postponed_count ? <div className="small muted mt12">Переносилась: {t.postponed_count} раз</div> : null}
           </>
         )}

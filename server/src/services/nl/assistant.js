@@ -2,6 +2,8 @@
 // распознаёт команды и фразы-планы. Ничего не меняет без подтверждения.
 
 import { db } from '../../db.js';
+import { moneyReport } from '../money.js';
+import { delegationSummary } from '../delegate.js';
 import { listTasks, findTaskByTitle } from '../tasks.js';
 import { getTodayView, whatDidIForget } from '../today.js';
 import { planDay, unloadDay, freeSlots } from '../planner.js';
@@ -23,6 +25,8 @@ export const SUGGESTIONS = [
   'Итоги месяца',
   'Сколько задач?',
   'Что я забыл?',
+  'Сколько мне должны?',
+  'Что я поручил?',
   'Распланируй мой день',
   'Перенеси всё на завтра',
 ];
@@ -204,6 +208,14 @@ function answerHelp() {
       '• «что по проекту Кухня Ивановых»',
       '• «сколько задач»',
       '',
+      '💰 Деньги:',
+      '• «сколько мне должны», «кто должен»',
+      '• «сколько денег за месяц»',
+      '• «оплата 50000 Петровы» — запишу платёж по заказу',
+      '',
+      '👥 Поручения:',
+      '• «что я поручил», «что мне поручили»',
+      '',
       '📊 Итоги:',
       '• «статистика недели»',
       '• «итоги месяца» (1-го числа сам пришлю в Telegram)',
@@ -378,6 +390,39 @@ function answerCount() {
   };
 }
 
+function answerMoney() {
+  const rep = moneyReport();
+  const lines = [`💰 Деньги`];
+  lines.push(`Получено в этом месяце: ${fmtMoney(rep.received_this_month)}`);
+  lines.push(`Ждём по активным заказам: ${fmtMoney(rep.expected)}`);
+  lines.push(`Клиенты должны всего: ${fmtMoney(rep.total_debt)}`);
+  if (rep.debtors?.length) {
+    lines.push('');
+    lines.push('Кто должен:');
+    rep.debtors.slice(0, 7).forEach(d =>
+      lines.push(`• ${d.name}${d.contact_name ? ` (${d.contact_name})` : ''} — ${fmtMoney(d.debt)}${d.stage ? `, этап: ${d.stage}` : ''}`));
+  } else {
+    lines.push('\nДолгов нет — все заказы оплачены. 👌');
+  }
+  return { kind: 'answer', text: lines.join('\n') };
+}
+
+function answerDelegation() {
+  const d = delegationSummary();
+  const lines = [];
+  if (d.delegated.length) {
+    lines.push('Вы поручили:');
+    d.delegated.forEach(t => lines.push(`• ${t.title} — ${t.assignee}${t.date ? `, ${humanDate(t.date)}` : ''}`));
+  }
+  if (d.assigned.length) {
+    if (lines.length) lines.push('');
+    lines.push('Вам поручили:');
+    d.assigned.forEach(t => lines.push(`• ${t.title} — от ${t.author}${t.date ? `, ${humanDate(t.date)}` : ''}`));
+  }
+  if (!lines.length) return { kind: 'answer', text: 'Поручений нет: вы никому ничего не передавали и вам тоже.' };
+  return { kind: 'answer', text: lines.join('\n') };
+}
+
 function answerSilent() {
   const list = silentProjects();
   if (!list.length) return { kind: 'answer', text: 'Все активные проекты в движении — молчунов нет. 👌' };
@@ -419,6 +464,8 @@ export function handleMessage(text) {
   }
   if (/(что на недел|план на недел|на этой недел|ближайш[а-я]+ недел)/.test(s)) return answerWeek();
   if (/(молч|без движен|застоял|завис[а-я]* проект)/.test(s)) return answerSilent();
+  if (/(сколько мне должн|сколько должн|кто должен|долги|задолженност|сколько заработал|сколько денег|деньги за месяц|касса|оплаты за месяц|доход)/.test(s)) return answerMoney();
+  if (/(поручил|поручила|поручен|поручения|делегир)/.test(s)) return answerDelegation();
   if (/^сколько\s+(задач|дел|работы)/.test(s) || /сколько у меня задач/.test(s)) return answerCount();
   if (/(по проекту|^проект\s|о проекте)/.test(s)) { const r = answerProject(s); if (r) return r; }
   if (/^когда\s+/.test(s)) { const r = answerWhen(s); if (r) return r; }
