@@ -21,11 +21,11 @@ export function parseCommand(text) {
   const s = norm(text);
 
   // распланируй
-  if (/^(распланируй|спланируй|распланировать)( мой)?( день| завтра)?\b/.test(s)) {
+  if (/^(распланируй|спланируй|распланировать)( мой)?( день| завтра)?(\s|$)/.test(s)) {
     const d = /завтра/.test(s) ? addDays(todayStr(), 1) : todayStr();
     return { kind: 'command', command: 'plan_day', date: d };
   }
-  if (/^разгрузи(ть)?( мой)?( день)?\b/.test(s)) {
+  if (/^разгрузи(ть)?( мой)?( день)?(\s|$)/.test(s)) {
     return { kind: 'command', command: 'unload_day', date: todayStr() };
   }
 
