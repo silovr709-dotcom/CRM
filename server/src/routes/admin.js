@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { db } from '../db.js';
 import { isAdmin } from '../ctx.js';
 import { makeBackup, listBackups, backupsDir } from '../services/backup.js';
+import { storageStatus, snapshotNow } from '../services/persist.js';
 
 const r = Router();
 
@@ -30,6 +31,15 @@ r.get('/info', (req, res) => {
 });
 
 r.get('/backups', (req, res) => res.json(listBackups()));
+
+// Состояние облачного хранилища: настроено ли, доступно ли, когда был снимок
+r.get('/storage', async (req, res) => res.json(await storageStatus()));
+
+// Сохранить снимок базы в облако прямо сейчас
+r.post('/storage/snapshot', async (req, res) => {
+  const result = await snapshotNow({ force: true });
+  res.status(result.ok ? 200 : 500).json(result);
+});
 
 // Сделать копию прямо сейчас
 r.post('/backups', (req, res) => {

@@ -21,7 +21,7 @@
 | Frontend  | React 18 + TypeScript + Vite, без тяжёлых UI-библиотек |
 | Ассистент | Встроенный NL-парсер и правила (RU). Нейросети и внешние API не используются |
 | Аккаунты  | Логин/пароль (scrypt), сессии в БД, httpOnly-cookie `myday_sid` (30 дней) |
-| Облако    | Docker (`Dockerfile`), Amvera/Timeweb, постоянный том `/data` |
+| Облако    | Docker (`Dockerfile`); постоянный том `/data` либо снимки базы в S3 |
 
 ## Структура репозитория
 
@@ -44,6 +44,11 @@ server/
       nl/assistant.js   — AI-диалог: ответы на вопросы по реальным данным
       nl/quick.js       — умная строка: «завтра в 10:00 замер у Петровых» → задача
       users.js          — пользователи, пароли, сессии
+      backup.js         — локальные резервные копии базы (VACUUM INTO)
+      s3.js             — клиент S3 (подпись AWS SigV4 на node:crypto)
+      s3restore.js      — восстановление базы из S3 при старте контейнера
+      persist.js        — снимки базы в S3 и выгрузка/загрузка вложений
+    paths.js            — пути к данным (DATA_DIR), известны до открытия базы
     ctx.js              — AsyncLocalStorage: текущий пользователь (runAs/uid)
     routes/*.js         — тонкие HTTP-обработчики
 web/                    — SPA (React + TS)
@@ -134,5 +139,14 @@ fixed/flexible/deadline, подзадачи, зависимости, повто�
 
 Один контейнер содержит собранный фронтенд, API и Telegram-бот (long polling,
 отдельный цикл на каждого пользователя с токеном). Изменяемые данные — только в
-`DATA_DIR` (`/data` в облаке): `organizer.db` и папка `files/`. Стратегия хостинга,
-переменные окружения и пошаговая инструкция — в [DEPLOY.md](DEPLOY.md).
+`DATA_DIR` (`/data` в облаке): `organizer.db` и папка `files/`.
+
+Точка входа — `src/index.js`: до открытия SQLite он вызывает `restoreIfNeeded()`
+и, если площадка не даёт постоянного диска (Timeweb App Platform), скачивает
+последний снимок базы из S3. Дальше `app.js` поднимает сервер, `persist.js`
+выгружает снимки каждые `SNAPSHOT_EVERY_MIN` минут и обязательно по SIGTERM.
+Все операции с S3 «мягкие»: при недоступности хранилища приложение продолжает
+работать на локальном диске и пишет ошибку в лог и в `/api/admin/storage`.
+
+Инструкции: [DEPLOY.md](DEPLOY.md) (Amvera, общий случай) и
+[TIMEWEB.md](TIMEWEB.md) (Timeweb App Platform + S3).

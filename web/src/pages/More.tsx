@@ -745,10 +745,15 @@ function Account() {
 }
 
 // ---------- Резервная копия базы (только администратор) ----------
+type StorageStatus = { enabled: boolean; ok: boolean; message: string; bucket?: string; last_snapshot_at?: string | null };
+
 function BackupCard() {
   const { toast } = useApp();
   const [info, setInfo] = useState<{ tasks: number; projects: number; notes: number; backups: { name: string; created_at: string }[] } | null>(null);
+  const [storage, setStorage] = useState<StorageStatus | null>(null);
+  const [checking, setChecking] = useState(false);
   useEffect(() => { api.get<any>('/admin/info').then(setInfo).catch(() => {}); }, []);
+  useEffect(() => { api.get<StorageStatus>('/admin/storage').then(setStorage).catch(() => {}); }, []);
   const last = info?.backups?.[0];
 
   return (
@@ -774,6 +779,30 @@ function BackupCard() {
           Копии создаются автоматически раз в сутки.
         </div>
       )}
+
+      <div className="divider" />
+      <b>☁️ Облачное хранилище</b>
+      <p className="small muted">
+        {storage
+          ? (storage.enabled
+              ? `${storage.ok ? '✅' : '⚠️'} ${storage.message}${storage.last_snapshot_at ? ` · последний снимок: ${new Date(storage.last_snapshot_at).toLocaleString('ru-RU')}` : ''}`
+              : '⚠️ Хранилище не подключено: данные живут только на диске сервера.')
+          : 'Проверяю…'}
+      </p>
+      <div className="flex wrap">
+        <button className="btn small" disabled={checking} onClick={async () => {
+          setChecking(true);
+          try { setStorage(await api.get<StorageStatus>('/admin/storage')); toast('Проверил связь с хранилищем'); }
+          catch (e) { toast((e as Error).message); }
+          finally { setChecking(false); }
+        }}>{checking ? 'Проверяю…' : 'Проверить связь'}</button>
+        {storage?.enabled && (
+          <button className="btn small" onClick={async () => {
+            try { await api.post('/admin/storage/snapshot', {}); setStorage(await api.get<StorageStatus>('/admin/storage')); toast('Копия отправлена в облако ✓'); }
+            catch (e) { toast((e as Error).message); }
+          }}>Сохранить в облако сейчас</button>
+        )}
+      </div>
     </div>
   );
 }

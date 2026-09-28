@@ -4,12 +4,12 @@
 // Копии лежат рядом с базой: ${DATA_DIR}/backups/organizer-YYYY-MM-DD-HHmm.db
 // Хранится последние BACKUP_KEEP штук (по умолчанию 7).
 
-import { mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { db, dataDir } from '../db.js';
+import { db } from '../db.js';
+import { backupsDir } from '../paths.js';
 
-export const backupsDir = join(dataDir, 'backups');
-mkdirSync(backupsDir, { recursive: true });
+export { backupsDir };
 
 const KEEP = Number(process.env.BACKUP_KEEP || 7);
 const EVERY_HOURS = Number(process.env.BACKUP_EVERY_HOURS || 24);

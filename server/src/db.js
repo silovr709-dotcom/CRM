@@ -1,21 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join, isAbsolute } from 'node:path';
+import { dataDir, dbFile } from './paths.js';
 import { uid } from './ctx.js';
 import { hashPassword } from './util/password.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-// DATA_DIR — постоянный диск в облаке (Amvera: /data, Timeweb: /app/data).
-// Локально — server/data. База и файлы должны лежать ТОЛЬКО там, иначе
-// при перезапуске контейнера данные пропадут.
-const envDir = process.env.DATA_DIR;
-export const dataDir = envDir
-  ? (isAbsolute(envDir) ? envDir : join(process.cwd(), envDir))
-  : join(__dirname, '..', 'data');
-mkdirSync(dataDir, { recursive: true });
+export { dataDir };
 
-export const db = new DatabaseSync(join(dataDir, 'organizer.db'));
+export const db = new DatabaseSync(dbFile);
 
 // SQLite lower()/LIKE не понимают кириллицу — регистронезависимый поиск через JS
 db.function('nlower', { deterministic: true }, (s) => (s == null ? null : String(s).toLowerCase()));

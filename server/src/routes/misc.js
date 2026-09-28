@@ -1,16 +1,15 @@
 import { Router } from 'express';
 import { randomBytes } from 'node:crypto';
-import { writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
-import { db, dataDir, getSetting, setSetting, allSettings } from '../db.js';
+import { db, getSetting, setSetting, allSettings } from '../db.js';
+import { filesDir } from '../paths.js';
+import { uploadAttachment, ensureAttachmentLocal, removeAttachment } from '../services/persist.js';
 import { uid } from '../ctx.js';
 import { log, getActivity } from '../services/activity.js';
 import { instantiateTemplate } from '../services/templates.js';
 import { listTasks } from '../services/tasks.js';
 import { extractTags } from '../util/tags.js';
-
-const filesDir = join(dataDir, 'files');
-mkdirSync(filesDir, { recursive: true });
 
 const r = Router();
 
@@ -31,6 +30,8 @@ r.post('/attachments', (req, res) => {
   if (buf.length > 15 * 1024 * 1024) return res.status(413).json({ error: 'файл больше 15 МБ' });
   const stored = randomBytes(10).toString('hex') + extname(filename).slice(0, 10);
   writeFileSync(join(filesDir, stored), buf);
+  // Копия в облачное хранилище, чтобы файл пережил пересоздание контейнера
+  uploadAttachment(stored, buf, mime);
   const result = db.prepare(
     'INSERT INTO attachments (filename, mime, size, stored_name, task_id, project_id, note_id, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     .run(filename, mime, buf.length, stored, task_id, project_id, note_id, uid());
@@ -39,18 +40,21 @@ r.post('/attachments', (req, res) => {
   res.status(201).json(db.prepare('SELECT id, filename, mime, size, created_at FROM attachments WHERE id = ?').get(id));
 });
 
-r.get('/attachments/:id/download', (req, res) => {
+r.get('/attachments/:id/download', async (req, res) => {
   const a = db.prepare('SELECT * FROM attachments WHERE id = ? AND user_id = ?').get(Number(req.params.id), uid());
   if (!a) return res.status(404).json({ error: 'not found' });
+  // Если файла нет на диске (новый контейнер) — подтягиваем из хранилища
+  const local = await ensureAttachmentLocal(a.stored_name);
+  if (!local) return res.status(404).json({ error: 'файл не найден в хранилище' });
   res.setHeader('Content-Type', a.mime);
   res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(a.filename)}`);
-  res.sendFile(join(filesDir, a.stored_name));
+  res.sendFile(local);
 });
 
 r.delete('/attachments/:id', (req, res) => {
   const a = db.prepare('SELECT * FROM attachments WHERE id = ? AND user_id = ?').get(Number(req.params.id), uid());
   if (a) {
-    try { unlinkSync(join(filesDir, a.stored_name)); } catch { /* уже нет */ }
+    removeAttachment(a.stored_name);
     db.prepare('DELETE FROM attachments WHERE id = ?').run(a.id);
   }
   res.json({ ok: true });
