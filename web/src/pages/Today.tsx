@@ -5,6 +5,20 @@ import { useApp } from '../store';
 import TaskRow from '../components/TaskRow';
 import type { TodayView } from '../types';
 
+function Ring({ pct }: { pct: number }) {
+  const r = 17, c = 2 * Math.PI * r;
+  return (
+    <div className="ring-wrap" title={`Выполнено ${pct}% дня`}>
+      <svg className="ring" width="44" height="44" viewBox="0 0 44 44">
+        <circle className="track" cx="22" cy="22" r={r} strokeWidth="4" />
+        <circle className="val" cx="22" cy="22" r={r} strokeWidth="4"
+          strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)} />
+      </svg>
+      <span className="ring-num">{pct}%</span>
+    </div>
+  );
+}
+
 function greeting(): string {
   const h = new Date().getHours();
   if (h < 5) return 'Доброй ночи';
@@ -62,7 +76,13 @@ export default function Today() {
       {/* Сейчас / Далее */}
       <div className="hero">
         <div className="hero-card hero-now">
-          <div className="label">Сейчас · {v.now_time}</div>
+          <div className="flex" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div className="label">Сейчас · {v.now_time}</div>
+            <Ring pct={(() => {
+              const total = v.evening.done_count + v.briefing.tasks_count;
+              return total ? Math.round((v.evening.done_count / total) * 100) : 0;
+            })()} />
+          </div>
           {v.current ? (
             <>
               <div className="big">{typeIcon(v.current.type)} {v.current.title}</div>

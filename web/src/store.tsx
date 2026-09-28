@@ -19,6 +19,8 @@ interface AppCtx {
   setQuickOpen: (v: boolean) => void;
   toast: (msg: string) => void;
   toastMsg: string | null;
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
 }
 
 const Ctx = createContext<AppCtx>(null as unknown as AppCtx);
@@ -34,8 +36,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [aiPrefill, setAiPrefill] = useState('');
   const [quickOpen, setQuickOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'light' || saved === 'dark') return saved;
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
 
   const refresh = useCallback(() => setVersion(v => v + 1), []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => setTheme(t => (t === 'dark' ? 'light' : 'dark')), []);
 
   useEffect(() => {
     api.get<Category[]>('/categories').then(setCategories).catch(() => {});
@@ -48,6 +62,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     window.setTimeout(() => setToastMsg(null), 3200);
   }, []);
 
+  // Живые напоминания: раз в минуту проверяем, не подошло ли время
+  useEffect(() => {
+    const notified = new Set<number>(JSON.parse(sessionStorage.getItem('notified') || '[]'));
+    const check = async () => {
+      try {
+        const reminders = await api.get<{ id: number; title: string; remind_date: string; remind_time: string | null }[]>('/reminders');
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        for (const r of reminders) {
+          const due = r.remind_date < today || (r.remind_date === today && (!r.remind_time || r.remind_time <= nowTime));
+          if (due && !notified.has(r.id)) {
+            notified.add(r.id);
+            sessionStorage.setItem('notified', JSON.stringify([...notified]));
+            toast(`⏰ Напоминание: ${r.title}`);
+            break; // не больше одного за проверку
+          }
+        }
+      } catch { /* offline */ }
+    };
+    check();
+    const iv = window.setInterval(check, 60000);
+    return () => window.clearInterval(iv);
+  }, [toast]);
+
   const value = useMemo<AppCtx>(() => ({
     version, refresh, categories, projects, contacts,
     editingTask, openTask: setEditingTask,
@@ -57,7 +96,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     closeAi: () => setAiOpen(false),
     quickOpen, setQuickOpen,
     toast, toastMsg,
-  }), [version, categories, projects, contacts, editingTask, aiOpen, aiPrefill, quickOpen, toastMsg]);
+    theme, toggleTheme,
+  }), [version, categories, projects, contacts, editingTask, aiOpen, aiPrefill, quickOpen, toastMsg, theme]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

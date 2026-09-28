@@ -5,6 +5,7 @@ import { useApp, useRoute } from '../store';
 import type { Template, Automation, Contact, Category, Activity } from '../types';
 
 const SECTIONS = [
+  { id: 'analytics', icon: '📊', label: 'Аналитика', desc: 'Продуктивность, распределение дел, хронические переносы' },
   { id: 'templates', icon: '🧩', label: 'Шаблоны', desc: 'Готовые цепочки задач: доставка, монтаж, новый клиент' },
   { id: 'automations', icon: '⚡', label: 'Автоматизации', desc: 'КОГДА событие → ТОГДА действие' },
   { id: 'contacts', icon: '👥', label: 'Контакты', desc: 'Клиенты, поставщики, люди' },
@@ -22,11 +23,15 @@ const ACTIONS: Record<string, string> = {
 
 export default function More({ section }: { section?: string }) {
   const { nav } = useRoute();
+  const { theme, toggleTheme } = useApp();
 
   if (!section) {
     return (
       <div>
-        <div className="page-title"><h1>Ещё</h1></div>
+        <div className="page-title">
+          <h1>Ещё</h1>
+          <button className="btn small" onClick={toggleTheme}>{theme === 'dark' ? '🌞 Светлая' : '🌙 Тёмная'}</button>
+        </div>
         <div className="proj-grid">
           <div className="card proj-card" onClick={() => nav('/notes')}>
             <h3>📝 Заметки</h3>
@@ -47,6 +52,7 @@ export default function More({ section }: { section?: string }) {
     <div>
       <button className="btn ghost small" onClick={() => nav('/more')}>← Ещё</button>
       <div className="mt12">
+        {section === 'analytics' && <Analytics />}
         {section === 'templates' && <Templates />}
         {section === 'automations' && <Automations />}
         {section === 'contacts' && <Contacts />}
@@ -54,6 +60,103 @@ export default function More({ section }: { section?: string }) {
         {section === 'history' && <History />}
         {section === 'settings' && <Settings />}
       </div>
+    </div>
+  );
+}
+
+interface Stats {
+  days: { date: string; done: number }[];
+  week_done: number; week_created: number; open_total: number; overdue: number; total_postpones: number;
+  by_type: { type: string; c: number }[];
+  by_category: { name: string; icon: string; c: number }[];
+  chronic: { id: number; title: string; postponed_count: number }[];
+  projects: { id: number; name: string; total: number; done: number; progress: number }[];
+}
+
+function Analytics() {
+  const { version } = useApp();
+  const [s, setS] = useState<Stats | null>(null);
+  useEffect(() => { api.get<Stats>('/planner/stats').then(setS).catch(() => {}); }, [version]);
+  if (!s) return <div className="empty">Загрузка…</div>;
+
+  const max = Math.max(1, ...s.days.map(d => d.done));
+  const maxCat = Math.max(1, ...s.by_category.map(c => c.c));
+
+  return (
+    <div>
+      <div className="page-title"><h1>📊 Аналитика</h1></div>
+
+      <div className="ana-grid">
+        <div className="card ana-stat"><div className="num">{s.week_done}</div><div className="lbl">выполнено за 7 дней</div></div>
+        <div className="card ana-stat"><div className="num">{s.week_created}</div><div className="lbl">создано за 7 дней</div></div>
+        <div className="card ana-stat"><div className="num">{s.open_total}</div><div className="lbl">открытых задач</div></div>
+        <div className="card ana-stat"><div className="num" style={s.overdue ? { color: 'var(--red)' } : {}}>{s.overdue}</div><div className="lbl">просрочено</div></div>
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h3>Выполнено по дням · 14 дней</h3></div>
+        <div className="card ana-bars">
+          {s.days.map(d => (
+            <div key={d.date} className="ana-bar">
+              {d.done > 0 && <span className="bv">{d.done}</span>}
+              <div className="bar" style={{ height: `${Math.max(3, (d.done / max) * 82)}%` }} />
+              <span className="bl">{d.date.slice(8)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h3>Открытые задачи по категориям</h3></div>
+        <div className="card" style={{ padding: '8px 18px' }}>
+          {s.by_category.map(c => (
+            <div key={c.name} className="ana-row">
+              <span style={{ width: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.icon} {c.name}</span>
+              <div className="track2"><div style={{ width: `${(c.c / maxCat) * 100}%` }} /></div>
+              <b style={{ width: 26, textAlign: 'right' }}>{c.c}</b>
+            </div>
+          ))}
+          {s.by_category.length === 0 && <div className="empty">Нет данных</div>}
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h3>Типы открытых задач</h3></div>
+        <div className="flex wrap">
+          {s.by_type.map(x => <span key={x.type} className="chip accent">{typeIcon(x.type)} {typeLabel(x.type)} · {x.c}</span>)}
+        </div>
+      </div>
+
+      {s.chronic.length > 0 && (
+        <div className="section">
+          <div className="section-head"><h3>Постоянно переносятся</h3></div>
+          <div className="card" style={{ padding: '8px 18px' }}>
+            {s.chronic.map(c => (
+              <div key={c.id} className="ana-row">
+                <span style={{ flex: 1 }}>{c.title}</span>
+                <span className="chip red">{c.postponed_count} переносов</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {s.projects.length > 0 && (
+        <div className="section">
+          <div className="section-head"><h3>Активные проекты</h3></div>
+          <div className="card" style={{ padding: '8px 18px' }}>
+            {s.projects.map(p => (
+              <div key={p.id} className="ana-row">
+                <span style={{ width: 170, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                <div className="track2"><div style={{ width: `${p.progress}%` }} /></div>
+                <b style={{ width: 42, textAlign: 'right' }}>{p.progress}%</b>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="small muted">Здесь видно, «какие дела я постоянно переношу» — тот же вопрос можно задать ассистенту.</p>
     </div>
   );
 }

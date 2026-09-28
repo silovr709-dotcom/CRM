@@ -1,4 +1,4 @@
-import { api, humanDate, humanDuration, todayStr } from '../api';
+import { addDays, api, humanDate, humanDuration, todayStr } from '../api';
 import { typeIcon } from '../meta';
 import { PRIORITY_META } from '../meta';
 import { useApp } from '../store';
@@ -32,6 +32,13 @@ export default function TaskRow({ task, showDate, showTime = true }: { task: Tas
     (task.date && task.date < todayStr()) || (task.deadline && task.deadline < todayStr()));
   const prio = PRIORITY_META[task.priority] ?? PRIORITY_META[0];
 
+  async function toTomorrow(e: React.MouseEvent) {
+    e.stopPropagation();
+    await api.patch(`/tasks/${task.id}`, { date: addDays(todayStr(), 1), time: null });
+    toast(`«${task.title}» → завтра`);
+    refresh();
+  }
+
   return (
     <div className={`task-row${done ? ' done' : ''}`} onClick={() => openTask(task)}>
       {showTime && <div className="t-time">{task.time ?? ''}</div>}
@@ -57,6 +64,11 @@ export default function TaskRow({ task, showDate, showTime = true }: { task: Tas
           {task.attention_reason && <span className="chip red">{task.attention_reason}</span>}
         </div>
       </div>
+      {!done && task.status !== 'cancelled' && task.schedule_mode !== 'fixed' && (
+        <div className="quick-act">
+          <button onClick={toTomorrow} title="Перенести на завтра">→ завтра</button>
+        </div>
+      )}
     </div>
   );
 }

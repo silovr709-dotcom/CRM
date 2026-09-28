@@ -21,7 +21,7 @@ const NAV = [
 
 function Shell() {
   const { path, parts, nav } = useRoute();
-  const { openAi, setQuickOpen, toastMsg } = useApp();
+  const { openAi, setQuickOpen, toastMsg, theme, toggleTheme } = useApp();
 
   const page = (() => {
     if (parts[0] === 'calendar') return <Calendar />;
@@ -39,14 +39,17 @@ function Shell() {
     <div className="layout">
       {/* Desktop sidebar */}
       <aside className="sidebar">
-        <div className="brand">⚡ Мой<span>День</span></div>
+        <div className="brand"><span className="brand-mark">☀️</span> Мой<span>День</span></div>
         {NAV.map(n => (
           <button key={n.path} className={`nav-item${isActive(n.path) ? ' active' : ''}`} onClick={() => nav(n.path)}>
-            <span>{n.icon}</span> {n.label}
+            <span className="icon">{n.icon}</span> {n.label}
           </button>
         ))}
         <button className="btn ai ai-btn" onClick={() => openAi()}>✨ Что нужно сделать?</button>
         <button className="btn mt8" onClick={() => setQuickOpen(true)}>+ Быстро добавить</button>
+        <button className="theme-toggle mt8" onClick={toggleTheme}>
+          {theme === 'dark' ? '🌞 Светлая тема' : '🌙 Тёмная тема'}
+        </button>
       </aside>
 
       <main className="main">{page}</main>

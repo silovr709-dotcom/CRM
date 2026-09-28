@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { planDay, applyPlan, unloadDay, eveningReview } from '../services/planner.js';
 import { getTodayView, whatDidIForget } from '../services/today.js';
+import { getStats } from '../services/stats.js';
 import { updateTask } from '../services/tasks.js';
 import { todayStr, addDays } from '../util/dates.js';
 
@@ -8,6 +9,7 @@ const r = Router();
 
 r.get('/today', (req, res) => res.json(getTodayView(req.query.date || todayStr())));
 r.get('/forgotten', (req, res) => res.json(whatDidIForget()));
+r.get('/stats', (req, res) => res.json(getStats()));
 
 r.post('/plan-day', (req, res) => res.json(planDay(req.body.date || todayStr())));
 r.post('/apply-plan', (req, res) => res.json({ applied: applyPlan(req.body.placed || []) }));
