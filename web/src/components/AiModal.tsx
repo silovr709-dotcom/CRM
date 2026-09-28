@@ -157,7 +157,12 @@ export default function AiModal() {
         <div className="ai-messages">
           {msgs.map((m, mi) => (
             <div key={mi} style={{ display: 'contents' }}>
-              <div className={`msg ${m.role}`}>{m.text}</div>
+              <div className={`msg ${m.role}`} style={{ whiteSpace: 'pre-wrap' }}>
+                {m.role === 'bot' && (m.payload as any)?.source === 'llm' && (
+                  <span className="small muted" style={{ display: 'block', marginBottom: 2 }}>🧠 ChatGPT</span>
+                )}
+                {m.text}
+              </div>
 
               {/* План из фразы */}
               {m.role === 'bot' && m.payload?.kind === 'plan' && m.payload.items && !m.resolved && (

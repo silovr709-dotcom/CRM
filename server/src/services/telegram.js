@@ -7,7 +7,7 @@
 // НЕ в коде и не в репозитории.
 
 import { db, getSetting, setSetting } from '../db.js';
-import { handleMessage } from './nl/assistant.js';
+import { smartMessage } from './nl/smart.js';
 import { executeCommand } from './nl/commands.js';
 import { applyPlanItems } from './nl/apply.js';
 import { applyPlan } from './planner.js';
@@ -120,7 +120,7 @@ async function handleText(chatId, text) {
 async function answerAndSend(chatId, text) {
   let res;
   try {
-    res = handleMessage(text);
+    res = await smartMessage(text);
   } catch {
     return sendMessage(chatId, 'Не смог разобрать. Попробуйте иначе.');
   }
