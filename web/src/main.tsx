@@ -15,3 +15,15 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   });
 }
+
+// Ловим системное предложение установки (Chrome/Edge/Android) —
+// покажем свою кнопку «Установить приложение» в настройках.
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  (window as any).__installPrompt = e;
+  window.dispatchEvent(new Event('pwa-installable'));
+});
+window.addEventListener('appinstalled', () => {
+  (window as any).__installPrompt = null;
+  window.dispatchEvent(new Event('pwa-installable'));
+});

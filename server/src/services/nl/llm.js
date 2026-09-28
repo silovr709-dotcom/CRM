@@ -1,25 +1,60 @@
 // Адаптер внешнего LLM (OpenAI-совместимый API: OpenAI / OpenRouter / Ollama / vLLM…).
-// Ключи ТОЛЬКО из переменных окружения — в репозитории не хранятся.
-//
-//   LLM_API_KEY  — ключ (обязателен для включения)
-//   LLM_API_URL  — endpoint (по умолчанию https://api.openai.com/v1/chat/completions)
-//   LLM_MODEL    — модель (по умолчанию gpt-4o-mini)
+// Ключ берётся из настроек (локальная БД, в git не попадает) либо из переменных
+// окружения LLM_API_KEY / LLM_API_URL / LLM_MODEL (env имеет приоритет).
 //
 // LLM используется для РАЗБОРА ФРАЗ (лучше понимает сложные формулировки).
 // Ответы на вопросы («что у меня сегодня?») намеренно остаются на данных БД.
 // При любой ошибке/таймауте — тихий фолбэк на встроенный парсер.
 
+import { getSetting } from '../../db.js';
 import { todayStr, humanDate, humanDuration } from '../../util/dates.js';
 
-const API_URL = process.env.LLM_API_URL || 'https://api.openai.com/v1/chat/completions';
-const MODEL = process.env.LLM_MODEL || 'gpt-4o-mini';
+function cfg() {
+  const key = process.env.LLM_API_KEY || getSetting('llm_api_key', '');
+  const url = process.env.LLM_API_URL || getSetting('llm_api_url', '') || 'https://api.openai.com/v1/chat/completions';
+  const model = process.env.LLM_MODEL || getSetting('llm_model', '') || 'gpt-4o-mini';
+  return { key, url, model, source: process.env.LLM_API_KEY ? 'env' : (key ? 'settings' : null) };
+}
 
 export function llmAvailable() {
-  return Boolean(process.env.LLM_API_KEY);
+  return Boolean(cfg().key);
 }
 
 export function llmStatus() {
-  return { available: llmAvailable(), model: llmAvailable() ? MODEL : null, url: llmAvailable() ? API_URL : null };
+  const c = cfg();
+  return {
+    available: Boolean(c.key),
+    model: c.key ? c.model : null,
+    url: c.key ? c.url : null,
+    source: c.source,
+  };
+}
+
+// Проверка ключа реальным мини-запросом
+export async function llmTest() {
+  const c = cfg();
+  if (!c.key) return { ok: false, error: 'Ключ не задан' };
+  try {
+    const res = await fetch(c.url, {
+      method: 'POST',
+      signal: AbortSignal.timeout(15000),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${c.key}` },
+      body: JSON.stringify({
+        model: c.model,
+        max_tokens: 5,
+        messages: [{ role: 'user', content: 'Ответь одним словом: ок' }],
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      return { ok: false, error: `HTTP ${res.status}${res.status === 401 ? ' — ключ не принят' : ''}${res.status === 404 ? ' — проверьте URL/модель' : ''}`, detail: body.slice(0, 200) };
+    }
+    return { ok: true, model: c.model };
+  } catch (e) {
+    if (e.name === 'TimeoutError') return { ok: false, error: 'Таймаут — API недоступен' };
+    if (String(e.message).includes('fetch failed')) return { ok: false, error: 'Нет соединения с API — проверьте интернет/URL' };
+    return { ok: false, error: e.message };
+  }
 }
 
 const TYPES = ['task', 'event', 'trip', 'purchase', 'delivery', 'work', 'personal', 'call', 'meeting'];
@@ -38,19 +73,20 @@ function buildSystemPrompt() {
 }
 
 export async function llmParsePhrase(text) {
-  if (!llmAvailable()) return null;
+  const c = cfg();
+  if (!c.key) return null;
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 12000);
-    const res = await fetch(API_URL, {
+    const res = await fetch(c.url, {
       method: 'POST',
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.LLM_API_KEY}`,
+        Authorization: `Bearer ${c.key}`,
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: c.model,
         temperature: 0,
         response_format: { type: 'json_object' },
         messages: [

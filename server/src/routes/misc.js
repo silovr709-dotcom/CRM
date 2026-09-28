@@ -226,9 +226,11 @@ r.delete('/automations/:id', (req, res) => {
 r.get('/activity', (req, res) => res.json(getActivity(req.query)));
 
 // ---------- Настройки ----------
+const SECRET_KEYS = new Set(['telegram_token', 'llm_api_key']);
 r.get('/settings', (req, res) => {
   const rows = db.prepare('SELECT * FROM settings').all();
-  res.json(Object.fromEntries(rows.map(x => [x.key, x.value])));
+  // секреты наружу не отдаём
+  res.json(Object.fromEntries(rows.filter(x => !SECRET_KEYS.has(x.key)).map(x => [x.key, x.value])));
 });
 r.put('/settings', (req, res) => {
   for (const [k, v] of Object.entries(req.body)) setSetting(k, v);

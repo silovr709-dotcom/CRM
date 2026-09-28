@@ -440,7 +440,55 @@ function Settings() {
         </button>
       </div>
 
-      <LlmStatus />
+      <LlmSettings />
+      <InstallApp />
+    </div>
+  );
+}
+
+function InstallApp() {
+  const { toast } = useApp();
+  const [, force] = useState(0);
+  useEffect(() => {
+    const cb = () => force(x => x + 1);
+    window.addEventListener('pwa-installable', cb);
+    return () => window.removeEventListener('pwa-installable', cb);
+  }, []);
+
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
+  const prompt = (window as any).__installPrompt;
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+
+  async function install() {
+    if (!prompt) return;
+    prompt.prompt();
+    const { outcome } = await prompt.userChoice;
+    if (outcome === 'accepted') {
+      (window as any).__installPrompt = null;
+      toast('Приложение устанавливается ✓');
+    }
+  }
+
+  return (
+    <div className="card mt16" style={{ padding: 16, maxWidth: 480 }}>
+      <b>📱 Установить как приложение</b>
+      {standalone ? (
+        <p className="small muted">✓ Уже запущено как приложение.</p>
+      ) : prompt ? (
+        <>
+          <p className="small muted">Приложение появится на рабочем столе / экране «Домой» и будет открываться без браузера.</p>
+          <button className="btn primary small" onClick={install}>Установить приложение</button>
+        </>
+      ) : isIOS ? (
+        <p className="small muted">
+          На iPhone/iPad: откройте сайт в <b>Safari</b> → нажмите кнопку <b>Поделиться</b> (□↑) → <b>«На экран “Домой”»</b>.
+        </p>
+      ) : (
+        <p className="small muted">
+          В <b>Chrome</b>: значок установки в адресной строке (⊕ / монитор со стрелкой) или меню ⋮ → <b>«Установить приложение»</b>.<br />
+          Если пункта нет — обновите страницу (Ctrl+Shift+R): браузер должен сначала загрузить оболочку приложения.
+        </p>
+      )}
     </div>
   );
 }
@@ -523,17 +571,89 @@ function TelegramSettings({ s, setS }: { s: Record<string, string>; setS: (v: Re
   );
 }
 
-function LlmStatus() {
-  const [st, setSt] = useState<{ available: boolean; model?: string } | null>(null);
-  useEffect(() => { api.get<any>('/telegram/llm-status').then(setSt).catch(() => {}); }, []);
+function LlmSettings() {
+  const { toast } = useApp();
+  const [st, setSt] = useState<{ available: boolean; model?: string | null; url?: string | null; source?: string | null } | null>(null);
+  const [key, setKey] = useState('');
+  const [model, setModel] = useState('');
+  const [url, setUrl] = useState('');
+  const [showAdv, setShowAdv] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => api.get<any>('/telegram/llm-status').then(setSt).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  async function save() {
+    setBusy(true);
+    try {
+      const body: Record<string, string> = {};
+      if (key.trim()) body.key = key.trim();
+      if (model.trim()) body.model = model.trim();
+      if (url.trim()) body.url = url.trim();
+      const next = await api.post<any>('/telegram/llm-config', body);
+      setSt(next); setKey('');
+      toast('Сохранено. Проверяю ключ…');
+      const t = await api.post<any>('/telegram/llm-test', {});
+      toast(t.ok ? `✅ Работает: ${t.model}` : `⚠️ ${t.error}`);
+    } finally { setBusy(false); }
+  }
+
+  async function disconnect() {
+    await api.post('/telegram/llm-config', { key: '' });
+    await load();
+    toast('LLM отключён');
+  }
+
   return (
     <div className="card mt16" style={{ padding: 16, maxWidth: 480 }}>
-      <b>🧠 Внешний LLM</b>
-      <div className="small mt8">
-        {st?.available
-          ? <>Подключён: <b>{st.model}</b> — фразы разбирает нейросеть, с фолбэком на встроенный парсер.</>
-          : <span className="muted">Не подключён — работает встроенный разбор фраз. Для подключения задайте переменные окружения сервера: <code>LLM_API_KEY</code>, опционально <code>LLM_API_URL</code> и <code>LLM_MODEL</code> (любой OpenAI-совместимый API). Ключи не хранятся в коде и в базе.</span>}
+      <b>🧠 Внешний LLM (нейросеть для разбора фраз)</b>
+      {st?.available ? (
+        <div className="small mt8">
+          ✅ Подключён: <b>{st.model}</b>
+          {st.source === 'env' ? <span className="muted"> (через переменные окружения сервера)</span> : null}
+          <div className="flex mt8" style={{ gap: 8 }}>
+            <button className="btn small" onClick={async () => {
+              const t = await api.post<any>('/telegram/llm-test', {});
+              toast(t.ok ? `✅ Работает: ${t.model}` : `⚠️ ${t.error}`);
+            }}>Проверить</button>
+            {st.source !== 'env' && <button className="btn small ghost danger" onClick={disconnect}>Отключить</button>}
+          </div>
+        </div>
+      ) : (
+        <p className="small muted">
+          Без ключа работает встроенный разбор фраз (он уже понимает многое).
+          С ключом сложные фразы разбирает нейросеть — точнее и гибче.<br /><br />
+          Подойдёт ключ <b>OpenAI</b> (platform.openai.com → API keys) или любой
+          OpenAI-совместимый сервис (OpenRouter, DeepSeek, локальная Ollama…).
+          Ключ хранится только в локальной базе — в код и git не попадает.
+        </p>
+      )}
+      <div className="flex mt8" style={{ gap: 8 }}>
+        <input
+          style={{ flex: 1 }}
+          type="password"
+          placeholder={st?.available ? 'Заменить ключ…' : 'API-ключ (sk-…)'}
+          value={key}
+          onChange={e => setKey(e.target.value)}
+        />
+        <button className="btn small" disabled={busy || !key.trim()} onClick={save}>Подключить</button>
       </div>
+      <button className="btn small ghost mt8" onClick={() => setShowAdv(!showAdv)}>
+        {showAdv ? '▴ Скрыть дополнительно' : '▾ Дополнительно (модель, свой API)'}
+      </button>
+      {showAdv && (
+        <div className="form-grid mt8">
+          <div className="field full"><label>Модель (по умолчанию gpt-4o-mini)</label>
+            <input placeholder="gpt-4o-mini" value={model} onChange={e => setModel(e.target.value)} /></div>
+          <div className="field full"><label>URL API (для OpenRouter/Ollama и т.п.)</label>
+            <input placeholder="https://api.openai.com/v1/chat/completions" value={url} onChange={e => setUrl(e.target.value)} /></div>
+          {(model.trim() || url.trim()) && !key.trim() && (
+            <div className="field full">
+              <button className="btn small" disabled={busy} onClick={save}>Сохранить модель/URL</button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
