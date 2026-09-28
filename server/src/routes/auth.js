@@ -6,6 +6,7 @@ import {
   listUsers, createUser, updateUser, deleteUser, COOKIE_NAME, SESSION_DAYS,
 } from '../services/users.js';
 import { currentUser, isAdmin } from '../ctx.js';
+import { loginRateLimit } from '../util/security.js';
 
 const r = Router();
 
@@ -20,10 +21,14 @@ export function setSessionCookie(req, res, token) {
   });
 }
 
-r.post('/login', (req, res) => {
+r.post('/login', loginRateLimit, (req, res) => {
   const { login, password } = req.body || {};
   const user = authenticate(login, password);
-  if (!user) return res.status(401).json({ error: 'Неверный логин или пароль' });
+  if (!user) {
+    req.onLoginFailed?.();
+    return res.status(401).json({ error: 'Неверный логин или пароль' });
+  }
+  req.onLoginOk?.();
   setSessionCookie(req, res, createSession(user.id));
   res.json({ user });
 });

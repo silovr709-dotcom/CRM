@@ -5,10 +5,14 @@
   "type": "module",
   "scripts": {
     "start": "node --no-warnings src/index.js",
-    "dev": "node --no-warnings --watch src/index.js"
+    "dev": "node --no-warnings --watch src/index.js",
+    "backup": "node --no-warnings -e \"import('./src/services/backup.js').then(m=>console.log(m.makeBackup()))\""
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=22.5.0"
   }
 }

@@ -737,7 +737,43 @@ function Account() {
         <button className="btn primary mt12" disabled={!oldPassword || !newPassword} onClick={change}>Сохранить пароль</button>
       </div>
 
+      {user?.role === 'admin' && <BackupCard />}
+
       <button className="btn mt16" onClick={logout}>Выйти из аккаунта</button>
+    </div>
+  );
+}
+
+// ---------- Резервная копия базы (только администратор) ----------
+function BackupCard() {
+  const { toast } = useApp();
+  const [info, setInfo] = useState<{ tasks: number; projects: number; notes: number; backups: { name: string; created_at: string }[] } | null>(null);
+  useEffect(() => { api.get<any>('/admin/info').then(setInfo).catch(() => {}); }, []);
+  const last = info?.backups?.[0];
+
+  return (
+    <div className="card mt16" style={{ padding: 16, maxWidth: 420 }}>
+      <b>💾 Резервная копия</b>
+      <p className="small muted">
+        Все ваши данные — один файл. Скачайте его и сохраните на компьютер:
+        если что-то случится с сервером, из этого файла всё восстанавливается.
+        {last ? ` Последняя копия на сервере: ${last.name}.` : ''}
+      </p>
+      <div className="flex wrap">
+        <button className="btn primary small" onClick={() => { window.location.href = '/api/admin/backups/latest/download'; }}>
+          Скачать копию
+        </button>
+        <button className="btn small" onClick={async () => {
+          try { await api.post('/admin/backups', {}); const fresh = await api.get<any>('/admin/info'); setInfo(fresh); toast('Копия создана на сервере'); }
+          catch (e) { toast((e as Error).message); }
+        }}>Создать копию сейчас</button>
+      </div>
+      {info && (
+        <div className="small muted mt8">
+          В базе: задач {info.tasks}, проектов {info.projects}, заметок {info.notes}.
+          Копии создаются автоматически раз в сутки.
+        </div>
+      )}
     </div>
   );
 }
