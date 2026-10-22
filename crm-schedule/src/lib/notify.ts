@@ -220,14 +220,3 @@ export async function testNotification(channels: ReminderChannel[]): Promise<{ b
   }
   return result;
 }
-
-/* --------------------------- совместимость ------------------------------- */
-
-/** Ближайший монтаж на сегодня для плашки в шапке. */
-export function clearNotificationHistory(): void {
-  try {
-    localStorage.removeItem('crm-schedule.notified.v1');
-  } catch {
-    /* нечего чистить */
-  }
-}
