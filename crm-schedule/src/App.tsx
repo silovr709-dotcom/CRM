@@ -22,7 +22,9 @@ import { contactTone, isClosedStatus } from './lib/crm';
 import { taskStats } from './lib/crmTasks';
 import { collectEvents, scheduleWarnings } from './lib/schedule';
 import { normalizeRules, runAutomations } from './lib/crmAutomation';
-import { dueReminders, notifyPermission, pushNotifications } from './lib/notify';
+import { setTitleBadge } from './lib/notify';
+import { useReminders } from './lib/useReminders';
+import NotificationCenter from './components/NotificationCenter';
 import { decodeShare } from './lib/share';
 import {
   applyUpdate, onInstallAvailability, promptInstall, registerServiceWorker, watchOnline,
@@ -88,6 +90,12 @@ export default function App() {
   const openClient = useCallback((id: string) => {
     navigate({ view: 'crm', clientId: id });
   }, []);
+
+  const reminders = useReminders({
+    onOpenDeal: (id) => navigate({ view: 'crm', dealId: id }),
+    onOpenSchedule: () => navigate({ view: 'schedule' }),
+  });
+
 
   const closeOverlays = useCallback(() => {
     setSharePreview(null);
@@ -170,23 +178,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Напоминания о монтажах, пока приложение открыто.
+  // Заголовок вкладки: раздел + счётчик напоминаний из канала «в заголовке».
+  const titleCount = reminders.active.filter((reminder) => reminder.channels.includes('title')).length;
   useEffect(() => {
-    if (!settings.notifications) return;
-    const check = () => {
-      if (notifyPermission() !== 'granted') return;
-      const reminders = dueReminders(deals, new Date(), settings.reminderMinutes, clientName);
-      const shown = pushNotifications(reminders);
-      if (shown > 0) notify(`Напоминание о событии: ${shown}`, 'info');
-    };
-    check();
-    const timer = window.setInterval(check, 60_000);
-    return () => window.clearInterval(timer);
-  }, [deals, settings.notifications, settings.reminderMinutes, clientName, notify]);
-
-  useEffect(() => {
-    document.title = `${NAV.find((item) => item.id === view)?.label ?? 'CRM'} · CRM + График`;
-  }, [view]);
+    setTitleBadge(titleCount, `${NAV.find((item) => item.id === view)?.label ?? 'CRM'} · CRM + График`);
+  }, [view, titleCount]);
 
   const theme = settings.theme;
   const toggleTheme = () => {
@@ -220,6 +216,13 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <NotificationCenter
+        reminders={reminders}
+        onOpenDeal={(id) => openDeal(id)}
+        onOpenSettings={() => go('data')}
+        floating
+      />
+
       <aside className="sidebar">
         <button
           type="button"
@@ -260,6 +263,12 @@ export default function App() {
             );
           })}
         </nav>
+
+        <NotificationCenter
+          reminders={reminders}
+          onOpenDeal={(id) => openDeal(id)}
+          onOpenSettings={() => go('data')}
+        />
 
         <button type="button" className="side-new" onClick={() => setNewDealClient('')}>
           <Plus size={16} /> Новая сделка

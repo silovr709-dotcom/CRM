@@ -169,6 +169,62 @@ export interface AutomationRule {
   enabled: boolean;
 }
 
+/* ----------------------------- напоминания ------------------------------ */
+
+/** Куда доставлять напоминание. */
+export type ReminderChannel = 'inapp' | 'browser' | 'sound' | 'title';
+
+export type ReminderPriority = 'low' | 'normal' | 'high';
+
+/** За чем следит правило. */
+export type ReminderSource =
+  | 'install' | 'measure' | 'delivery' | 'ready'
+  | 'task' | 'contact' | 'payment' | 'stale' | 'digest';
+
+/**
+ * Правило напоминания: «когда» × «о чём» × «куда».
+ * Один и тот же источник можно настроить несколько раз — например,
+ * за сутки на почту-в-браузер и за 15 минут со звуком.
+ */
+export interface ReminderRule {
+  id: string;
+  label: string;
+  enabled: boolean;
+  source: ReminderSource;
+  /** Минуты до срока: 1440 — за сутки, 0 — в момент, −60 — через час после. */
+  offsets: number[];
+  /** Время для дат без часов (задачи, контакты, оплата). */
+  atTime?: string;
+  channels: ReminderChannel[];
+  priority: ReminderPriority;
+  /** Только сделки, где ответственный — вы. */
+  onlyMine?: boolean;
+  /** Не будить в тихие часы. */
+  respectQuietHours: boolean;
+  /** Каждый день заново, пока срок не закрыт (задачи, контакты, зависшие сделки). */
+  repeatDaily?: boolean;
+  /** Для «зависших» сделок: сколько дней без движения. */
+  staleDays?: number;
+}
+
+export interface QuietHours {
+  enabled: boolean;
+  from: string;
+  to: string;
+  /** В субботу и воскресенье тихие часы не действуют. */
+  skipWeekends: boolean;
+  /** Что делать с попавшим в тихие часы: дождаться или пропустить. */
+  mode: 'wait' | 'skip';
+}
+
+export interface DigestSettings {
+  enabled: boolean;
+  /** «08:30». */
+  at: string;
+  weekdaysOnly: boolean;
+  channels: ReminderChannel[];
+}
+
 export interface Settings {
   companyName: string;
   /** Имя текущего пользователя: «мои сделки» и подписи. */
@@ -182,6 +238,10 @@ export interface Settings {
   /** За сколько минут напоминать по умолчанию. */
   reminderMinutes: number;
   messageTemplates: MessageTemplate[];
+  /** Правила напоминаний — порядок задаёт вид списка. */
+  reminderRules: ReminderRule[];
+  quietHours: QuietHours;
+  digest: DigestSettings;
   rules: AutomationRule[];
   /** Показывать баннер «это демо-данные». */
   demo: boolean;

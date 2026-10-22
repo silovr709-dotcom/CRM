@@ -1,7 +1,7 @@
 // Настройки и данные: реквизиты, тема, напоминания, шаблоны, автоматика, бэкапы и импорт.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Bell, Check, Download, FileDown, FileUp, HardDrive, MessageSquare, Moon, Plus,
+  Check, Download, FileDown, FileUp, HardDrive, MessageSquare, Moon, Plus,
   RotateCcw, Save, Settings2, Sun, Trash2, TriangleAlert, Upload, Users,
 } from 'lucide-react';
 import type { Deal } from '../types';
@@ -19,8 +19,8 @@ import {
   collectAttachments, buildBackupZip, readBackupZip, restoreArchiveFiles,
 } from '../lib/backupZip';
 import { pruneFiles, storageInfo, type StorageInfo } from '../lib/attachments';
-import { askNotifyPermission, clearNotificationHistory, notifyPermission } from '../lib/notify';
 import Modal from './Modal';
+import ReminderSettings from './ReminderSettings';
 
 function emptyPreviewDeal(): Deal {
   const stamp = new Date().toISOString();
@@ -45,14 +45,6 @@ function emptyPreviewDeal(): Deal {
   };
 }
 
-const REMINDER_OPTIONS = [
-  { value: 15, label: 'за 15 минут' },
-  { value: 30, label: 'за 30 минут' },
-  { value: 60, label: 'за час' },
-  { value: 120, label: 'за 2 часа' },
-  { value: 1440, label: 'за сутки' },
-];
-
 export default function DataView() {
   const {
     data, deals, clients, settings, updateSettings, replaceData, resetDemo, clearAll,
@@ -65,12 +57,10 @@ export default function DataView() {
     teams: settings.teams.join(', '),
     hints: settings.hints,
     theme: settings.theme,
-    notifications: settings.notifications,
     reminderMinutes: settings.reminderMinutes,
   }));
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [backupInfo, setBackupInfo] = useState<AutoBackupInfo | null>(() => autoBackupInfo());
-  const [permission, setPermission] = useState(() => notifyPermission());
   const [archive, setArchive] = useState<{ preview: ImportPreview; files: number; blobs: Map<string, Blob> } | null>(null);
   const [storage, setStorage] = useState<StorageInfo | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -107,7 +97,6 @@ export default function DataView() {
       teams: draft.teams.split(',').map((value) => value.trim()).filter(Boolean),
       hints: draft.hints,
       theme: draft.theme,
-      notifications: draft.notifications,
       reminderMinutes: draft.reminderMinutes,
     });
     notify('Настройки сохранены');
@@ -203,6 +192,8 @@ export default function DataView() {
         <div><span>Сохранено</span><b>{savedAt ? fmtDateTime(savedAt) : '—'}</b></div>
       </section>
 
+      <ReminderSettings />
+
       <div className="data-grid">
         <section className="card">
           <div className="section-head">
@@ -253,37 +244,6 @@ export default function DataView() {
             <input type="checkbox" checked={draft.hints} onChange={(event) => setDraft({ ...draft, hints: event.target.checked })} />
             показывать подсказки на экранах
           </label>
-
-          <div className="section-head sub">
-            <h3><Bell size={14} /> Напоминания</h3>
-          </div>
-          <label className="chip-toggle">
-            <input
-              type="checkbox"
-              checked={draft.notifications}
-              onChange={async (event) => {
-                const value = event.target.checked;
-                setDraft({ ...draft, notifications: value });
-                if (value && notifyPermission() === 'default') {
-                  await askNotifyPermission();
-                  setPermission(notifyPermission());
-                }
-              }}
-            />
-            браузерные уведомления о монтажах
-          </label>
-          <label className="field">Напомнить заранее
-            <select value={draft.reminderMinutes} onChange={(event) => setDraft({ ...draft, reminderMinutes: Number(event.target.value) })}>
-              {REMINDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
-          <p className="field-hint">
-            Разрешение: {permission === 'granted' ? 'выдано' : permission === 'denied' ? 'запрещено в браузере' : 'не запрошено'}.
-            {' '}Напоминания работают, пока приложение открыто.
-            <button type="button" className="link-btn" onClick={() => { clearNotificationHistory(); notify('Отметки об отправке сброшены'); }}>
-              сбросить отправленные
-            </button>
-          </p>
 
           <div className="save-row">
             <button type="button" className="btn primary" onClick={saveSettings}><Save size={15} /> Сохранить настройки</button>

@@ -164,6 +164,32 @@ describe('офлайн и установка', () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => {
     fireEvent(window, new Event('online'));
+    cleanup();
+  });
+
+  it('открывает центр напоминаний', () => {
+    renderApp();
+    const button = screen.getAllByRole('button', { name: /Напоминания/ })[0];
+    fireEvent.click(button);
+    const panel = screen.getByRole('dialog', { name: 'Центр напоминаний' });
+    expect(within(panel).getByText('Ближайшие')).toBeTruthy();
+    expect(within(panel).getByText(/включено правил/u)).toBeTruthy();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Закрыть' }));
+    expect(screen.queryByRole('dialog', { name: 'Центр напоминаний' })).toBeNull();
+  });
+
+  it('добавляет правило напоминания в настройках', () => {
+    renderApp();
+    fireEvent.click(within(nav()).getByRole('button', { name: /Данные/ }));
+    const heading = screen.getByRole('heading', { name: /Напоминания/ });
+    expect(heading).toBeTruthy();
+    const before = screen.getAllByRole('checkbox', { name: /Включить правило/u }).length;
+    fireEvent.click(screen.getByRole('button', { name: /Правило$/ }));
+    const after = screen.getAllByRole('checkbox', { name: /Включить правило/u }).length;
+    expect(after).toBe(before + 1);
+    // новое правило сразу раскрыто — есть выбор «О чём напоминать»
+    expect(screen.getAllByLabelText(/О чём напоминать/u).length).toBeGreaterThan(0);
+    expect(screen.getByText('Когда напоминать')).toBeTruthy();
   });
 
   it('показывает плашку, когда пропала сеть', () => {

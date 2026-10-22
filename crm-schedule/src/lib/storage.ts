@@ -14,6 +14,7 @@ import { DEAL_STATUSES } from './crm';
 import { DEFAULT_RULES, normalizeRules } from './crmAutomation';
 import { normalizeTemplates } from './templates';
 import { defaultSettings } from './settings';
+import { normalizeDigest, normalizeQuietHours, normalizeReminderRules } from './reminderSettings';
 
 export const STORAGE_KEY = 'crm-schedule.v1';
 const AUTO_BACKUP_KEY = 'crm-schedule.autobackup.v1';
@@ -112,11 +113,14 @@ export function normalizeSettings(raw: Partial<Settings> | undefined): Settings 
     teams: Array.isArray(raw.teams) ? raw.teams.filter((item): item is string => typeof item === 'string') : [],
     hints: raw.hints !== false,
     theme: normalizeTheme(raw.theme),
-    notifications: Boolean(raw.notifications),
+    notifications: raw.notifications !== false,
     reminderMinutes: Number.isFinite(Number(raw.reminderMinutes)) && Number(raw.reminderMinutes) > 0
       ? Math.min(24 * 60, Math.round(Number(raw.reminderMinutes)))
       : base.reminderMinutes,
     messageTemplates: normalizeTemplates(raw.messageTemplates),
+    reminderRules: normalizeReminderRules(raw.reminderRules),
+    quietHours: normalizeQuietHours(raw.quietHours),
+    digest: normalizeDigest(raw.digest),
     rules: normalizeRules(raw.rules),
     demo: Boolean(raw.demo),
   };
