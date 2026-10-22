@@ -4,6 +4,7 @@
 import type { AppData, Client, Deal, DealSchedule, DealTask, Payment } from '../types';
 import { addDays, todayISO } from './dates';
 import { nowIso } from './utils';
+import { defaultSettings } from './settings';
 
 function iso(daysFromToday: number, hour = 12): string {
   const date = new Date();
@@ -115,7 +116,7 @@ export function demoData(): AppData {
       nextContactAt: day(1),
       comment: 'Фасады — эмаль, столешница из кварцевого агломерата. Ключи у консьержа.',
       tasks: [
-        task('t_len_1', 'Позвонить на фабрику: срок готовности', 'call', 0, false, 'Ирина'),
+        { ...task('t_len_1', 'Позвонить на фабрику: срок готовности', 'call', 0, false, 'Ирина'), repeat: 'weekdays' },
         task('t_len_2', 'Согласовать доставку с клиентом', 'delivery', 2, false, 'Ирина'),
         task('t_len_3', 'Отправить договор', 'docs', -6, true, 'Ирина'),
       ],
@@ -133,6 +134,8 @@ export function demoData(): AppData {
         deliveryAt: day(9),
         installAt: day(10),
         installDays: 2,
+        timeStart: '09:00',
+        timeEnd: '14:00',
         team: 'Бригада 1 — Сергей',
         address: 'ул. Ленина, 42, кв. 15',
         phone: '+7 (912) 345-67-89',
@@ -165,6 +168,8 @@ export function demoData(): AppData {
         measureAt: day(-14),
         installAt: day(21),
         installDays: 3,
+        timeStart: '10:00',
+        timeEnd: '18:00',
         team: 'Бригада 2 — Андрей',
         address: 'ЖК «Северный», корп. 3, кв. 108',
         phone: '+7 (903) 118-22-40',
@@ -191,6 +196,8 @@ export function demoData(): AppData {
         deliveryAt: day(19),
         installAt: day(20),
         installDays: 1,
+        timeStart: '18:00',
+        timeEnd: '21:00',
         team: 'Бригада 3 — Илья',
         address: 'ул. Мира, 8, кв. 4',
         phone: '+7 (921) 774-10-33',
@@ -222,6 +229,8 @@ export function demoData(): AppData {
         deliveryAt: day(15),
         installAt: day(16),
         installDays: 2,
+        timeStart: '09:00',
+        timeEnd: '13:00',
         team: 'Бригада 2 — Андрей',
         address: 'Коттеджный посёлок «Озёрный», участок 12',
         phone: '+7 (916) 520-77-12',
@@ -249,6 +258,8 @@ export function demoData(): AppData {
         deliveryAt: day(6),
         installAt: day(7),
         installDays: 1,
+        timeStart: '14:00',
+        timeEnd: '18:00',
         team: 'Бригада 2 — Андрей',
         address: 'ул. Свободы, 17, кв. 62',
         phone: '+7 (985) 640-19-08',
@@ -276,6 +287,8 @@ export function demoData(): AppData {
         deliveryAt: day(9),
         installAt: day(10),
         installDays: 1,
+        timeStart: '09:00',
+        timeEnd: '13:00',
         team: 'Бригада 1 — Сергей',
         address: '',
         phone: '+7 (926) 301-44-56',
@@ -306,6 +319,8 @@ export function demoData(): AppData {
         deliveryAt: day(-16),
         installAt: day(-15),
         installDays: 1,
+        timeStart: '10:00',
+        timeEnd: '16:00',
         team: 'Бригада 1 — Сергей',
         address: 'ул. Гагарина, 3, кв. 21',
         phone: '+7 (909) 882-15-70',
@@ -367,14 +382,16 @@ export function demoData(): AppData {
   ];
 
   return {
-    version: 1,
+    version: 2,
     clients,
     deals,
     settings: {
+      ...defaultSettings(),
       companyName: 'Студия кухни',
+      myName: 'Ирина',
       managers: ['Ирина', 'Олег'],
       teams: ['Бригада 1 — Сергей', 'Бригада 2 — Андрей', 'Бригада 3 — Илья'],
-      hints: true,
+      demo: true,
     },
     createdAt: nowIso(),
     updatedAt: nowIso(),

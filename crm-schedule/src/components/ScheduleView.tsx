@@ -1,40 +1,57 @@
-// График монтажей: месяц или неделя, замеры, готовность, доставки и монтажи.
-// Даты и бригада правятся прямо здесь — перетаскиванием или в карточке.
+// График монтажей: месяц, неделя, дорожки по бригадам и список дней.
+// Даты двигаются перетаскиванием (мышь и палец) и кнопками в карточке события.
 import { useEffect, useMemo, useState } from 'react';
+import {
+  CalendarDays, ChevronLeft, ChevronRight, Clock, MapPin, Printer, Search, TriangleAlert, X,
+} from 'lucide-react';
 import { useApp } from '../store';
 import {
-  addDays, daysBetween, fmtDate, fmtMoney, MONTHS, relativeDay, todayISO, WEEKDAYS,
+  addDays, fmtDate, fmtTimeRange, fmtWeekday, MONTHS, relativeDay, todayISO, WEEKDAYS,
 } from '../lib/dates';
 import {
-  collectEvents, eventsByDay, isWeekend, monthGrid, moveEvent,
+  collectEvents, eventsByDay, eventsOfDay, isWeekend, monthGrid, moveEvent,
   scheduleKindMeta, scheduleStatusMeta, scheduleWarnings, SCHEDULE_KINDS, teamLoad,
   weekGrid, type ScheduleEvent, type ScheduleKind,
 } from '../lib/schedule';
 import { exportIcs } from '../lib/storage';
+import { printDaySheet } from '../lib/print';
+import { useDragDrop } from '../lib/dnd';
+import { isNarrow, usePrefs } from '../lib/viewPrefs';
 import Modal from './Modal';
+import EmptyState from './EmptyState';
 
 export default function ScheduleView(props: {
   onOpenDeal: (id: string) => void;
   onEditSchedule: (dealId: string) => void;
+  onCreateInstall: (day?: string) => void;
 }) {
-  const { data, deals, clientName, settings, updateDeal, updateSchedule, notify } = useApp();
+  const { data, deals, clientName, settings, updateDeal, notify } = useApp();
   const today = todayISO();
-  const [mode, setMode] = useState<'month' | 'week'>('month');
+  const [prefs, patchPrefs] = usePrefs('schedule', {
+    // На телефоне сразу «Список дней»: календарь там тесный.
+    mode: (isNarrow() ? 'list' : 'month') as 'month' | 'week' | 'teams' | 'list',
+    kinds: [] as ScheduleKind[],
+    team: '',
+    day: today,
+  });
   const [anchor, setAnchor] = useState(() => new Date());
-  const [selectedDay, setSelectedDay] = useState(today);
-  const [kinds, setKinds] = useState<ScheduleKind[]>([]);
-  const [team, setTeam] = useState('');
-  const [drag, setDrag] = useState<{ dealId: string; kind: ScheduleKind } | null>(null);
-  const [dropDay, setDropDay] = useState('');
-  const [planOpen, setPlanOpen] = useState(false);
-  const [plan, setPlan] = useState({ dealId: '', kind: 'install' as ScheduleKind, date: today, team: '' });
+  const [query, setQuery] = useState('');
+
+  const day = prefs.day || today;
 
   const allEvents = useMemo(() => collectEvents(deals, (deal) => clientName(deal)), [deals, clientName]);
   const events = useMemo(() => allEvents
-    .filter((event) => kinds.length === 0 || kinds.includes(event.kind))
-    .filter((event) => !team || (event.team ?? '').trim() === team), [allEvents, kinds, team]);
+    .filter((event) => prefs.kinds.length === 0 || prefs.kinds.includes(event.kind))
+    .filter((event) => !prefs.team || (event.team ?? '').trim() === prefs.team)
+    .filter((event) => {
+      const needle = query.trim().toLocaleLowerCase('ru-RU');
+      if (!needle) return true;
+      return [event.dealTitle, event.client, event.address, event.team, event.note]
+        .filter(Boolean).join(' ').toLocaleLowerCase('ru-RU').includes(needle);
+    }), [allEvents, prefs.kinds, prefs.team, query]);
+
   const byDay = useMemo(() => eventsByDay(events), [events]);
-  const days = useMemo(() => (mode === 'month' ? monthGrid(anchor) : weekGrid(anchor)), [mode, anchor]);
+  const days = useMemo(() => (prefs.mode === 'week' ? weekGrid(anchor) : monthGrid(anchor)), [prefs.mode, anchor]);
   const warnings = useMemo(() => scheduleWarnings(deals), [deals]);
   const load = useMemo(() => teamLoad(allEvents), [allEvents]);
   const teams = useMemo(() => {
@@ -44,13 +61,13 @@ export default function ScheduleView(props: {
   }, [allEvents, settings.teams]);
 
   const monthTitle = `${MONTHS[anchor.getMonth()]} ${anchor.getFullYear()}`;
-  const periodCount = days.reduce((sum, day) => sum + (byDay.get(day)?.length ?? 0), 0);
-  const dayEvents = byDay.get(selectedDay) ?? [];
+  const periodCount = days.reduce((sum, date) => sum + (byDay.get(date)?.length ?? 0), 0);
+  const dayEvents = useMemo(() => eventsOfDay(allEvents, day), [allEvents, day]);
 
   const shift = (direction: number) => {
     const next = new Date(anchor);
-    if (mode === 'month') next.setMonth(next.getMonth() + direction);
-    else next.setDate(next.getDate() + direction * 7);
+    if (prefs.mode === 'week') next.setDate(next.getDate() + direction * 7);
+    else next.setMonth(next.getMonth() + direction);
     setAnchor(next);
   };
 
@@ -58,42 +75,39 @@ export default function ScheduleView(props: {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      if (planOpen) return;
       if (event.key === 'ArrowLeft') shift(-1);
       else if (event.key === 'ArrowRight') shift(1);
       else if (event.key === 't' || event.key === 'е' || event.key === 'T' || event.key === 'Е') {
         setAnchor(new Date());
-        setSelectedDay(today);
+        patchPrefs({ day: today });
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [mode, anchor, planOpen, today]);
+  });
 
-  const dropOn = (date: string) => {
-    if (!drag) return;
-    const deal = deals.find((item) => item.id === drag.dealId);
+  const { drag, over, bind } = useDragDrop((payload, target) => {
+    if (payload.kind !== 'event') return;
+    const deal = deals.find((item) => item.id === payload.id);
     if (!deal) return;
-    const next = moveEvent(deal, drag.kind, date);
-    updateDeal(next);
-    notify(`«${deal.title}» → ${fmtDate(date)}`);
-    setDrag(null);
-    setDropDay('');
-    setSelectedDay(date);
-  };
-
-  const planInstall = () => {
-    if (!plan.dealId) { notify('Выберите сделку', 'error'); return; }
-    const deal = deals.find((item) => item.id === plan.dealId);
-    if (!deal) return;
-    updateSchedule(deal.id, {
-      installAt: plan.date,
-      team: plan.team || deal.schedule.team,
-      address: deal.schedule.address || undefined,
+    const kind = (payload.label ?? 'install') as ScheduleKind;
+    if (deal.schedule[fieldFor(kind)] === target) return;
+    const previous = deal.schedule[fieldFor(kind)];
+    updateDeal(moveEvent(deal, kind, target));
+    notify(`${scheduleKindMeta(kind).label} «${deal.title}» → ${fmtDate(target)}`, 'ok', {
+      label: 'Вернуть',
+      run: () => {
+        const current = deals.find((item) => item.id === deal.id);
+        if (current && previous) updateDeal(moveEvent(current, kind, previous));
+      },
     });
-    notify(`Монтаж «${deal.title}» назначен на ${fmtDate(plan.date)}`);
-    setPlanOpen(false);
-    setSelectedDay(plan.date);
+    patchPrefs({ day: target });
+  });
+
+  const toggleKind = (kind: ScheduleKind) => {
+    patchPrefs({
+      kinds: prefs.kinds.includes(kind) ? prefs.kinds.filter((item) => item !== kind) : [...prefs.kinds, kind],
+    });
   };
 
   const routeAddresses = dayEvents.map((event) => event.address).filter((address): address is string => Boolean(address?.trim()));
@@ -101,108 +115,195 @@ export default function ScheduleView(props: {
     ? `https://yandex.ru/maps/?rtext=${routeAddresses.map((address) => encodeURIComponent(address)).join('~')}&rtt=auto`
     : '';
 
+  const modeButtons: Array<{ id: typeof prefs.mode; label: string }> = [
+    { id: 'month', label: 'Месяц' },
+    { id: 'week', label: 'Неделя' },
+    { id: 'teams', label: 'Бригады' },
+    { id: 'list', label: 'Список' },
+  ];
+
   return (
     <div className="page">
       <header className="page-head">
         <div>
           <div className="eyebrow">Замеры · доставки · монтажи</div>
           <h1>График монтажей</h1>
-          <p className="muted">Перетащите событие на другой день, чтобы перенести дату. Клик — быстрая правка.</p>
+          <p className="muted">Перетащите событие на другой день мышью или пальцем. Клик — быстрая правка.</p>
         </div>
         <div className="actions wrap">
           <button type="button" className="btn ghost" onClick={() => exportIcs(data, clientName)}>Скачать .ics</button>
-          <button type="button" className="btn primary" onClick={() => { setPlan({ ...plan, date: selectedDay, team: '' }); setPlanOpen(true); }}>+ Монтаж</button>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => printDaySheet(deals, day, clientName, settings.companyName)}
+            title={`Печать листа на ${fmtDate(day)}`}
+          >
+            <Printer size={15} /> Лист дня
+          </button>
+          <button type="button" className="btn primary" onClick={() => props.onCreateInstall(day)}>+ Монтаж</button>
         </div>
       </header>
 
       <section className="schedule-toolbar">
-        <div className="segmented">
-          <button type="button" className={mode === 'month' ? 'active' : ''} onClick={() => setMode('month')}>Месяц</button>
-          <button type="button" className={mode === 'week' ? 'active' : ''} onClick={() => setMode('week')}>Неделя</button>
+        <div className="segmented" aria-label="Вид графика">
+          {modeButtons.map((item) => (
+            <button key={item.id} type="button" className={prefs.mode === item.id ? 'active' : ''} onClick={() => patchPrefs({ mode: item.id })}>
+              {item.label}
+            </button>
+          ))}
         </div>
+
         <div className="period-nav">
-          <button type="button" className="icon-btn" onClick={() => shift(-1)} aria-label="Назад">‹</button>
+          <button type="button" className="icon-btn" onClick={() => shift(-1)} aria-label="Предыдущий период"><ChevronLeft size={16} /></button>
           <b className="period-title">{monthTitle}</b>
-          <button type="button" className="icon-btn" onClick={() => shift(1)} aria-label="Вперёд">›</button>
-          <button type="button" className="btn small ghost" onClick={() => { setAnchor(new Date()); setSelectedDay(today); }}>Сегодня</button>
+          <button type="button" className="icon-btn" onClick={() => shift(1)} aria-label="Следующий период"><ChevronRight size={16} /></button>
+          <button type="button" className="btn small ghost" onClick={() => { setAnchor(new Date()); patchPrefs({ day: today }); }}>Сегодня</button>
         </div>
+
         <div className="kind-filter">
           {SCHEDULE_KINDS.map((kind) => (
             <button
               key={kind.id}
               type="button"
-              className={`kind-chip chip-${kind.color}${kinds.includes(kind.id) ? ' active' : ''}`}
-              onClick={() => setKinds((current) => (current.includes(kind.id) ? current.filter((item) => item !== kind.id) : [...current, kind.id]))}
+              className={`kind-chip chip-${kind.color}${prefs.kinds.includes(kind.id) ? ' active' : ''}`}
+              onClick={() => toggleKind(kind.id)}
             >
               <i>{kind.short}</i>{kind.label}
             </button>
           ))}
         </div>
+
         <label className="team-filter">Бригада
-          <select value={team} onChange={(event) => setTeam(event.target.value)}>
+          <select value={prefs.team} onChange={(event) => patchPrefs({ team: event.target.value })}>
             <option value="">все</option>
             {teams.map((name) => <option key={name} value={name}>{name}</option>)}
           </select>
         </label>
+
+        <div className="search-wrap small">
+          <Search size={14} />
+          <input value={query} placeholder="адрес, бригада, заказ" onChange={(event) => setQuery(event.target.value)} aria-label="Поиск по графику" />
+          {query && <button type="button" className="search-clear" onClick={() => setQuery('')} aria-label="Очистить"><X size={13} /></button>}
+        </div>
+
         <span className="toolbar-count">Событий: <b>{periodCount}</b></span>
       </section>
 
       <div className="schedule-layout">
-        <section className={`calendar calendar-${mode}`}>
-          <div className="calendar-head">
-            {WEEKDAYS.map((day) => <span key={day}>{day}</span>)}
-          </div>
-          <div className="calendar-grid">
-            {days.map((day) => {
-              const items = byDay.get(day) ?? [];
-              const inMonth = day.slice(0, 7) === `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}`;
-              return (
-                <div
-                  key={day}
-                  className={[
-                    'calendar-cell',
-                    inMonth ? '' : 'out-month',
-                    day === today ? 'today' : '',
-                    day === selectedDay ? 'selected' : '',
-                    isWeekend(day) ? 'weekend' : '',
-                    dropDay === day ? 'drop' : '',
-                  ].filter(Boolean).join(' ')}
-                  onClick={() => setSelectedDay(day)}
-                  onDragOver={(event) => { event.preventDefault(); setDropDay(day); }}
-                  onDragLeave={() => setDropDay('')}
-                  onDrop={() => dropOn(day)}
-                >
-                  <div className="cell-top">
-                    <span className="cell-day">{Number(day.slice(8, 10))}</span>
-                    {items.length > 0 && <span className="cell-count">{items.length}</span>}
-                  </div>
-                  <div className="cell-events">
-                    {items.slice(0, mode === 'month' ? 3 : 8).map((event) => (
-                      <EventPill key={event.id} event={event} onOpen={() => props.onEditSchedule(event.dealId)} onDragStart={() => setDrag({ dealId: event.dealId, kind: event.kind })} />
-                    ))}
-                    {items.length > (mode === 'month' ? 3 : 8) && <span className="cell-more">+{items.length - 3}</span>}
-                  </div>
+        <div className="schedule-main">
+          {prefs.mode === 'teams' ? (
+            <section className="team-board card">
+              <div className="section-head">
+                <div>
+                  <h2>По бригадам</h2>
+                  <span className="muted">кто чем занят — видно сразу</span>
                 </div>
-              );
-            })}
-          </div>
-        </section>
+              </div>
+              <TeamLanes
+                days={weekGrid(anchor)}
+                teams={teams}
+                events={events}
+                today={today}
+                onOpenDeal={props.onEditSchedule}
+                onPlan={props.onCreateInstall}
+              />
+            </section>
+          ) : prefs.mode === 'list' ? (
+            <section className="card day-list">
+              <div className="section-head">
+                <div>
+                  <h2>Список дней</h2>
+                  <span className="muted">удобно на телефоне и для печати</span>
+                </div>
+                <button type="button" className="link-btn" onClick={() => printDaySheet(deals, day, clientName, settings.companyName)}>
+                  <Printer size={13} /> печать дня
+                </button>
+              </div>
+              <DayList
+                days={days.filter((date) => (byDay.get(date)?.length ?? 0) > 0 || date === today)}
+                byDay={byDay}
+                today={today}
+                day={day}
+                onSelect={(date) => patchPrefs({ day: date })}
+                onOpenDeal={props.onEditSchedule}
+              />
+            </section>
+          ) : (
+            <section className={`calendar calendar-${prefs.mode}`}>
+              <div className="calendar-head">
+                {WEEKDAYS.map((weekday) => <span key={weekday}>{weekday}</span>)}
+              </div>
+              <div className="calendar-grid">
+                {days.map((date) => {
+                  const items = byDay.get(date) ?? [];
+                  const inMonth = date.slice(0, 7) === `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}`;
+                  const limit = prefs.mode === 'week' ? 8 : 3;
+                  return (
+                    <div
+                      key={date}
+                      className={[
+                        'calendar-cell',
+                        inMonth ? '' : 'out-month',
+                        date === today ? 'today' : '',
+                        date === day ? 'selected' : '',
+                        isWeekend(date) ? 'weekend' : '',
+                        over === date ? 'drop' : '',
+                      ].filter(Boolean).join(' ')}
+                      data-drop={date}
+                      onClick={() => patchPrefs({ day: date })}
+                    >
+                      <div className="cell-top">
+                        <span className="cell-day">{Number(date.slice(8, 10))}</span>
+                        {items.length > 0 && <span className="cell-count">{items.length}</span>}
+                      </div>
+                      <div className="cell-events">
+                        {items.slice(0, limit).map((event) => (
+                          <EventPill
+                            key={event.id}
+                            event={event}
+                            dragging={drag?.id === event.dealId && drag?.label === event.kind}
+                            onOpen={() => props.onEditSchedule(event.dealId)}
+                            bind={() => bind({ id: event.dealId, kind: 'event', label: event.kind })}
+                          />
+                        ))}
+                        {items.length > limit && <span className="cell-more">+{items.length - limit}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+        </div>
 
         <aside className="schedule-side">
           <section className="card day-card">
             <div className="section-head">
               <div>
-                <h2>{fmtDate(selectedDay, { withYear: true })}</h2>
-                <span className="muted">{relativeDay(selectedDay, today)} · {dayEvents.length} событий</span>
+                <h2>{fmtDate(day, { withYear: true })}</h2>
+                <span className="muted">{fmtWeekday(day)} · {relativeDay(day, today)} · событий: {dayEvents.length}</span>
+              </div>
+              <div className="card-head-actions">
+                <button type="button" className="icon-btn" title="День раньше" aria-label="День раньше" onClick={() => patchPrefs({ day: addDays(day, -1) })}>
+                  <ChevronLeft size={15} />
+                </button>
+                <button type="button" className="icon-btn" title="День позже" aria-label="День позже" onClick={() => patchPrefs({ day: addDays(day, 1) })}>
+                  <ChevronRight size={15} />
+                </button>
               </div>
             </div>
             {dayEvents.length === 0 ? (
-              <div className="empty-note">На этот день ничего не назначено.</div>
+              <EmptyState
+                compact
+                icon={<CalendarDays size={20} />}
+                title="На этот день пусто"
+                hint="Поставьте монтаж или замер — событие сразу появится в календаре."
+                action={<button type="button" className="btn small ghost" onClick={() => props.onCreateInstall(day)}>Поставить событие</button>}
+              />
             ) : (
               <ul className="day-events">
                 {dayEvents.map((event) => {
                   const kind = scheduleKindMeta(event.kind);
-                  const deal = deals.find((item) => item.id === event.dealId);
                   const status = scheduleStatusMeta(event.status);
                   return (
                     <li key={event.id} className="day-event">
@@ -210,11 +311,14 @@ export default function ScheduleView(props: {
                       <div className="day-event-main">
                         <b>{event.dealTitle}</b>
                         <span>{event.client}{event.team ? ` · ${event.team}` : ''}</span>
-                        {event.address && <span className="muted small">{event.address}</span>}
+                        {event.timeStart && (
+                          <span className="with-icon"><Clock size={12} /> {fmtTimeRange(event.timeStart, event.timeEnd)}</span>
+                        )}
+                        {event.address && <span className="with-icon"><MapPin size={12} /> {event.address}</span>}
                         {event.note && <span className="muted small">{event.note}</span>}
                         <div className="day-event-actions">
                           <span className={`badge badge-${status.tone}`}>{status.label}</span>
-                          {deal && <button type="button" className="link-btn" onClick={() => props.onEditSchedule(deal.id)}>править</button>}
+                          <button type="button" className="link-btn" onClick={() => props.onEditSchedule(event.dealId)}>править</button>
                           <button type="button" className="link-btn" onClick={() => props.onOpenDeal(event.dealId)}>карточка →</button>
                         </div>
                       </div>
@@ -223,9 +327,16 @@ export default function ScheduleView(props: {
                 })}
               </ul>
             )}
-            {routeUrl && (
-              <a className="btn small ghost route-btn" href={routeUrl} target="_blank" rel="noreferrer">Маршрут по адресам дня</a>
-            )}
+            <div className="day-card-actions">
+              {routeUrl && (
+                <a className="btn small ghost" href={routeUrl} target="_blank" rel="noreferrer">
+                  <MapPin size={13} /> Маршрут по адресам
+                </a>
+              )}
+              <button type="button" className="btn small ghost" onClick={() => printDaySheet(deals, day, clientName, settings.companyName)}>
+                <Printer size={13} /> Печать листа
+              </button>
+            </div>
           </section>
 
           <section className="card load-card">
@@ -244,14 +355,16 @@ export default function ScheduleView(props: {
 
           <section className={`card${warnings.length > 0 ? ' card-warn' : ''}`}>
             <div className="section-head"><h2>Проверка графика</h2><span className="muted">{warnings.length || 'чисто'}</span></div>
-            {warnings.length === 0 ? <div className="empty-note">✓ Накладок нет.</div> : (
+            {warnings.length === 0 ? (
+              <EmptyState compact title="Накладок нет" hint="Бригады не пересекаются, адреса и время заполнены." />
+            ) : (
               <ul className="warning-list">
                 {warnings.map((warning, index) => (
                   <li key={`${warning.text}-${index}`} className={`warning warning-${warning.kind}`}>
-                    <span>{warning.kind === 'error' ? '⛔' : '⚠'}</span>
-                    {warning.dealId ? (
-                      <button type="button" className="warning-link" onClick={() => props.onEditSchedule(warning.dealId)}>{warning.text}</button>
-                    ) : <span>{warning.text}</span>}
+                    <TriangleAlert size={14} />
+                    {warning.dealId
+                      ? <button type="button" className="warning-link" onClick={() => props.onEditSchedule(warning.dealId)}>{warning.text}</button>
+                      : <span>{warning.text}</span>}
                   </li>
                 ))}
               </ul>
@@ -262,14 +375,14 @@ export default function ScheduleView(props: {
             <div className="section-head"><h2>Ближайшие 14 дней</h2><span className="muted">сводка</span></div>
             <ul className="upcoming-list">
               {allEvents.filter((event) => event.kind === 'install' && event.date >= today && event.date <= addDays(today, 14)).slice(0, 8).map((event) => {
-                const daysLeft = daysBetween(today, event.date);
+                const daysLeft = Math.round((new Date(`${event.date}T12:00:00`).getTime() - new Date(`${today}T12:00:00`).getTime()) / 86400000);
                 return (
                   <li key={event.id}>
                     <button type="button" className="upcoming-row" onClick={() => props.onEditSchedule(event.dealId)}>
                       <span className="event-chip chip-orange">М</span>
                       <span className="upcoming-main">
                         <b>{event.dealTitle}</b>
-                        <span>{event.client}</span>
+                        <span>{event.client}{event.timeStart ? ` · ${event.timeStart}` : ''}</span>
                       </span>
                       <span className="upcoming-side">
                         <b>{fmtDate(event.date)}</b>
@@ -286,63 +399,183 @@ export default function ScheduleView(props: {
           </section>
         </aside>
       </div>
-
-      {planOpen && (
-        <Modal
-          title="Запланировать монтаж"
-          subtitle="Быстро поставьте дату и бригаду — остальное можно заполнить в карточке."
-          onClose={() => setPlanOpen(false)}
-          footer={(
-            <>
-              <button type="button" className="btn ghost" onClick={() => setPlanOpen(false)}>Отмена</button>
-              <button type="button" className="btn primary" onClick={planInstall}>Поставить в график</button>
-            </>
-          )}
-        >
-          <div className="form-grid">
-            <label className="field span-2">Сделка
-              <select value={plan.dealId} onChange={(event) => setPlan({ ...plan, dealId: event.target.value })}>
-                <option value="">— выберите сделку —</option>
-                {deals.filter((deal) => deal.status !== 'delivered' && deal.status !== 'rejected').map((deal) => (
-                  <option key={deal.id} value={deal.id}>{clientName(deal)} · {deal.title}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field">Тип события
-              <select value={plan.kind} onChange={(event) => setPlan({ ...plan, kind: event.target.value as ScheduleKind })}>
-                {SCHEDULE_KINDS.map((kind) => <option key={kind.id} value={kind.id}>{kind.label}</option>)}
-              </select>
-            </label>
-            <label className="field">Дата
-              <input type="date" value={plan.date} onChange={(event) => setPlan({ ...plan, date: event.target.value })} />
-            </label>
-            <label className="field span-2">Бригада
-              <select value={plan.team} onChange={(event) => setPlan({ ...plan, team: event.target.value })}>
-                <option value="">не менять / не назначена</option>
-                {teams.map((name) => <option key={name} value={name}>{name}</option>)}
-              </select>
-            </label>
-            <p className="form-note span-2">Сумма последнего заказа: {fmtMoney(deals.find((deal) => deal.id === plan.dealId)?.amount ?? 0)}</p>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }
 
-function EventPill({ event, onOpen, onDragStart }: { event: ScheduleEvent; onOpen: () => void; onDragStart: () => void }) {
+function fieldFor(kind: ScheduleKind): 'measureAt' | 'readyAt' | 'deliveryAt' | 'installAt' {
+  if (kind === 'measure') return 'measureAt';
+  if (kind === 'ready') return 'readyAt';
+  if (kind === 'delivery') return 'deliveryAt';
+  return 'installAt';
+}
+
+function EventPill({ event, dragging, onOpen, bind }: {
+  event: ScheduleEvent;
+  dragging: boolean;
+  onOpen: () => void;
+  bind: () => Record<string, unknown>;
+}) {
   const kind = scheduleKindMeta(event.kind);
   return (
     <button
       type="button"
-      className={`event-pill chip-${kind.color} status-${event.status}`}
-      draggable
-      onDragStart={onDragStart}
+      className={`event-pill chip-${kind.color} status-${event.status}${dragging ? ' is-dragged' : ''}`}
+      {...bind()}
       onClick={(clickEvent) => { clickEvent.stopPropagation(); onOpen(); }}
-      title={`${kind.label}: ${event.dealTitle}${event.team ? ` · ${event.team}` : ''}`}
+      title={`${kind.label}: ${event.dealTitle}${event.timeStart ? ` · ${event.timeStart}` : ''}${event.team ? ` · ${event.team}` : ''}`}
     >
       <i>{kind.short}</i>
-      <span>{event.dealTitle}{event.dayCount && event.dayCount > 1 ? ` · ${event.dayIndex}/${event.dayCount}` : ''}</span>
+      <span>{event.timeStart ? `${event.timeStart} ` : ''}{event.dealTitle}{event.dayCount && event.dayCount > 1 ? ` · ${event.dayIndex}/${event.dayCount}` : ''}</span>
     </button>
   );
 }
+
+function DayList({ days, byDay, today, day, onSelect, onOpenDeal }: {
+  days: string[];
+  byDay: Map<string, ScheduleEvent[]>;
+  today: string;
+  day: string;
+  onSelect: (date: string) => void;
+  onOpenDeal: (id: string) => void;
+}) {
+  return (
+    <ul className="day-list-items">
+      {days.map((date) => {
+        const items = byDay.get(date) ?? [];
+        return (
+          <li key={date} className={date === day ? 'selected' : ''}>
+            <button type="button" className="day-list-head" onClick={() => onSelect(date)}>
+              <b>{fmtDate(date)}</b>
+              <span>{fmtWeekday(date)}{date === today ? ' · сегодня' : ''}</span>
+              <small>{items.length} событий</small>
+            </button>
+            <div className="day-list-events">
+              {items.map((event) => {
+                const kind = scheduleKindMeta(event.kind);
+                return (
+                  <button key={event.id} type="button" className="day-list-event" onClick={() => onOpenDeal(event.dealId)}>
+                    <span className={`event-chip chip-${kind.color}`}>{kind.short}</span>
+                    <span className="day-list-text">
+                      <b>{event.dealTitle}</b>
+                      <span>{event.client}{event.team ? ` · ${event.team}` : ''}{event.address ? ` · ${event.address}` : ''}</span>
+                    </span>
+                    <span className="day-list-time">{fmtTimeRange(event.timeStart, event.timeEnd) || 'весь день'}</span>
+                  </button>
+                );
+              })}
+              {items.length === 0 && <span className="muted small">нет событий</span>}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function TeamLanes({ days, teams, events, today, onOpenDeal, onPlan }: {
+  days: string[];
+  teams: string[];
+  events: ScheduleEvent[];
+  today: string;
+  onOpenDeal: (id: string) => void;
+  onPlan: (day: string) => void;
+}) {
+  const installs = events.filter((event) => event.kind === 'install');
+  const lanes = teams.length > 0 ? teams : ['Без бригады'];
+  return (
+    <div className="team-lanes">
+      <div className="lane-header">
+        <span className="lane-name" />
+        {days.map((day) => (
+          <span key={day} className={`lane-day${day === today ? ' today' : ''}`}>
+            {fmtWeekday(day)}<b>{Number(day.slice(8, 10))}</b>
+          </span>
+        ))}
+      </div>
+      {lanes.map((team) => (
+        <div key={team} className="lane">
+          <span className="lane-name">{team}</span>
+          {days.map((day) => {
+            const items = installs.filter((event) => event.date === day && (event.team ?? 'Без бригады').trim() === team);
+            return (
+              <div key={`${team}-${day}`} className={`lane-cell${day === today ? ' today' : ''}`}>
+                {items.map((event) => (
+                  <button key={event.id} type="button" className="lane-event" onClick={() => onOpenDeal(event.dealId)}>
+                    <b>{event.timeStart ?? '—'}</b>
+                    <span>{event.dealTitle}</span>
+                  </button>
+                ))}
+                {items.length === 0 && (
+                  <button type="button" className="lane-add" onClick={() => onPlan(day)} aria-label={`Поставить монтаж на ${fmtDate(day)}`}>+</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function InstallDialog({ dealId, day, onClose }: { dealId: string; day: string; onClose: () => void }) {
+  const { deals, clientName, updateSchedule, notify } = useApp();
+  const deal = deals.find((item) => item.id === dealId);
+  const [date, setDate] = useState(day);
+  const [draft, setDraft] = useState({ team: '', timeStart: '09:00', timeEnd: '14:00' });
+  if (!deal) return null;
+
+  return (
+    <Modal
+      title="Запланировать монтаж"
+      subtitle={`${clientName(deal)} · ${deal.title}`}
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn ghost" onClick={onClose}>Отмена</button>
+          <span className="foot-spacer" />
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => {
+              updateSchedule(deal.id, {
+                installAt: date,
+                team: draft.team || deal.schedule.team,
+                timeStart: draft.timeStart || undefined,
+                timeEnd: draft.timeEnd || undefined,
+                address: deal.schedule.address || undefined,
+              });
+              notify(`Монтаж «${deal.title}» — ${fmtDate(date)}`);
+              onClose();
+            }}
+          >
+            Поставить в график
+          </button>
+        </>
+      )}
+    >
+      <div className="form-grid">
+        <label className="field span-2">Дата
+          <input type="date" data-autofocus value={date} onChange={(event) => setDate(event.target.value)} />
+        </label>
+        <label className="field">Начало
+          <input type="time" value={draft.timeStart} onChange={(event) => setDraft({ ...draft, timeStart: event.target.value })} />
+        </label>
+        <label className="field">Окончание
+          <input type="time" value={draft.timeEnd} onChange={(event) => setDraft({ ...draft, timeEnd: event.target.value })} />
+        </label>
+        <label className="field span-2">Бригада
+          <select value={draft.team} onChange={(event) => setDraft({ ...draft, team: event.target.value })}>
+            <option value="">не менять / не назначена</option>
+            {Array.from(new Set([...deals.map((item) => item.schedule.team).filter(Boolean) as string[]])).map((team) => (
+              <option key={team} value={team}>{team}</option>
+            ))}
+          </select>
+        </label>
+        <p className="form-note span-2">Остальное (адрес, заметки, напоминания) — в карточке сделки на вкладке «График».</p>
+      </div>
+    </Modal>
+  );
+}
+
+export { eventsOfDay };

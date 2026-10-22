@@ -1,20 +1,11 @@
 // Автоматические правила CRM: система сама ставит задачи, чтобы сделки не повисали.
 // Логика чистая — поэтому её легко проверить тестами.
 
-import type { Deal, DealStatus, TaskKind } from '../types';
+import type { AutomationRule, Deal, DealStatus, RuleId, TaskKind } from '../types';
 import { addDays, todayISO } from './dates';
 import { addTask, paymentState } from './crmTasks';
 
-export type RuleId = 'callAfterOffer' | 'contractAfterApproval' | 'askPrepayment' | 'afterInstall' | 'stuckDeal';
-
-export interface AutomationRule {
-  id: RuleId;
-  label: string;
-  hint: string;
-  /** Через сколько дней срабатывает. */
-  days: number;
-  enabled: boolean;
-}
+export type { AutomationRule, RuleId } from '../types';
 
 export const DEFAULT_RULES: AutomationRule[] = [
   { id: 'callAfterOffer', label: 'Позвонить после КП', hint: 'если клиент не ответил на отправленное предложение', days: 2, enabled: true },

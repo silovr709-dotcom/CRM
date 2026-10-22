@@ -1,21 +1,30 @@
 // Хранение и обмен данными: localStorage, резервная копия JSON, календарь ICS
 // и импорт резервной копии калькулятора (проекты + клиенты).
 
-import type { AppData, Client, Deal, DealSchedule, DealStatus, DealTask, HistoryEntry, ScheduleStatus, TaskKind } from '../types';
+import type {
+  AppData, AutomationRule, Client, Deal, DealSchedule, DealStatus, DealTask, HistoryEntry,
+  MessageTemplate, RuleId, ScheduleStatus, Settings, TaskKind, TaskRepeat, ThemeMode,
+} from '../types';
 import { demoData } from './demoData';
 import { SCHEDULE_KINDS, scheduleStatusMeta, type ScheduleKind } from './schedule';
 import { isoDay, parseDay } from './dates';
 import { nowIso, normalizeName, phoneKey, uid } from './utils';
 import { DEAL_STATUSES } from './crm';
+import { DEFAULT_RULES, normalizeRules } from './crmAutomation';
+import { normalizeTemplates } from './templates';
+import { defaultSettings } from './settings';
 
 export const STORAGE_KEY = 'crm-schedule.v1';
+const AUTO_BACKUP_KEY = 'crm-schedule.autobackup.v1';
+
+export { defaultSettings } from './settings';
 
 export function emptyData(): AppData {
   return {
-    version: 1,
+    version: 2,
     clients: [],
     deals: [],
-    settings: { companyName: 'Моя студия', managers: [], teams: [], hints: true },
+    settings: defaultSettings(),
     createdAt: nowIso(),
     updatedAt: nowIso(),
   };
@@ -40,23 +49,75 @@ export function saveData(data: AppData): boolean {
   }
 }
 
-/** Мягкая проверка: принимаем только то, что похоже на нашу базу. */
-export function validateData(raw: unknown): AppData | null {
-  const data = raw as Partial<AppData> | null;
-  if (!data || typeof data !== 'object') return null;
-  if (!Array.isArray(data.deals) || !Array.isArray(data.clients)) return null;
+/** Автоматическая копия «до» опасных действий: импорт, очистка, сброс. */
+export function writeAutoBackup(data: AppData, reason: string): boolean {
+  try {
+    localStorage.setItem(AUTO_BACKUP_KEY, JSON.stringify({ reason, at: nowIso(), data }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface AutoBackupInfo {
+  reason: string;
+  at: string;
+  deals: number;
+  clients: number;
+}
+
+export function autoBackupInfo(): AutoBackupInfo | null {
+  try {
+    const raw = localStorage.getItem(AUTO_BACKUP_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { reason?: string; at?: string; data?: AppData };
+    const data = validateData(parsed.data);
+    if (!data) return null;
+    return {
+      reason: parsed.reason ?? 'перед изменениями',
+      at: parsed.at ?? '',
+      deals: data.deals.length,
+      clients: data.clients.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function readAutoBackup(): AppData | null {
+  try {
+    const raw = localStorage.getItem(AUTO_BACKUP_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { data?: AppData };
+    return validateData(parsed.data);
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------ нормализация ------------------------------ */
+
+function normalizeTheme(value: unknown): ThemeMode {
+  return value === 'dark' || value === 'system' || value === 'light' ? value : 'light';
+}
+
+export function normalizeSettings(raw: Partial<Settings> | undefined): Settings {
+  const base = defaultSettings();
+  if (!raw || typeof raw !== 'object') return base;
   return {
-    version: 1,
-    clients: data.clients.map(normalizeClient),
-    deals: data.deals.map(normalizeDeal),
-    settings: {
-      companyName: data.settings?.companyName ?? 'Моя студия',
-      managers: Array.isArray(data.settings?.managers) ? data.settings.managers : [],
-      teams: Array.isArray(data.settings?.teams) ? data.settings.teams : [],
-      hints: data.settings?.hints !== false,
-    },
-    createdAt: data.createdAt ?? nowIso(),
-    updatedAt: data.updatedAt ?? nowIso(),
+    companyName: typeof raw.companyName === 'string' && raw.companyName ? raw.companyName : base.companyName,
+    myName: typeof raw.myName === 'string' ? raw.myName : '',
+    managers: Array.isArray(raw.managers) ? raw.managers.filter((item): item is string => typeof item === 'string') : [],
+    teams: Array.isArray(raw.teams) ? raw.teams.filter((item): item is string => typeof item === 'string') : [],
+    hints: raw.hints !== false,
+    theme: normalizeTheme(raw.theme),
+    notifications: Boolean(raw.notifications),
+    reminderMinutes: Number.isFinite(Number(raw.reminderMinutes)) && Number(raw.reminderMinutes) > 0
+      ? Math.min(24 * 60, Math.round(Number(raw.reminderMinutes)))
+      : base.reminderMinutes,
+    messageTemplates: normalizeTemplates(raw.messageTemplates),
+    rules: normalizeRules(raw.rules),
+    demo: Boolean(raw.demo),
   };
 }
 
@@ -76,13 +137,30 @@ function normalizeClient(raw: Partial<Client>): Client {
   };
 }
 
+function normalizeTask(raw: Partial<DealTask>): DealTask {
+  const repeats: TaskRepeat[] = ['daily', 'weekdays', 'weekly', 'monthly'];
+  return {
+    id: raw.id ?? uid('task'),
+    title: typeof raw.title === 'string' && raw.title ? raw.title : 'Задача',
+    kind: (typeof raw.kind === 'string' ? raw.kind : 'other') as TaskKind,
+    dueAt: raw.dueAt?.slice(0, 10),
+    done: Boolean(raw.done),
+    doneAt: raw.doneAt,
+    assignee: raw.assignee,
+    comment: raw.comment,
+    origin: raw.origin,
+    repeat: raw.repeat && repeats.includes(raw.repeat) ? raw.repeat : undefined,
+    createdAt: raw.createdAt ?? nowIso(),
+  };
+}
+
 /** Старые/чужие записи приводим к текущей модели, чтобы ничего не падало. */
 function normalizeDeal(raw: Partial<Deal>): Deal {
   const status = DEAL_STATUSES.some((item) => item.value === raw.status) ? raw.status as DealStatus : 'draft';
   const schedule = raw.schedule ?? { status: 'planned' };
   return {
     id: raw.id ?? uid('deal'),
-    title: raw.title ?? 'Без названия',
+    title: typeof raw.title === 'string' && raw.title ? raw.title : 'Без названия',
     clientId: raw.clientId ?? '',
     amount: Number(raw.amount) || 0,
     manager: raw.manager,
@@ -91,8 +169,16 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
     nextContactAt: raw.nextContactAt?.slice(0, 10),
     lostReason: raw.lostReason,
     comment: raw.comment,
-    tasks: Array.isArray(raw.tasks) ? raw.tasks : [],
-    payments: Array.isArray(raw.payments) ? raw.payments : [],
+    tasks: Array.isArray(raw.tasks) ? raw.tasks.map(normalizeTask) : [],
+    payments: Array.isArray(raw.payments)
+      ? raw.payments.map((payment) => ({
+        id: payment.id ?? uid('pay'),
+        amount: Number(payment.amount) || 0,
+        at: (payment.at ?? isoDay(new Date())).slice(0, 10),
+        kind: payment.kind ?? 'prepay',
+        comment: payment.comment,
+      }))
+      : [],
     history: Array.isArray(raw.history) ? raw.history : [],
     schedule: {
       ...schedule,
@@ -101,14 +187,34 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
       readyAt: schedule.readyAt?.slice(0, 10),
       deliveryAt: schedule.deliveryAt?.slice(0, 10),
       installAt: schedule.installAt?.slice(0, 10),
+      timeStart: schedule.timeStart,
+      timeEnd: schedule.timeEnd,
+      installDays: schedule.installDays ? Math.max(1, Math.min(14, Math.round(schedule.installDays))) : undefined,
     },
     createdAt: raw.createdAt ?? nowIso(),
     updatedAt: raw.updatedAt ?? nowIso(),
   };
 }
 
+/** Мягкая проверка: принимаем только то, что похоже на нашу базу. */
+export function validateData(raw: unknown): AppData | null {
+  const data = raw as Partial<AppData> | null;
+  if (!data || typeof data !== 'object') return null;
+  if (!Array.isArray(data.deals) || !Array.isArray(data.clients)) return null;
+  return {
+    version: 2,
+    clients: data.clients.map(normalizeClient),
+    deals: data.deals.map(normalizeDeal),
+    settings: normalizeSettings(data.settings),
+    createdAt: data.createdAt ?? nowIso(),
+    updatedAt: data.updatedAt ?? nowIso(),
+  };
+}
+
 export function freshStart(useDemo: boolean): AppData {
-  return useDemo ? demoData() : emptyData();
+  if (!useDemo) return emptyData();
+  const demo = demoData();
+  return { ...demo, settings: { ...demo.settings, demo: true } };
 }
 
 /* ------------------------------ скачивание ------------------------------ */
@@ -127,7 +233,7 @@ export function exportBackup(data: AppData) {
   const payload = {
     kind: 'crm-schedule-backup',
     exportedAt: nowIso(),
-    version: 1,
+    version: 2,
     clients: data.clients,
     deals: data.deals,
     settings: data.settings,
@@ -180,8 +286,7 @@ interface CalculatorBackup {
   }>;
 }
 
-/** Резервная копия РЕцепта/калькулятора → наша база. Суммы в калькуляторе
- *  не хранятся в файле (они считаются по прайсу), поэтому их нужно заполнить. */
+/** Резервная копия РЕцепта/калькулятора → наша база. */
 export function importCalculatorBackup(raw: string): { data: AppData; deals: number; clients: number; warning: string } {
   let parsed: CalculatorBackup;
   try {
@@ -193,17 +298,17 @@ export function importCalculatorBackup(raw: string): { data: AppData; deals: num
     throw new Error('Это не резервная копия калькулятора (нет списка проектов).');
   }
 
-  const clients: Client[] = (parsed.clients ?? []).map((item) => ({
-    id: item.id ?? uid('cli'),
-    name: item.name?.trim() || 'Без имени',
-    phones: Array.isArray(item.phones) ? item.phones : [],
-    emails: Array.isArray(item.emails) ? item.emails : [],
+  const clients: Client[] = (parsed.clients ?? []).map((item) => normalizeClient({
+    id: item.id,
+    name: item.name,
+    phones: item.phones,
+    emails: item.emails,
     address: item.objectAddress || item.deliveryAddress,
     source: item.source,
     managerComment: item.managerComment,
-    tags: Array.isArray(item.tags) ? item.tags : [],
-    createdAt: item.createdAt ?? nowIso(),
-    updatedAt: item.updatedAt ?? nowIso(),
+    tags: item.tags,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
   }));
 
   const findClient = (name?: string, id?: string): Client | undefined => {
@@ -223,16 +328,15 @@ export function importCalculatorBackup(raw: string): { data: AppData; deals: num
   const deals: Deal[] = parsed.projects.map((project) => {
     let linked = findClient(project.client, project.clientId);
     if (!linked && project.client?.trim()) {
-      linked = {
+      linked = normalizeClient({
         id: uid('cli'),
-        name: project.client.trim(),
+        name: project.client,
         phones: project.clientOffer?.clientPhone ? [project.clientOffer.clientPhone] : [],
         emails: project.clientOffer?.clientEmail ? [project.clientOffer.clientEmail] : [],
         address: typeof project.schedule?.address === 'string' ? project.schedule.address : undefined,
-        tags: [],
-        createdAt: project.createdAt ?? nowIso(),
-        updatedAt: project.updatedAt ?? nowIso(),
-      };
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+      });
       clients.push(linked);
     }
 
@@ -261,11 +365,13 @@ export function importCalculatorBackup(raw: string): { data: AppData; deals: num
       address: typeof scheduleRaw.address === 'string' ? scheduleRaw.address : undefined,
       phone: typeof scheduleRaw.phone === 'string' ? scheduleRaw.phone : project.clientOffer?.clientPhone,
       note: typeof scheduleRaw.note === 'string' ? scheduleRaw.note : undefined,
+      timeStart: typeof scheduleRaw.timeStart === 'string' ? scheduleRaw.timeStart : undefined,
+      timeEnd: typeof scheduleRaw.timeEnd === 'string' ? scheduleRaw.timeEnd : undefined,
     };
 
-    const tasks: DealTask[] = (project.tasks ?? []).map((task) => ({
-      id: typeof task.id === 'string' ? task.id : uid('task'),
-      title: typeof task.title === 'string' ? task.title : 'Задача',
+    const tasks: DealTask[] = (project.tasks ?? []).map((task) => normalizeTask({
+      id: typeof task.id === 'string' ? task.id : undefined,
+      title: typeof task.title === 'string' ? task.title : undefined,
       kind: (typeof task.kind === 'string' ? task.kind : 'other') as TaskKind,
       dueAt: asDay(task.dueAt),
       done: Boolean(task.done),
@@ -273,7 +379,7 @@ export function importCalculatorBackup(raw: string): { data: AppData; deals: num
       assignee: typeof task.assignee === 'string' ? task.assignee : undefined,
       comment: typeof task.comment === 'string' ? task.comment : undefined,
       origin: typeof task.origin === 'string' ? task.origin : undefined,
-      createdAt: typeof task.createdAt === 'string' ? task.createdAt : nowIso(),
+      createdAt: typeof task.createdAt === 'string' ? task.createdAt : undefined,
     }));
 
     const history: HistoryEntry[] = [
@@ -304,10 +410,10 @@ export function importCalculatorBackup(raw: string): { data: AppData; deals: num
     const comment = [project.comment, workflow.managerComment, modules ? `Состав: ${modules}` : '']
       .filter(Boolean).join('\n');
 
-    return {
-      id: project.id ?? uid('deal'),
-      title: project.name?.trim() || 'Заказ из калькулятора',
-      clientId: linked?.id ?? '',
+    return normalizeDeal({
+      id: project.id,
+      title: project.name,
+      clientId: linked?.id,
       amount,
       manager: workflow.assignee,
       status,
@@ -319,27 +425,24 @@ export function importCalculatorBackup(raw: string): { data: AppData; deals: num
       payments: [],
       history,
       schedule,
-      createdAt: project.createdAt ?? nowIso(),
-      updatedAt: project.updatedAt ?? nowIso(),
-    };
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+    });
   });
 
-  const data: AppData = {
-    version: 1,
-    clients,
-    deals,
-    settings: {
-      companyName: 'Студия кухни',
-      managers: Array.from(new Set(deals.map((deal) => deal.manager).filter(Boolean) as string[])),
-      teams: Array.from(new Set(deals.map((deal) => deal.schedule.team).filter(Boolean) as string[])),
-      hints: true,
-    },
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-  };
+  const settings = defaultSettings();
+  settings.managers = Array.from(new Set(deals.map((deal) => deal.manager).filter(Boolean) as string[]));
+  settings.teams = Array.from(new Set(deals.map((deal) => deal.schedule.team).filter(Boolean) as string[]));
 
   return {
-    data,
+    data: {
+      version: 2,
+      clients,
+      deals,
+      settings,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    },
     deals: deals.length,
     clients: clients.length,
     warning: 'Суммы переносятся из сохранённых версий КП. Где их нет — заполните суммы в карточках сделок вручную.',
@@ -359,6 +462,11 @@ function icsEscape(value: string): string {
     .replace(/;/g, '\\;')
     .replace(/,/g, '\\,')
     .replace(/\r?\n/g, '\\n');
+}
+
+/** Время в ICS: дата + HHMMSS в локальном времени (без Z). */
+function icsDateTime(day: string, time: string): string {
+  return `${day.replace(/-/g, '')}T${time.replace(':', '')}00`;
 }
 
 /** Календарь для телефона: все события графика как ICS. */
@@ -399,15 +507,23 @@ export function buildIcs(data: AppData, clientName: (deal: Deal) => string): str
         schedule.note ?? '',
         deal.comment ?? '',
       ].filter(Boolean).join('\n');
+      const timed = event.kind === 'install' && schedule.timeStart;
+      const startLine = timed
+        ? `DTSTART;TZID=Europe/Moscow:${icsDateTime(date, schedule.timeStart as string)}`
+        : `DTSTART;VALUE=DATE:${date.replace(/-/g, '')}`;
+      const endLine = timed
+        ? `DTEND;TZID=Europe/Moscow:${icsDateTime(date, schedule.timeEnd || schedule.timeStart || '10:00')}`
+        : `DTEND;VALUE=DATE:${isoDay(end).replace(/-/g, '')}`;
       lines.push(
         'BEGIN:VEVENT',
         `UID:${deal.id}-${event.field}@crm-schedule`,
         `DTSTAMP:${stamp}`,
-        `DTSTART;VALUE=DATE:${isoDay(start).replace(/-/g, '')}`,
-        `DTEND;VALUE=DATE:${isoDay(end).replace(/-/g, '')}`,
+        startLine,
+        endLine,
         `SUMMARY:${icsEscape(summary)}`,
         schedule.address ? `LOCATION:${icsEscape(schedule.address)}` : '',
         description ? `DESCRIPTION:${icsEscape(description)}` : '',
+        schedule.reminders?.length ? `BEGIN:VALARM\r\nTRIGGER:-PT${Math.max(...schedule.reminders)}M\r\nACTION:DISPLAY\r\nDESCRIPTION:${icsEscape(summary)}\r\nEND:VALARM` : '',
         'END:VEVENT',
       );
     }
@@ -421,7 +537,7 @@ export function exportIcs(data: AppData, clientName: (deal: Deal) => string) {
   downloadFile(`график-монтажей-${isoDay(new Date())}.ics`, buildIcs(data, clientName), 'text/calendar;charset=utf-8');
 }
 
-/** Уникальные клиенты для импорта: имя + телефон. */
+/** Похожие клиенты: общий телефон или одинаковое имя. */
 export function findDuplicateClients(clients: Client[]): Array<{ reason: string; clients: Client[] }> {
   const groups: Array<{ reason: string; clients: Client[] }> = [];
   const seenPhones = new Map<string, Client[]>();
@@ -448,3 +564,88 @@ export function findDuplicateClients(clients: Client[]): Array<{ reason: string;
   }
   return groups;
 }
+
+/** Что изменится при импорте — показываем до подтверждения. */
+export interface ImportPreview {
+  kind: 'crm-schedule' | 'calculator' | 'unknown';
+  deals: number;
+  clients: number;
+  tasks: number;
+  events: number;
+  amount: number;
+  /** Совпадают по id со текущими — будут заменены. */
+  conflicts: number;
+  error?: string;
+  data?: AppData;
+  warning?: string;
+}
+
+export function previewImport(raw: string, current: AppData): ImportPreview {
+  const empty: ImportPreview = { kind: 'unknown', deals: 0, clients: 0, tasks: 0, events: 0, amount: 0, conflicts: 0, error: 'Файл не похож ни на копию CRM, ни на копию калькулятора.' };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ...empty, error: 'Файл не является корректным JSON.' };
+  }
+  const kind = (parsed as { kind?: string } | null)?.kind;
+  try {
+    const isCalculator = kind === 'recept-backup';
+    const data = isCalculator ? importCalculatorBackup(raw).data : parseBackup(raw);
+    const ids = new Set(current.deals.map((deal) => deal.id));
+    return {
+      kind: isCalculator ? 'calculator' : 'crm-schedule',
+      deals: data.deals.length,
+      clients: data.clients.length,
+      tasks: data.deals.reduce((sum, deal) => sum + deal.tasks.length, 0),
+      events: data.deals.reduce((sum, deal) => sum + [
+        deal.schedule.measureAt, deal.schedule.readyAt, deal.schedule.deliveryAt, deal.schedule.installAt,
+      ].filter(Boolean).length, 0),
+      amount: data.deals.reduce((sum, deal) => sum + deal.amount, 0),
+      conflicts: data.deals.filter((deal) => ids.has(deal.id)).length,
+      data,
+      warning: isCalculator ? importCalculatorBackup(raw).warning : undefined,
+    };
+  } catch (error) {
+    return { ...empty, error: error instanceof Error ? error.message : 'Не удалось прочитать файл.', kind: kind === 'recept-backup' ? 'calculator' : 'unknown' };
+  }
+}
+
+/** Слияние импорта с текущей базой: новые записи добавляются, совпадающие по id — обновляются. */
+export function mergeImport(current: AppData, incoming: AppData): AppData {
+  const clients = [...current.clients];
+  for (const client of incoming.clients) {
+    const index = clients.findIndex((item) => item.id === client.id);
+    if (index >= 0) clients[index] = client;
+    else clients.push(client);
+  }
+  const deals = [...current.deals];
+  for (const deal of incoming.deals) {
+    const index = deals.findIndex((item) => item.id === deal.id);
+    if (index >= 0) deals[index] = deal;
+    else deals.push(deal);
+  }
+  return {
+    ...current,
+    clients,
+    deals,
+    settings: current.settings,
+    updatedAt: nowIso(),
+  };
+}
+
+/** Сводка правила автоматики для отображения в настройках. */
+export function ruleTitle(rule: AutomationRule): string {
+  return rule.label;
+}
+
+export function ruleDaysLabel(rule: AutomationRule): string {
+  return rule.days === 0 ? 'сразу' : `через ${rule.days} дн.`;
+}
+
+/** Проверка ключа правила из резервной копии. */
+export function isRuleId(value: string): value is RuleId {
+  return DEFAULT_RULES.some((rule) => rule.id === value);
+}
+
+export type { MessageTemplate };

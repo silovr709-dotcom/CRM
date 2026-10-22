@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { buildIcs, importCalculatorBackup, validateData } from './storage';
+import { defaultSettings } from './settings';
 import { makeDeal } from './testUtils';
 
 const baseData = {
-  version: 1 as const,
+  version: 2 as const,
   clients: [],
   deals: [makeDeal({ amount: 100000 })],
-  settings: { companyName: 'Студия', managers: [], teams: [], hints: true },
+  settings: { ...defaultSettings(), companyName: 'Студия' },
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 };

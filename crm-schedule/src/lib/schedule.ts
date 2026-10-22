@@ -2,7 +2,7 @@
 // заказам в одном календаре. Чистые функции — без React и хранилища.
 
 import type { Deal, DealSchedule, ScheduleStatus } from '../types';
-import { addDays, isoDay, parseDay, todayISO } from './dates';
+import { addDays, isoDay, minutesOf, parseDay, timeRangesOverlap, todayISO } from './dates';
 
 export type ScheduleKind = 'measure' | 'ready' | 'delivery' | 'install';
 
@@ -43,6 +43,9 @@ export interface ScheduleEvent {
   address?: string;
   phone?: string;
   note?: string;
+  /** Время начала и окончания (HH:MM), если задано в сделке. */
+  timeStart?: string;
+  timeEnd?: string;
   status: ScheduleStatus;
   amount: number;
 }
@@ -58,6 +61,8 @@ export function dealEvents(deal: Deal, clientName = 'Без клиента'): Sc
     address: schedule.address,
     phone: schedule.phone,
     note: schedule.note,
+    timeStart: schedule.timeStart,
+    timeEnd: schedule.timeEnd,
     status: schedule.status ?? 'planned',
     amount: deal.amount,
   };
@@ -84,7 +89,16 @@ export function dealEvents(deal: Deal, clientName = 'Без клиента'): Sc
 export function collectEvents(deals: Deal[], clientName: (deal: Deal) => string = () => 'Без клиента'): ScheduleEvent[] {
   return deals
     .flatMap((deal) => dealEvents(deal, clientName(deal)))
-    .sort((left, right) => left.date.localeCompare(right.date) || left.dealTitle.localeCompare(right.dealTitle));
+    .sort((left, right) => left.date.localeCompare(right.date)
+      || (minutesOf(left.timeStart) ?? 24 * 60) - (minutesOf(right.timeStart) ?? 24 * 60)
+      || left.dealTitle.localeCompare(right.dealTitle));
+}
+
+/** События одного дня по времени — для листа дня и маршрута. */
+export function eventsOfDay(events: ScheduleEvent[], day: string): ScheduleEvent[] {
+  return events
+    .filter((event) => event.date === day)
+    .sort((left, right) => (minutesOf(left.timeStart) ?? 24 * 60) - (minutesOf(right.timeStart) ?? 24 * 60));
 }
 
 export function eventsByDay(events: ScheduleEvent[]): Map<string, ScheduleEvent[]> {
@@ -189,6 +203,32 @@ export function scheduleWarnings(deals: Deal[]): ScheduleWarning[] {
       }
     }
   }
+
+  // Пересечение по времени важнее пересечения по дню: два монтажа в 9:00 и в 15:00 — это нормально.
+  const installs = deals.filter((deal) => deal.schedule?.installAt && deal.schedule.team?.trim());
+  for (let first = 0; first < installs.length; first += 1) {
+    for (let second = first + 1; second < installs.length; second += 1) {
+      const left = installs[first];
+      const right = installs[second];
+      if (left.schedule.team?.trim() !== right.schedule.team?.trim()) continue;
+      if (!left.schedule.timeStart || !right.schedule.timeStart) continue;
+      const leftDays = Math.max(1, left.schedule.installDays ?? 1);
+      const rightDays = Math.max(1, right.schedule.installDays ?? 1);
+      const sameDay = Array.from({ length: leftDays }, (_, index) => addDays(left.schedule.installAt as string, index))
+        .find((day) => Array.from({ length: rightDays }, (_, index) => addDays(right.schedule.installAt as string, index)).includes(day));
+      if (!sameDay) continue;
+      if (!timeRangesOverlap(
+        { start: left.schedule.timeStart, end: left.schedule.timeEnd },
+        { start: right.schedule.timeStart, end: right.schedule.timeEnd },
+      )) continue;
+      warnings.push({
+        dealId: left.id,
+        kind: 'error',
+        text: `Бригада «${left.schedule.team}» ${sameDay.split('-').reverse().join('.')}: «${left.title}» и «${right.title}» пересекаются по времени`,
+      });
+    }
+  }
+
   return warnings;
 }
 
@@ -224,6 +264,13 @@ export function teamLoad(events: ScheduleEvent[]): TeamLoad[] {
 export function moveEvent(deal: Deal, kind: ScheduleKind, date: string): Deal {
   const field = scheduleFieldForKind(kind);
   return { ...deal, schedule: { ...deal.schedule, [field]: date }, updatedAt: new Date().toISOString() };
+}
+
+/** Текст времени монтажа для подписи. */
+export function eventTimeLabel(event: ScheduleEvent): string {
+  if (!event.timeStart && !event.timeEnd) return '';
+  if (event.timeStart && event.timeEnd) return `${event.timeStart}–${event.timeEnd}`;
+  return event.timeStart ? `с ${event.timeStart}` : `до ${event.timeEnd}`;
 }
 
 /** Сколько дней до монтажа: отрицательное — уже прошёл. */

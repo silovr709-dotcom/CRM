@@ -23,7 +23,7 @@ describe('приложение целиком', () => {
   it('открывается на обзоре с демо-данными', () => {
     renderApp();
     expect(screen.getByRole('heading', { name: 'Обзор' })).toBeTruthy();
-    expect(screen.getByText('В работе')).toBeTruthy();
+    expect(screen.getByText(/Сделок в работе/)).toBeTruthy();
   });
 
   it('переключается на CRM и показывает сделки', () => {
@@ -86,6 +86,6 @@ describe('приложение целиком', () => {
     fireEvent.click(pills[0]);
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Дней на монтаж')).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: 'Карточка сделки' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Клиент' })).toBeTruthy();
   });
 });

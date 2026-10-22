@@ -1,206 +1,550 @@
-// Настройки и данные: справочники, автоматика, резервные копии и импорт.
-import { useRef, useState } from 'react';
-import { useApp } from '../store';
-import { fmtMoney, todayISO } from '../lib/dates';
-import { joinList, splitList } from '../lib/utils';
+// Настройки и данные: реквизиты, тема, напоминания, шаблоны, автоматика, бэкапы и импорт.
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  exportBackup, exportIcs, importCalculatorBackup, parseBackup,
+  Bell, Check, Download, FileDown, FileUp, MessageSquare, Moon, Plus, RotateCcw,
+  Save, Settings2, Sun, Trash2, TriangleAlert, Upload, Users,
+} from 'lucide-react';
+import type { Deal } from '../types';
+import { useApp } from '../store';
+import { fmtDate, fmtDateTime, fmtMoney, todayISO } from '../lib/dates';
+import {
+  autoBackupInfo, downloadFile, exportBackup, exportIcs, findDuplicateClients, mergeImport,
+  previewImport, readAutoBackup, writeAutoBackup, type AutoBackupInfo, type ImportPreview,
 } from '../lib/storage';
-import { loadRules, saveRules } from '../lib/rules';
-import { DEFAULT_RULES, runAutomations, type AutomationRule } from '../lib/crmAutomation';
-import { paidAmount } from '../lib/crmTasks';
-import { collectEvents } from '../lib/schedule';
+import { DEFAULT_TEMPLATES, normalizeTemplates, renderTemplate, templateContext } from '../lib/templates';
+import { DEFAULT_RULES, normalizeRules } from '../lib/crmAutomation';
+import { ruleDaysLabel, ruleTitle } from '../lib/storage';
+import { askNotifyPermission, clearNotificationHistory, notifyPermission } from '../lib/notify';
+import Modal from './Modal';
+
+function emptyPreviewDeal(): Deal {
+  const stamp = new Date().toISOString();
+  return {
+    id: 'preview',
+    title: 'Кухня на Ленина, 42',
+    clientId: '',
+    status: 'draft',
+    amount: 250000,
+    payments: [],
+    tasks: [],
+    schedule: {
+      status: 'planned',
+      installDays: 1,
+      reminders: [],
+      installAt: todayISO(),
+    },
+    manager: '',
+    createdAt: stamp,
+    updatedAt: stamp,
+    history: [],
+  };
+}
+
+const REMINDER_OPTIONS = [
+  { value: 15, label: 'за 15 минут' },
+  { value: 30, label: 'за 30 минут' },
+  { value: 60, label: 'за час' },
+  { value: 120, label: 'за 2 часа' },
+  { value: 1440, label: 'за сутки' },
+];
 
 export default function DataView() {
-  const { data, deals, clients, settings, updateSettings, replaceData, resetDemo, clearAll, notify, storageOk } = useApp();
-  const [rules, setRules] = useState<AutomationRule[]>(() => loadRules());
+  const {
+    data, deals, clients, settings, updateSettings, replaceData, resetDemo, clearAll,
+    undo, canUndo, notify, storageOk, savedAt,
+  } = useApp();
+  const [draft, setDraft] = useState(() => ({
+    companyName: settings.companyName,
+    myName: settings.myName,
+    managers: settings.managers.join(', '),
+    teams: settings.teams.join(', '),
+    hints: settings.hints,
+    theme: settings.theme,
+    notifications: settings.notifications,
+    reminderMinutes: settings.reminderMinutes,
+  }));
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [backupInfo, setBackupInfo] = useState<AutoBackupInfo | null>(() => autoBackupInfo());
+  const [permission, setPermission] = useState(() => notifyPermission());
   const fileRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const [templates, setTemplates] = useState(() => normalizeTemplates(settings.messageTemplates));
+  const [rules, setRules] = useState(() => normalizeRules(settings.rules));
 
-  const totalAmount = deals.reduce((sum, deal) => sum + deal.amount, 0);
-  const totalPaid = deals.reduce((sum, deal) => sum + paidAmount(deal.payments), 0);
-  const events = collectEvents(deals);
+  useEffect(() => {
+    setTemplates(normalizeTemplates(settings.messageTemplates));
+    setRules(normalizeRules(settings.rules));
+  }, [settings.messageTemplates, settings.rules]);
 
-  const patchRule = (id: string, patch: Partial<AutomationRule>) => {
-    const next = rules.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule));
-    setRules(next);
-    saveRules(next);
+  const duplicates = useMemo(() => findDuplicateClients(clients), [clients]);
+  const totalTasks = deals.reduce((sum, deal) => sum + deal.tasks.length, 0);
+  const totalPaid = deals.reduce((sum, deal) => sum + deal.payments.reduce((inner, payment) => inner + payment.amount, 0), 0);
+  const importRef = useMemo(
+    () => templateContext(deals[0] ?? emptyPreviewDeal(), deals[0] ? 'Клиент' : 'Анна', draft.companyName),
+    [deals, draft.companyName],
+  );
+
+  const saveSettings = () => {
+    updateSettings({
+      companyName: draft.companyName.trim(),
+      myName: draft.myName.trim(),
+      managers: draft.managers.split(',').map((value) => value.trim()).filter(Boolean),
+      teams: draft.teams.split(',').map((value) => value.trim()).filter(Boolean),
+      hints: draft.hints,
+      theme: draft.theme,
+      notifications: draft.notifications,
+      reminderMinutes: draft.reminderMinutes,
+    });
+    notify('Настройки сохранены');
   };
 
-  const runNow = () => {
-    const result = runAutomations(deals, rules);
-    if (result.applied.length === 0) {
-      notify('Автоматика не нашла, что добавить', 'info');
-      return;
-    }
-    replaceData({ ...data, deals: result.deals, updatedAt: new Date().toISOString() });
-    notify(`Автоматика добавила задач: ${result.applied.length}`);
+  const readFile = async (file: File) => {
+    const text = await file.text();
+    setPreview(previewImport(text, data));
   };
 
-  const importFile = async (file: File) => {
-    setBusy(true);
-    try {
-      const text = await file.text();
-      let parsed: { kind?: string } | null = null;
-      try { parsed = JSON.parse(text) as { kind?: string }; } catch { throw new Error('Файл не является корректным JSON.'); }
-      if (parsed?.kind === 'recept-backup') {
-        const result = importCalculatorBackup(text);
-        if (!confirm(`Импортировать ${result.deals} заказов и ${result.clients} клиентов из калькулятора?\n\n${result.warning}\n\nТекущие данные будут заменены.`)) {
-          setBusy(false);
-          return;
-        }
-        replaceData(result.data);
-        notify(`Импортировано сделок: ${result.deals}, клиентов: ${result.clients}`);
-      } else {
-        const next = parseBackup(text);
-        if (!confirm(`Заменить текущие данные резервной копией?\nСделок: ${next.deals.length}, клиентов: ${next.clients.length}.`)) {
-          setBusy(false);
-          return;
-        }
-        replaceData(next);
-        notify(`Восстановлено: ${next.deals.length} сделок, ${next.clients.length} клиентов`);
-      }
-    } catch (error) {
-      notify(error instanceof Error ? error.message : 'Не удалось прочитать файл', 'error');
-    } finally {
-      setBusy(false);
-      if (fileRef.current) fileRef.current.value = '';
+  const applyPreview = (mode: 'replace' | 'merge') => {
+    if (!preview?.data) return;
+    if (mode === 'merge') {
+      replaceData(mergeImport(data, preview.data), { backupReason: 'перед импортом', undoLabel: 'импорт' });
+      notify('Импорт добавлен к текущей базе', 'ok', { label: 'Отменить', run: undo });
+    } else {
+      if (!confirm('Заменить все данные содержимым файла? Текущая база уйдёт в авто-копию.')) return;
+      replaceData(preview.data, { backupReason: 'перед импортом', undoLabel: 'импорт' });
+      notify('Данные заменены импортом', 'ok', { label: 'Отменить', run: undo });
     }
+    setPreview(null);
   };
 
   return (
     <div className="page">
       <header className="page-head">
         <div>
-          <div className="eyebrow">Настройки</div>
-          <h1>Данные и автоматика</h1>
-          <p className="muted">Всё хранится в этом браузере. Резервную копию можно скачать и перенести на другое устройство.</p>
+          <div className="eyebrow">Настройки и перенос</div>
+          <h1>Данные</h1>
+          <p className="muted">Всё хранится в этом браузере. Копию можно скачать и открыть на другом компьютере.</p>
         </div>
-        <div className="actions">
-          <button type="button" className="btn ghost" onClick={() => exportBackup(data)}>Скачать копию .json</button>
-          <button type="button" className="btn ghost" onClick={() => exportIcs(data, (deal) => clients.find((client) => client.id === deal.clientId)?.name ?? 'Без клиента')}>Календарь .ics</button>
+        <div className="actions wrap">
+          <button type="button" className="btn ghost" onClick={() => exportBackup(data)}><Download size={15} /> Скачать копию</button>
+          <button type="button" className="btn primary" onClick={() => fileRef.current?.click()}><Upload size={15} /> Загрузить файл</button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) readFile(file);
+              event.target.value = '';
+            }}
+          />
         </div>
       </header>
 
       {!storageOk && (
-        <div className="inline-warning">⚠ В браузере не хватает места для сохранения. Скачайте резервную копию и освободите память.</div>
+        <div className="inline-warning">
+          <TriangleAlert size={15} /> Браузер не даёт сохранить данные (приватный режим или переполнение).
+          Скачайте копию, чтобы не потерять работу.
+        </div>
       )}
 
-      <section className="kpi-grid small">
-        <div className="kpi static"><span className="kpi-label">Клиенты</span><b className="kpi-value">{clients.length}</b></div>
-        <div className="kpi static"><span className="kpi-label">Сделки</span><b className="kpi-value">{deals.length}</b></div>
-        <div className="kpi static"><span className="kpi-label">Портфель</span><b className="kpi-value">{fmtMoney(totalAmount, { compact: true })}</b></div>
-        <div className="kpi static"><span className="kpi-label">Получено</span><b className="kpi-value">{fmtMoney(totalPaid, { compact: true })}</b></div>
-        <div className="kpi static"><span className="kpi-label">Событий в графике</span><b className="kpi-value">{events.length}</b></div>
+      <section className="stat-row">
+        <div><span>Сделок</span><b>{deals.length}</b></div>
+        <div><span>Клиентов</span><b>{clients.length}</b></div>
+        <div><span>Задач</span><b>{totalTasks}</b></div>
+        <div><span>Оплачено</span><b>{fmtMoney(totalPaid)}</b></div>
+        <div><span>Обновлено</span><b>{fmtDateTime(data.updatedAt)}</b></div>
+        <div><span>Сохранено</span><b>{savedAt ? fmtDateTime(savedAt) : '—'}</b></div>
       </section>
 
-      <div className="settings-grid">
+      <div className="data-grid">
         <section className="card">
-          <div className="section-head"><h2>Справочники</h2><span className="muted">подставляются в карточки</span></div>
+          <div className="section-head">
+            <div>
+              <h2>Реквизиты и команда</h2>
+              <span className="muted">подставляются в сообщения и печать</span>
+            </div>
+          </div>
           <div className="form-grid">
-            <label className="field span-2">Название компании
-              <input value={settings.companyName} onChange={(event) => updateSettings({ companyName: event.target.value })} />
+            <label className="field">Название компании
+              <input value={draft.companyName} onChange={(event) => setDraft({ ...draft, companyName: event.target.value })} />
+            </label>
+            <label className="field">Ваше имя
+              <input value={draft.myName} placeholder="например, Ирина" onChange={(event) => setDraft({ ...draft, myName: event.target.value })} />
+              <small className="field-hint">включает фильтр «только мои»</small>
             </label>
             <label className="field span-2">Менеджеры
-              <input
-                value={joinList(settings.managers)}
-                placeholder="Ирина, Олег"
-                onChange={(event) => updateSettings({ managers: splitList(event.target.value) })}
-              />
+              <input value={draft.managers} placeholder="Ирина, Сергей" onChange={(event) => setDraft({ ...draft, managers: event.target.value })} />
               <small className="field-hint">через запятую</small>
             </label>
             <label className="field span-2">Бригады
-              <input
-                value={joinList(settings.teams)}
-                placeholder="Бригада 1 — Сергей, Бригада 2 — Андрей"
-                onChange={(event) => updateSettings({ teams: splitList(event.target.value) })}
-              />
-              <small className="field-hint">появятся в подсказках графика</small>
+              <input value={draft.teams} placeholder="Бригада 1 — Сергей, Бригада 2 — Олег" onChange={(event) => setDraft({ ...draft, teams: event.target.value })} />
             </label>
-            <label className="checkbox-field span-2">
-              <input type="checkbox" checked={settings.hints} onChange={(event) => updateSettings({ hints: event.target.checked })} />
-              Показывать подсказки на экранах
-            </label>
+          </div>
+
+          <div className="section-head sub">
+            <h3>Тема и подсказки</h3>
+          </div>
+          <div className="theme-picker" role="radiogroup" aria-label="Тема оформления">
+            {([
+              { value: 'light' as const, label: 'Светлая', icon: <Sun size={14} /> },
+              { value: 'dark' as const, label: 'Тёмная', icon: <Moon size={14} /> },
+              { value: 'system' as const, label: 'Как в системе', icon: <Settings2 size={14} /> },
+            ]).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={draft.theme === option.value}
+                className={draft.theme === option.value ? 'active' : ''}
+                onClick={() => setDraft({ ...draft, theme: option.value })}
+              >
+                {option.icon} {option.label}
+              </button>
+            ))}
+          </div>
+          <label className="chip-toggle">
+            <input type="checkbox" checked={draft.hints} onChange={(event) => setDraft({ ...draft, hints: event.target.checked })} />
+            показывать подсказки на экранах
+          </label>
+
+          <div className="section-head sub">
+            <h3><Bell size={14} /> Напоминания</h3>
+          </div>
+          <label className="chip-toggle">
+            <input
+              type="checkbox"
+              checked={draft.notifications}
+              onChange={async (event) => {
+                const value = event.target.checked;
+                setDraft({ ...draft, notifications: value });
+                if (value && notifyPermission() === 'default') {
+                  await askNotifyPermission();
+                  setPermission(notifyPermission());
+                }
+              }}
+            />
+            браузерные уведомления о монтажах
+          </label>
+          <label className="field">Напомнить заранее
+            <select value={draft.reminderMinutes} onChange={(event) => setDraft({ ...draft, reminderMinutes: Number(event.target.value) })}>
+              {REMINDER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <p className="field-hint">
+            Разрешение: {permission === 'granted' ? 'выдано' : permission === 'denied' ? 'запрещено в браузере' : 'не запрошено'}.
+            {' '}Напоминания работают, пока приложение открыто.
+            <button type="button" className="link-btn" onClick={() => { clearNotificationHistory(); notify('Отметки об отправке сброшены'); }}>
+              сбросить отправленные
+            </button>
+          </p>
+
+          <div className="save-row">
+            <button type="button" className="btn primary" onClick={saveSettings}><Save size={15} /> Сохранить настройки</button>
+            <span className="muted small">изменения применяются сразу после сохранения</span>
           </div>
         </section>
 
         <section className="card">
           <div className="section-head">
-            <div><h2>Автоматика CRM</h2><span className="muted">правила, которые ставят задачи сами</span></div>
-            <button type="button" className="btn small primary" onClick={runNow}>Проверить сейчас</button>
+            <div>
+              <h2><MessageSquare size={16} /> Шаблоны сообщений</h2>
+              <span className="muted">текст для WhatsApp, почты и SMS</span>
+            </div>
+            <div className="card-head-actions">
+              <button type="button" className="btn small ghost" onClick={() => setTemplates(DEFAULT_TEMPLATES)}>Сбросить</button>
+              <button
+                type="button"
+                className="btn small primary"
+                onClick={() => {
+                  updateSettings({ messageTemplates: templates });
+                  notify('Шаблоны сохранены');
+                }}
+              >
+                <Check size={14} /> Сохранить
+              </button>
+            </div>
           </div>
-          <ul className="rules-list">
-            {rules.map((rule) => (
-              <li key={rule.id}>
-                <label className="rule-toggle">
-                  <input type="checkbox" checked={rule.enabled} onChange={(event) => patchRule(rule.id, { enabled: event.target.checked })} />
-                  <span>
-                    <b>{rule.label}</b>
-                    <small>{rule.hint}</small>
-                  </span>
-                </label>
-                <label className="rule-days">
-                  через
+
+          <ul className="template-list">
+            {templates.map((template, index) => (
+              <li key={template.id} className="template-row">
+                <div className="template-head">
                   <input
-                    type="number"
-                    min={0}
-                    max={90}
-                    value={rule.days}
-                    onChange={(event) => patchRule(rule.id, { days: Math.max(0, Math.min(90, Number(event.target.value) || 0)) })}
+                    className="template-title"
+                    value={template.title}
+                    onChange={(event) => {
+                      const next = [...templates];
+                      next[index] = { ...template, title: event.target.value };
+                      setTemplates(next);
+                    }}
                   />
-                  дн.
-                </label>
+                  <label className="chip-toggle">
+                    <input
+                      type="checkbox"
+                      checked={template.enabled}
+                      onChange={(event) => {
+                        const next = [...templates];
+                        next[index] = { ...template, enabled: event.target.checked };
+                        setTemplates(next);
+                      }}
+                    />
+                    вкл.
+                  </label>
+                  <button
+                    type="button"
+                    className="icon-btn small"
+                    aria-label="Удалить шаблон"
+                    onClick={() => setTemplates(templates.filter((item) => item.id !== template.id))}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+                <textarea
+                  rows={3}
+                  value={template.text}
+                  onChange={(event) => {
+                    const next = [...templates];
+                    next[index] = { ...template, text: event.target.value };
+                    setTemplates(next);
+                  }}
+                />
+                <small className="field-hint preview">{renderTemplate(template.text, importRef).slice(0, 160)}…</small>
               </li>
             ))}
           </ul>
-          <button type="button" className="link-btn" onClick={() => { setRules(DEFAULT_RULES); saveRules(DEFAULT_RULES); notify('Правила сброшены', 'info'); }}>
-            вернуть правила по умолчанию
-          </button>
-        </section>
-
-        <section className="card">
-          <div className="section-head"><h2>Резервная копия</h2><span className="muted">перенос между устройствами</span></div>
-          <p className="muted">
-            Файл <code>.json</code> содержит клиентов, сделки, задачи, оплаты и график. Импорт принимает
-            и резервную копию калькулятора — заказы, клиенты и даты монтажа перенесутся.
+          <div className="template-add">
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={() => setTemplates([...templates, {
+                id: `tpl_custom_${Date.now()}`,
+                title: 'Новый шаблон',
+                text: 'Добрый день, {client}! По заказу «{deal}» — {remainder} ₽ к оплате.',
+                enabled: true,
+              }])}
+            >
+              <Plus size={14} /> Добавить шаблон
+            </button>
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => setTemplates(DEFAULT_TEMPLATES.map((item) => ({ ...item })))}
+            >
+              вернуть примеры
+            </button>
+          </div>
+          <p className="field-hint">
+            Подстановки: <code>{'{client}'}</code> <code>{'{deal}'}</code> <code>{'{total}'}</code>{' '}
+            <code>{'{paid}'}</code> <code>{'{remainder}'}</code> <code>{'{date}'}</code>{' '}
+            <code>{'{team}'}</code> <code>{'{address}'}</code> <code>{'{manager}'}</code> <code>{'{company}'}</code>
           </p>
-          <div className="data-actions">
-            <button type="button" className="btn ghost" onClick={() => exportBackup(data)}>Скачать .json</button>
-            <button type="button" className="btn ghost" disabled={busy} onClick={() => fileRef.current?.click()}>Загрузить .json</button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/json,.json"
-              hidden
-              onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); }}
-            />
+        </section>
+
+        <section className="card">
+          <div className="section-head">
+            <div>
+              <h2>Автоматика</h2>
+              <span className="muted">сама ставит задачи и следующий контакт</span>
+            </div>
+            <span className="muted small">сегодня {fmtDate(todayISO())}</span>
           </div>
-          <div className="danger-zone">
-            <button type="button" className="btn danger-ghost" onClick={() => {
-              if (!confirm('Заменить текущие данные демонстрационными?')) return;
-              resetDemo();
-              notify('Загружены демо-данные', 'info');
-            }}>Демо-данные</button>
-            <button type="button" className="btn danger-ghost" onClick={() => {
-              if (!confirm('Удалить все данные без возможности отмены?')) return;
-              clearAll();
-              notify('Все данные удалены', 'info');
-            }}>Очистить всё</button>
+          <ul className="rule-list">
+            {rules.map((rule, index) => {
+              const preset = DEFAULT_RULES.find((item) => item.id === rule.id);
+              return (
+                <li key={rule.id} className="rule-row">
+                  <label className="chip-toggle">
+                    <input
+                      type="checkbox"
+                      checked={rule.enabled}
+                      onChange={(event) => {
+                        const next = [...rules];
+                        next[index] = { ...rule, enabled: event.target.checked };
+                        setRules(next);
+                      }}
+                    />
+                    <b>{ruleTitle(rule)}</b>
+                  </label>
+                  <span className="muted small">{ruleDaysLabel(rule)} · {preset?.hint ?? 'своё правило'}</span>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="save-row">
+            <button
+              type="button"
+              className="btn small primary"
+              onClick={() => { updateSettings({ rules }); notify('Правила сохранены'); }}
+            >
+              Сохранить правила
+            </button>
+            <button type="button" className="btn small ghost" onClick={() => setRules(DEFAULT_RULES)}>Сбросить</button>
           </div>
         </section>
 
         <section className="card">
-          <div className="section-head"><h2>Как это работает</h2></div>
-          <ul className="about-list">
-            <li><b>Сделка</b> — заказ. В ней этап, сумма, задачи, оплаты и даты графика.</li>
-            <li><b>CRM</b> — список и доска: видно, с кем связаться сегодня и что зависло.</li>
-            <li><b>График</b> — те же даты сделок в календаре: замер, готовность, доставка, монтаж.</li>
-            <li><b>Задачи</b> — из всех сделок в одном списке, с отметкой о выполнении.</li>
-            <li><b>Проверки</b> — монтаж раньше готовности, доставка после монтажа, бригада в двух местах.</li>
-            <li>Сегодня: {todayISO()}. Данные сохраняются автоматически в браузере.</li>
-          </ul>
+          <div className="section-head">
+            <div>
+              <h2><FileUp size={16} /> Резервные копии</h2>
+              <span className="muted">скачать, восстановить, перенести</span>
+            </div>
+          </div>
+
+          <div className="backup-actions">
+            <button type="button" className="btn ghost" onClick={() => exportBackup(data)}>
+              <Download size={14} /> Файл .json
+            </button>
+            <button type="button" className="btn ghost" onClick={() => exportIcs(data, () => '')}>
+              <FileDown size={14} /> Календарь .ics
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => {
+                const name = `crm-clients-${todayISO()}.csv`;
+                const rows = [
+                  ['Имя', 'Телефоны', 'Почта', 'Адрес', 'Источник', 'Метки'],
+                  ...clients.map((client) => [client.name, client.phones.join('; '), client.emails.join('; '), client.address ?? '', client.source ?? '', client.tags.join('; ')]),
+                ];
+                downloadFile(name, `\uFEFF${rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(';')).join('\n')}`, 'text/csv;charset=utf-8');
+                notify('Клиенты выгружены в CSV');
+              }}
+            >
+              <Users size={14} /> Клиенты .csv
+            </button>
+          </div>
+
+          <p className="field-hint">
+            .ics открывается в Google Календаре, Яндекс Календаре и на телефоне. .csv — для Excel и рассылок.
+          </p>
+
+          <div className="section-head sub">
+            <h3>Восстановление</h3>
+          </div>
+
+          <div className="restore-row">
+            <button type="button" className="btn small ghost" onClick={() => fileRef.current?.click()}>
+              <Upload size={14} /> Выбрать файл копии
+            </button>
+            <span className="muted small">перед заменой покажем, что внутри</span>
+          </div>
+
+          <div className="restore-row">
+            <button
+              type="button"
+              className="btn small ghost"
+              disabled={!backupInfo}
+              onClick={() => {
+                const backup = readAutoBackup();
+                if (!backup) { notify('Авто-копия пуста', 'error'); return; }
+                if (!confirm('Вернуть состояние из авто-копии? Текущие данные сохранятся в истории.')) return;
+                replaceData(backup, { undoLabel: 'авто-копия' });
+                notify('Восстановлено из авто-копии', 'ok', { label: 'Отменить', run: undo });
+              }}
+            >
+              <RotateCcw size={14} /> Вернуть авто-копию
+            </button>
+            <span className="muted small">
+              {backupInfo ? `${backupInfo.reason} · ${fmtDateTime(backupInfo.at)}` : 'авто-копий пока нет'}
+            </span>
+          </div>
+
+          <p className="field-hint">
+            Авто-копия делается автоматически перед очисткой, сбросом и импортом.
+            <button type="button" className="link-btn" onClick={() => { writeAutoBackup(data, 'вручную'); setBackupInfo(autoBackupInfo()); notify('Авто-копия обновлена'); }}>
+              сделать сейчас
+            </button>
+          </p>
+
+          {duplicates.length > 0 && (
+            <div className="inline-warning">
+              <TriangleAlert size={14} /> Похожих клиентов: {duplicates.length}. Объединять удобнее в карточке клиента.
+            </div>
+          )}
+        </section>
+
+        <section className="card danger-card">
+          <div className="section-head">
+            <div>
+              <h2>Опасная зона</h2>
+              <span className="muted">сначала сделайте копию</span>
+            </div>
+          </div>
+          <div className="danger-actions">
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => {
+                if (!confirm('Заменить данные демонстрационными? Текущие уйдут в авто-копию.')) return;
+                resetDemo();
+                notify('Загружены демо-данные', 'ok', { label: 'Отменить', run: undo });
+              }}
+            >
+              Загрузить демо-данные
+            </button>
+            <button
+              type="button"
+              className="btn danger-ghost"
+              onClick={() => {
+                if (!confirm('Удалить всех клиентов и сделки? Останется чистая база.')) return;
+                clearAll();
+                notify('Все данные удалены', 'ok', { label: 'Отменить', run: undo });
+              }}
+            >
+              <Trash2 size={14} /> Очистить всё
+            </button>
+            {canUndo && (
+              <button type="button" className="btn small ghost" onClick={undo}>
+                <RotateCcw size={13} /> Отменить последнее действие
+              </button>
+            )}
+          </div>
+          <p className="field-hint">
+            Данные хранятся в localStorage браузера (ключ crm-schedule.v1). Очистка истории браузера удалит их
+            безвозвратно — держите свежую копию .json.
+          </p>
         </section>
       </div>
+
+      {preview && (
+        <Modal
+          title="Импорт файла"
+          subtitle={preview.kind === 'calculator' ? 'Копия калькулятора — переносим сделки и график' : 'Копия CRM и графика'}
+          onClose={() => setPreview(null)}
+          footer={(
+            <>
+              <button type="button" className="btn ghost" onClick={() => setPreview(null)}>Отмена</button>
+              <span className="foot-spacer" />
+              <button type="button" className="btn ghost" disabled={!preview.data} onClick={() => applyPreview('merge')}>
+                Добавить к текущим
+              </button>
+              <button type="button" className="btn primary" disabled={!preview.data} onClick={() => applyPreview('replace')}>
+                Заменить всё
+              </button>
+            </>
+          )}
+        >
+          {preview.error ? (
+            <div className="inline-warning"><TriangleAlert size={15} /> {preview.error}</div>
+          ) : (
+            <>
+              <ul className="preview-list">
+                <li><span>Сделок</span><b>{preview.deals}</b></li>
+                <li><span>Клиентов</span><b>{preview.clients}</b></li>
+                <li><span>Задач</span><b>{preview.tasks}</b></li>
+                <li><span>Событий графика</span><b>{preview.events}</b></li>
+                <li><span>Сумма сделок</span><b>{fmtMoney(preview.amount)}</b></li>
+                <li><span>Совпадений с текущими</span><b>{preview.conflicts}</b></li>
+              </ul>
+              {preview.warning && <div className="inline-warning"><TriangleAlert size={14} /> {preview.warning}</div>}
+              <p className="field-hint">
+                «Добавить к текущим» сохранит ваши записи и дополнит новыми. Совпадающие по id обновятся.
+                «Заменить всё» сделает базу точной копией файла — текущее состояние уйдёт в авто-копию.
+              </p>
+            </>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }

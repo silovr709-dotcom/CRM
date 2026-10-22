@@ -80,13 +80,60 @@ export function relativeDay(day?: string, today = todayISO()): string {
   return fmtDate(day);
 }
 
-export function fmtMoney(value?: number, opts: { compact?: boolean } = {}): string {
-  const amount = Number(value) || 0;
-  if (opts.compact && Math.abs(amount) >= 1000) {
-    if (Math.abs(amount) >= 1_000_000) return `${(amount / 1_000_000).toFixed(1).replace('.0', '').replace('.', ',')} млн ₽`;
-    return `${Math.round(amount / 1000)} тыс ₽`;
+/** Полная сумма: 285 000 ₽. Основной формат для строк, карточек и документов. */
+export function fmtMoney(value?: number): string {
+  const amount = Math.round(Number(value) || 0);
+  return `${amount.toLocaleString('ru-RU')} ₽`;
+}
+
+/** Компактная сумма для воронки, KPI и доски: 285 тыс ₽, 1,2 млн ₽. */
+export function fmtMoneyCompact(value?: number): string {
+  const amount = Math.round(Number(value) || 0);
+  const sign = amount < 0 ? '−' : '';
+  const abs = Math.abs(amount);
+  if (abs >= 1_000_000) {
+    const millions = abs / 1_000_000;
+    return `${sign}${millions.toFixed(millions >= 10 ? 0 : 1).replace('.0', '').replace('.', ',')} млн ₽`;
   }
-  return `${Math.round(amount).toLocaleString('ru-RU')} ₽`;
+  if (abs >= 1000) return `${sign}${Math.round(abs / 1000)} тыс ₽`;
+  return `${sign}${abs.toLocaleString('ru-RU')} ₽`;
+}
+
+/** Сумма сделки: пока не заполнена — честно об этом пишем. */
+export function fmtMoneyOrEmpty(value?: number): string {
+  const amount = Number(value) || 0;
+  return amount > 0 ? fmtMoney(amount) : 'сумма не заполнена';
+}
+
+/** «9:00–14:00» или пустая строка. */
+export function fmtTimeRange(start?: string, end?: string): string {
+  if (!start && !end) return '';
+  if (start && end) return `${start}–${end}`;
+  return start ? `с ${start}` : `до ${end}`;
+}
+
+/** Минуты с полуночи из «HH:MM». */
+export function minutesOf(time?: string): number | null {
+  if (!time) return null;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+/** Пересекаются ли два интервала времени в один день. */
+export function timeRangesOverlap(
+  first: { start?: string; end?: string },
+  second: { start?: string; end?: string },
+): boolean {
+  const firstStart = minutesOf(first.start);
+  const secondStart = minutesOf(second.start);
+  if (firstStart === null || secondStart === null) return true;   // время не задано — считаем, что может пересечься
+  const firstEnd = minutesOf(first.end) ?? firstStart + 120;
+  const secondEnd = minutesOf(second.end) ?? secondStart + 120;
+  return firstStart < secondEnd && secondStart < firstEnd;
 }
 
 export function fmtNum(value?: number): string {

@@ -1,34 +1,48 @@
-// CRM: сделки и клиенты, воронка, фильтры и доска.
-// Принцип: на экране только то, что помогает выбрать, с кем работать сейчас.
+// CRM: сделки и клиенты, воронка, фильтры, доска и разбор очереди.
 import { useMemo, useState } from 'react';
+import {
+  ArrowRight, Copy, Filter, LayoutGrid, List, Phone, Play, Search, Trash2, Users, X,
+} from 'lucide-react';
 import type { Deal, DealStatus } from '../types';
 import { useApp } from '../store';
-import { fmtDate, fmtMoney, relativeDay, todayISO } from '../lib/dates';
+import { fmtDate, fmtMoney, fmtMoneyCompact, relativeDay, todayISO } from '../lib/dates';
 import { contactTone, isClosedStatus, statusMeta } from '../lib/crm';
 import {
   buildDealRows, compareCrmRows, CRM_FOCUS_LABELS, CRM_STAGES, focusCounts,
   matchesFocus, matchesQuery, summarizeStages, type CrmFocus, type DealRow,
 } from '../lib/crmBoard';
 import { nextTask, openTasks, paymentState, taskStats } from '../lib/crmTasks';
+import { findDuplicateClients } from '../lib/storage';
+import { usePrefs } from '../lib/viewPrefs';
+import { useDragDrop } from '../lib/dnd';
+import EmptyState from './EmptyState';
 import Modal from './Modal';
+
+const PAGE_SIZE = 30;
 
 export default function CrmView(props: {
   onOpenDeal: (id: string) => void;
   onOpenClient: (id: string) => void;
   onNewClient: () => void;
+  onNewDeal: () => void;
+  onStartQueue: (ids: string[]) => void;
 }) {
-  const { deals, clients, clientName, changeStatus, addDeal, settings, notify } = useApp();
+  const {
+    deals, clients, clientName, changeStatus, patchDeal, removeDeal, settings, mergeClients, notify,
+  } = useApp();
+  const [prefs, patchPrefs] = usePrefs('crm', {
+    mode: 'deals' as 'deals' | 'clients',
+    focus: 'active' as CrmFocus,
+    stage: '',
+    board: false,
+    manager: '',
+    sort: 'urgency' as 'urgency' | 'money' | 'updated',
+    mine: false,
+  });
   const [query, setQuery] = useState('');
-  const [mode, setMode] = useState<'deals' | 'clients'>('deals');
-  const [focus, setFocus] = useState<CrmFocus>('active');
-  const [stage, setStage] = useState('');
-  const [board, setBoard] = useState(false);
-  const [manager, setManager] = useState('');
-  const [sort, setSort] = useState<'urgency' | 'money' | 'updated'>('urgency');
-  const [newDealOpen, setNewDealOpen] = useState(false);
-  const [newDeal, setNewDeal] = useState({ title: '', clientId: '', amount: '', status: 'draft' as DealStatus, manager: '' });
-  const [dragId, setDragId] = useState('');
-  const [dropStage, setDropStage] = useState('');
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [duplicatesOpen, setDuplicatesOpen] = useState(false);
 
   const today = todayISO();
   const rows = useMemo(() => buildDealRows(
@@ -37,9 +51,11 @@ export default function CrmView(props: {
     today,
     (deal) => {
       const client = clients.find((item) => item.id === deal.clientId);
-      return [client?.phones.join(' '), client?.emails.join(' '), client?.source, client?.tags.join(' '), client?.address].filter(Boolean).join(' ');
+      return [client?.phones.join(' '), client?.emails.join(' '), client?.source, client?.tags.join(' '), client?.address]
+        .filter(Boolean).join(' ');
     },
   ), [deals, clientName, clients, today]);
+
   const counts = useMemo(() => focusCounts(rows), [rows]);
   const stages = useMemo(() => summarizeStages(rows), [rows]);
   const taskCounts = useMemo(() => taskStats(deals, today), [deals, today]);
@@ -51,15 +67,18 @@ export default function CrmView(props: {
   }, [deals, settings.managers]);
 
   const visible = useMemo(() => {
-    const stageDef = stages.find((item) => item.id === stage);
+    const stageDef = stages.find((item) => item.id === prefs.stage);
     const list = rows
-      .filter((row) => matchesFocus(row, focus) && matchesQuery(row, query))
+      .filter((row) => matchesFocus(row, prefs.focus) && matchesQuery(row, query))
       .filter((row) => !stageDef || stageDef.statuses.includes(row.status))
-      .filter((row) => !manager || (row.deal.manager ?? '') === manager);
-    if (sort === 'money') return [...list].sort((left, right) => right.total - left.total);
-    if (sort === 'updated') return [...list].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      .filter((row) => !prefs.manager || (row.deal.manager ?? '') === prefs.manager)
+      .filter((row) => !prefs.mine || (row.deal.manager ?? '') === settings.myName);
+    if (prefs.sort === 'money') return [...list].sort((left, right) => right.total - left.total);
+    if (prefs.sort === 'updated') return [...list].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     return [...list].sort(compareCrmRows);
-  }, [rows, focus, query, stage, stages, manager, sort]);
+  }, [rows, prefs, query, stages, settings.myName]);
+
+  const duplicates = useMemo(() => findDuplicateClients(clients), [clients]);
 
   const clientRows = useMemo(() => {
     const byClient = new Map<string, { id: string; name: string; phone: string; email: string; tags: string[]; deals: Deal[] }>();
@@ -86,7 +105,6 @@ export default function CrmView(props: {
           ...entry,
           activeCount: active.length,
           openSum: active.reduce((sum, deal) => sum + deal.amount, 0),
-          total: entry.deals.reduce((sum, deal) => sum + deal.amount, 0),
           lastTouch: entry.deals.reduce((latest, deal) => (deal.updatedAt > latest ? deal.updatedAt : latest), ''),
         };
       })
@@ -94,21 +112,54 @@ export default function CrmView(props: {
       .sort((left, right) => right.openSum - left.openSum || right.lastTouch.localeCompare(left.lastTouch));
   }, [clients, deals, clientName, query]);
 
-  const createDeal = () => {
-    const title = newDeal.title.trim();
-    if (!title) { notify('Укажите название заказа', 'error'); return; }
-    if (!newDeal.clientId) { notify('Выберите клиента', 'error'); return; }
-    const id = addDeal({
-      title,
-      clientId: newDeal.clientId,
-      amount: Number(newDeal.amount.replace(/\s/g, '').replace(',', '.')) || 0,
-      status: newDeal.status,
-      manager: newDeal.manager || undefined,
+  const { drag, over, bind } = useDragDrop((payload, target) => {
+    if (payload.kind !== 'deal') return;
+    const stage = CRM_STAGES.find((item) => item.id === target);
+    if (!stage) return;
+    const deal = deals.find((item) => item.id === payload.id);
+    if (!deal) return;
+    if (stage.statuses.includes(deal.status)) return;
+    changeStatus(deal.id, stage.statuses[0]);
+    notify(`«${deal.title}» → ${stage.title}`, 'ok', {
+      label: 'Вернуть',
+      run: () => changeStatus(deal.id, deal.status),
     });
-    setNewDealOpen(false);
-    setNewDeal({ title: '', clientId: '', amount: '', status: 'draft', manager: '' });
-    notify('Сделка создана');
-    props.onOpenDeal(id);
+  });
+
+  const toggleSelected = (id: string) => {
+    setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  };
+
+  const bulk = {
+    status: (status: DealStatus) => {
+      selected.forEach((id) => changeStatus(id, status));
+      notify(`Этап изменён у ${selected.length} сделок`);
+      setSelected([]);
+    },
+    manager: (manager: string) => {
+      selected.forEach((id) => patchDeal(id, { manager: manager || undefined }));
+      notify(`Ответственный назначен у ${selected.length} сделок`);
+      setSelected([]);
+    },
+    followUp: (days: number) => {
+      selected.forEach((id) => patchDeal(id, { nextContactAt: new Date(Date.now() + days * 86400000).toISOString().slice(0, 10) }));
+      notify(`Следующий контакт сдвинут на ${days === 0 ? 'сегодня' : `+${days} дн.`} у ${selected.length} сделок`);
+      setSelected([]);
+    },
+    remove: () => {
+      if (!confirm(`Удалить ${selected.length} сделок? Их можно вернуть кнопкой «Вернуть».`)) return;
+      selected.forEach((id) => removeDeal(id));
+      setSelected([]);
+    },
+  };
+
+  const copyPhone = async (phone: string) => {
+    try {
+      await navigator.clipboard.writeText(phone);
+      notify('Телефон скопирован');
+    } catch {
+      notify('Не удалось скопировать', 'error');
+    }
   };
 
   return (
@@ -120,28 +171,67 @@ export default function CrmView(props: {
           <p className="muted">Кликните строку — откроется карточка сделки со всеми деталями.</p>
         </div>
         <div className="actions wrap">
-          <div className="segmented" role="tablist" aria-label="Что показывать">
-            <button type="button" role="tab" aria-selected={mode === 'deals'} className={mode === 'deals' ? 'active' : ''} onClick={() => setMode('deals')}>Сделки</button>
-            <button type="button" role="tab" aria-selected={mode === 'clients'} className={mode === 'clients' ? 'active' : ''} onClick={() => setMode('clients')}>Клиенты</button>
-          </div>
-          <div className="search-wrap">
-            <input value={query} placeholder="Клиент, заказ, телефон…" onChange={(event) => setQuery(event.target.value)} />
-            {query && <button type="button" className="search-clear" onClick={() => setQuery('')} aria-label="Очистить">✕</button>}
-          </div>
-          {mode === 'deals' && (
-            <div className="segmented" role="tablist" aria-label="Вид">
-              <button type="button" role="tab" aria-selected={!board} className={board ? '' : 'active'} onClick={() => setBoard(false)}>Список</button>
-              <button type="button" role="tab" aria-selected={board} className={board ? 'active' : ''} onClick={() => setBoard(true)}>Доска</button>
-            </div>
-          )}
-          <button type="button" className="btn ghost" onClick={props.onNewClient}>+ Клиент</button>
-          <button type="button" className="btn primary" onClick={() => setNewDealOpen(true)}>+ Сделка</button>
+          <button type="button" className="btn ghost" onClick={props.onNewClient}>
+            <Users size={16} /> Клиент
+          </button>
+          <button type="button" className="btn primary" onClick={props.onNewDeal}>+ Сделка</button>
         </div>
       </header>
 
-      {mode === 'deals' && (
+      <section className="crm-controls">
+        <div className="segmented" role="tablist" aria-label="Что показывать">
+          <button type="button" role="tab" aria-selected={prefs.mode === 'deals'} className={prefs.mode === 'deals' ? 'active' : ''} onClick={() => patchPrefs({ mode: 'deals' })}>
+            <List size={14} /> Сделки
+          </button>
+          <button type="button" role="tab" aria-selected={prefs.mode === 'clients'} className={prefs.mode === 'clients' ? 'active' : ''} onClick={() => patchPrefs({ mode: 'clients' })}>
+            <Users size={14} /> Клиенты
+          </button>
+        </div>
+
+        <div className="search-wrap">
+          <Search size={15} />
+          <input
+            value={query}
+            placeholder="Клиент, заказ, телефон…"
+            onChange={(event) => { setQuery(event.target.value); setVisibleCount(PAGE_SIZE); }}
+            aria-label="Поиск по CRM"
+          />
+          {query && (
+            <button type="button" className="search-clear" onClick={() => setQuery('')} aria-label="Очистить поиск">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {prefs.mode === 'deals' && (
+          <>
+            <div className="segmented" role="tablist" aria-label="Вид">
+              <button type="button" role="tab" aria-selected={!prefs.board} className={prefs.board ? '' : 'active'} onClick={() => patchPrefs({ board: false })}>
+                <List size={14} /> Список
+              </button>
+              <button type="button" role="tab" aria-selected={prefs.board} className={prefs.board ? 'active' : ''} onClick={() => patchPrefs({ board: true })}>
+                <LayoutGrid size={14} /> Доска
+              </button>
+            </div>
+            {settings.myName && (
+              <label className="chip-toggle">
+                <input type="checkbox" checked={prefs.mine} onChange={(event) => patchPrefs({ mine: event.target.checked })} />
+                только мои
+              </label>
+            )}
+          </>
+        )}
+
+        {duplicates.length > 0 && (
+          <button type="button" className="chip-toggle warn" onClick={() => setDuplicatesOpen(true)}>
+            <Copy size={14} /> дубли: {duplicates.length}
+          </button>
+        )}
+      </section>
+
+      {prefs.mode === 'deals' && (
         <>
-          <section className="focus-bar" aria-label="Фокус">
+          <section className="focus-bar" aria-label="Фокус списка">
             {(['today', 'week', 'no-next', 'active', 'closed', 'all'] as CrmFocus[]).map((value) => {
               const count = value === 'today' ? counts.today
                 : value === 'week' ? counts.week
@@ -150,21 +240,21 @@ export default function CrmView(props: {
                 : value === 'closed' ? counts.closed
                 : rows.length;
               return (
-                <button key={value} type="button" className={focus === value ? 'active' : ''} onClick={() => { setFocus(value); setStage(''); }}>
+                <button key={value} type="button" className={prefs.focus === value ? 'active' : ''} onClick={() => patchPrefs({ focus: value, stage: '' })}>
                   {CRM_FOCUS_LABELS[value]}<b>{count}</b>
                 </button>
               );
             })}
-            <span className="focus-money">Активный портфель: <b>{fmtMoney(counts.pipeline)}</b></span>
+            <span className="focus-money">Портфель: <b>{fmtMoney(counts.pipeline)}</b></span>
           </section>
 
           <section className="funnel" aria-label="Воронка">
             {stages.map((item) => (
-              <button key={item.id} type="button" className={stage === item.id ? 'active' : ''}
-                onClick={() => { setStage(stage === item.id ? '' : item.id); setFocus('all'); }}>
+              <button key={item.id} type="button" className={prefs.stage === item.id ? 'active' : ''}
+                onClick={() => patchPrefs({ stage: prefs.stage === item.id ? '' : item.id, focus: 'all' })}>
                 <b>{item.count}</b>
                 <span>{item.title}</span>
-                <small>{fmtMoney(item.total, { compact: true })}</small>
+                <small>{fmtMoneyCompact(item.total)}</small>
               </button>
             ))}
           </section>
@@ -176,58 +266,79 @@ export default function CrmView(props: {
               {taskCounts.today > 0 && <> · <b>{taskCounts.today}</b> на сегодня</>}
             </span>
             <label>Ответственный
-              <select value={manager} onChange={(event) => setManager(event.target.value)}>
+              <select value={prefs.manager} onChange={(event) => patchPrefs({ manager: event.target.value })}>
                 <option value="">все</option>
                 {managers.map((name) => <option key={name} value={name}>{name}</option>)}
               </select>
             </label>
             <label>Сортировать
-              <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}>
+              <select value={prefs.sort} onChange={(event) => patchPrefs({ sort: event.target.value as typeof prefs.sort })}>
                 <option value="urgency">по срочности</option>
                 <option value="money">по сумме</option>
                 <option value="updated">по последнему изменению</option>
               </select>
             </label>
-            <span className="toolbar-count">Показано: <b>{visible.length}</b></span>
+            <span className="toolbar-count">
+              <Filter size={13} /> показано <b>{Math.min(visibleCount, visible.length)}</b> из {visible.length}
+            </span>
+            {visible.some((row) => row.tone === 'overdue' || row.tone === 'today') && (
+              <button
+                type="button"
+                className="btn small primary"
+                onClick={() => props.onStartQueue(visible.filter((row) => row.tone === 'overdue' || row.tone === 'today').map((row) => row.deal.id))}
+              >
+                <Play size={14} /> Разобрать очередь
+              </button>
+            )}
           </section>
 
-          {board ? (
-            <section className="board" aria-label="Доска сделок">
+          {selected.length > 0 && (
+            <section className="bulk-bar" aria-label="Массовые действия">
+              <b>Выбрано: {selected.length}</b>
+              <label>Этап
+                <select defaultValue="" onChange={(event) => { if (event.target.value) bulk.status(event.target.value as DealStatus); }}>
+                  <option value="">— изменить —</option>
+                  {(['calculating', 'offerSent', 'clientThinking', 'approved', 'techCheck', 'factorySent', 'production', 'ready', 'delivered', 'rejected'] as DealStatus[])
+                    .map((status) => <option key={status} value={status}>{statusMeta(status).label}</option>)}
+                </select>
+              </label>
+              <label>Ответственный
+                <select defaultValue="" onChange={(event) => { if (event.target.value) bulk.manager(event.target.value); }}>
+                  <option value="">— назначить —</option>
+                  {managers.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </label>
+              <button type="button" className="btn small ghost" onClick={() => bulk.followUp(1)}>Контакт завтра</button>
+              <button type="button" className="btn small ghost" onClick={() => bulk.followUp(7)}>Через неделю</button>
+              <button type="button" className="btn small danger-ghost" onClick={bulk.remove}><Trash2 size={14} /> Удалить</button>
+              <button type="button" className="icon-btn" onClick={() => setSelected([])} aria-label="Снять выбор"><X size={15} /></button>
+            </section>
+          )}
+
+          {prefs.board ? (
+            <section className={`board${drag ? ' dragging' : ''}`} aria-label="Доска сделок">
               {CRM_STAGES.map((column) => {
                 const items = visible.filter((row) => column.statuses.includes(row.status));
                 return (
-                  <div
-                    key={column.id}
-                    className={`board-col${dropStage === column.id ? ' drop' : ''}`}
-                    onDragOver={(event) => { event.preventDefault(); setDropStage(column.id); }}
-                    onDragLeave={() => setDropStage('')}
-                    onDrop={() => {
-                      if (dragId) {
-                        changeStatus(dragId, column.statuses[0]);
-                        notify(`Сделка → «${column.title}»`);
-                      }
-                      setDragId('');
-                      setDropStage('');
-                    }}
-                  >
+                  <div key={column.id} className={`board-col${over === column.id ? ' drop' : ''}`} data-drop={column.id}>
                     <header>
                       <b>{column.title}</b>
                       <span>{items.length}</span>
-                      <small>{fmtMoney(items.reduce((sum, row) => sum + row.total, 0), { compact: true })}</small>
+                      <small>{fmtMoneyCompact(items.reduce((sum, row) => sum + row.total, 0))}</small>
                     </header>
                     <div className="board-list">
                       {items.map((row) => (
                         <article
                           key={row.deal.id}
-                          className="board-card"
-                          draggable
-                          onDragStart={() => setDragId(row.deal.id)}
-                          onDragEnd={() => { setDragId(''); setDropStage(''); }}
+                          className={`board-card${drag?.id === row.deal.id ? ' is-dragged' : ''}`}
+                          {...bind({ id: row.deal.id, kind: 'deal', label: row.deal.title })}
                           onClick={() => props.onOpenDeal(row.deal.id)}
+                          tabIndex={0}
+                          onKeyDown={(event) => { if (event.key === 'Enter') props.onOpenDeal(row.deal.id); }}
                         >
                           <div className="board-card-top">
                             <b>{clientName(row.deal)}</b>
-                            <span>{fmtMoney(row.total, { compact: true })}</span>
+                            <span>{row.total ? fmtMoneyCompact(row.total) : '—'}</span>
                           </div>
                           <div className="board-card-title">{row.deal.title}</div>
                           <div className="board-card-meta">
@@ -248,28 +359,56 @@ export default function CrmView(props: {
           ) : (
             <section className="card deal-list">
               {visible.length === 0 ? (
-                <div className="empty-note">Ничего не найдено. Смените фильтр или добавьте сделку.</div>
+                <EmptyState
+                  icon={<Search size={22} />}
+                  title="Ничего не найдено"
+                  hint="Смените фильтр или добавьте новую сделку."
+                  action={<button type="button" className="btn small primary" onClick={props.onNewDeal}>+ Сделка</button>}
+                />
               ) : (
-                <ul>
-                  {visible.map((row) => <DealListRow key={row.deal.id} row={row} client={clientName(row.deal)} today={today} onOpen={() => props.onOpenDeal(row.deal.id)} />)}
-                </ul>
+                <>
+                  <ul>
+                    {visible.slice(0, visibleCount).map((row) => (
+                      <DealListRow
+                        key={row.deal.id}
+                        row={row}
+                        client={clientName(row.deal)}
+                        today={today}
+                        selected={selected.includes(row.deal.id)}
+                        onSelect={() => toggleSelected(row.deal.id)}
+                        onOpen={() => props.onOpenDeal(row.deal.id)}
+                        onCopyPhone={(phone) => copyPhone(phone)}
+                      />
+                    ))}
+                  </ul>
+                  {visibleCount < visible.length && (
+                    <button type="button" className="load-more" onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>
+                      Показать ещё {Math.min(PAGE_SIZE, visible.length - visibleCount)} из {visible.length - visibleCount}
+                    </button>
+                  )}
+                </>
               )}
             </section>
           )}
         </>
       )}
 
-      {mode === 'clients' && (
+      {prefs.mode === 'clients' && (
         <section className="card client-list">
           <div className="section-head">
             <div>
               <h2>Клиенты</h2>
               <span className="muted">{clientRows.length} в базе</span>
             </div>
-            <button type="button" className="btn ghost" onClick={props.onNewClient}>+ Клиент</button>
+            <button type="button" className="btn small ghost" onClick={props.onNewClient}>+ Клиент</button>
           </div>
           {clientRows.length === 0 ? (
-            <div className="empty-note">Клиентов пока нет. Добавьте первого — сделки привяжутся к нему.</div>
+            <EmptyState
+              icon={<Users size={22} />}
+              title="Клиентов пока нет"
+              hint="Добавьте первого — сделки привяжутся к его карточке."
+              action={<button type="button" className="btn small primary" onClick={props.onNewClient}>Добавить клиента</button>}
+            />
           ) : (
             <ul>
               {clientRows.map((row) => (
@@ -286,10 +425,10 @@ export default function CrmView(props: {
                       <small>активных</small>
                     </span>
                     <span className="client-sum">
-                      <b>{fmtMoney(row.openSum, { compact: true })}</b>
+                      <b>{row.openSum ? fmtMoneyCompact(row.openSum) : '—'}</b>
                       <small>в работе</small>
                     </span>
-                    <span className="client-arrow">›</span>
+                    <span className="client-arrow"><ArrowRight size={16} /></span>
                   </button>
                 </li>
               ))}
@@ -298,68 +437,84 @@ export default function CrmView(props: {
         </section>
       )}
 
-      {newDealOpen && (
+      {duplicatesOpen && (
         <Modal
-          title="Новая сделка"
-          subtitle="Заказ привязывается к клиенту. Даты монтажа заполним позже в карточке."
-          onClose={() => setNewDealOpen(false)}
-          footer={(
-            <>
-              <button type="button" className="btn ghost" onClick={() => setNewDealOpen(false)}>Отмена</button>
-              <button type="button" className="btn primary" onClick={createDeal}>Создать сделку</button>
-            </>
-          )}
+          title="Похожие клиенты"
+          subtitle="Одинаковый телефон или имя. Объединение переносит сделки в одну карточку."
+          onClose={() => setDuplicatesOpen(false)}
         >
-          <div className="form-grid">
-            <label className="field span-2">Название заказа
-              <input autoFocus value={newDeal.title} placeholder="Кухня на Ленина, 42" onChange={(event) => setNewDeal({ ...newDeal, title: event.target.value })} />
-            </label>
-            <label className="field span-2">Клиент
-              <select value={newDeal.clientId} onChange={(event) => setNewDeal({ ...newDeal, clientId: event.target.value })}>
-                <option value="">— выберите клиента —</option>
-                {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
-              </select>
-            </label>
-            <label className="field">Сумма, ₽
-              <input value={newDeal.amount} inputMode="numeric" placeholder="0" onChange={(event) => setNewDeal({ ...newDeal, amount: event.target.value })} />
-            </label>
-            <label className="field">Этап
-              <select value={newDeal.status} onChange={(event) => setNewDeal({ ...newDeal, status: event.target.value as DealStatus })}>
-                {(['draft', 'calculating', 'offerSent', 'clientThinking', 'approved'] as DealStatus[]).map((status) => (
-                  <option key={status} value={status}>{statusMeta(status).label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field span-2">Ответственный
-              <select value={newDeal.manager} onChange={(event) => setNewDeal({ ...newDeal, manager: event.target.value })}>
-                <option value="">не назначен</option>
-                {managers.map((name) => <option key={name} value={name}>{name}</option>)}
-              </select>
-            </label>
-            {clients.length === 0 && (
-              <p className="form-note span-2">Сначала добавьте клиента — кнопка «+ Клиент» в шапке.</p>
-            )}
-          </div>
+          {duplicates.length === 0 ? (
+            <EmptyState icon={<Copy size={22} />} title="Дублей нет" hint="База клиентов выглядит чисто." />
+          ) : (
+            <ul className="duplicate-list">
+              {duplicates.map((group, index) => (
+                <li key={`${group.reason}-${index}`}>
+                  <b>{group.reason}</b>
+                  <div className="duplicate-people">
+                    {group.clients.map((client, clientIndex) => (
+                      <span key={client.id} className="duplicate-person">
+                        {client.name}
+                        {clientIndex === 0 && <i className="tag">оставить</i>}
+                        {clientIndex > 0 && (
+                          <button
+                            type="button"
+                            className="btn small ghost"
+                            onClick={() => {
+                              mergeClients(group.clients[0].id, client.id);
+                              setDuplicatesOpen(false);
+                            }}
+                          >
+                            объединить с «{group.clients[0].name}»
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </Modal>
       )}
     </div>
   );
 }
 
-function DealListRow({ row, client, today, onOpen }: { row: DealRow; client: string; today: string; onOpen: () => void }) {
+function DealListRow({ row, client, today, selected, onSelect, onOpen, onCopyPhone }: {
+  row: DealRow;
+  client: string;
+  today: string;
+  selected: boolean;
+  onSelect: () => void;
+  onOpen: () => void;
+  onCopyPhone: (phone: string) => void;
+}) {
+  const { clientFor } = useApp();
   const { deal } = row;
   const pay = paymentState(deal);
   const task = nextTask(deal, today);
   const tasks = openTasks(deal).length;
   const tone = contactTone(deal.nextContactAt, today);
+  const phone = clientFor(deal)?.phones[0] ?? '';
+  const meta = statusMeta(deal.status);
+
   return (
-    <li>
+    <li className={`deal-item status-${meta.stage}${selected ? ' selected' : ''}`}>
+      <span className="deal-select">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onSelect}
+          aria-label={`Выбрать сделку ${deal.title}`}
+        />
+      </span>
       <button type="button" className={`deal-row${row.closed ? ' closed' : ''}`} onClick={onOpen}>
         <span className="deal-main">
           <span className="deal-top">
             <b>{client}</b>
-            <i className={`badge badge-${statusMeta(deal.status).tone}`}>{statusMeta(deal.status).label}</i>
+            <i className={`badge badge-${meta.tone}`}>{meta.label}</i>
             {deal.manager && <i className="badge badge-ghost">{deal.manager}</i>}
+            {phone && <span className="deal-phone">{phone}</span>}
           </span>
           <span className="deal-title">{deal.title}</span>
           <span className="deal-action">
@@ -373,12 +528,22 @@ function DealListRow({ row, client, today, onOpen }: { row: DealRow; client: str
           </span>
         </span>
         <span className="deal-money">
-          <b>{fmtMoney(deal.amount)}</b>
-          <small>{pay.remainder > 0 ? `остаток ${fmtMoney(pay.remainder, { compact: true })}` : 'оплачено'}</small>
-          <i className="pay-bar"><span style={{ width: `${pay.percent}%` }} /></i>
+          <b className={deal.amount ? '' : 'muted'}>{deal.amount ? fmtMoney(deal.amount) : 'сумма не заполнена'}</b>
+          <small>{deal.amount ? (pay.remainder > 0 ? `остаток ${fmtMoney(pay.remainder)}` : 'оплачено') : '—'}</small>
+          <i className={`pay-bar${pay.remainder > 0 ? ' partial' : ''}`}><span style={{ width: `${pay.percent}%` }} /></i>
         </span>
-        <span className="deal-arrow">›</span>
+        <span className="deal-arrow"><ArrowRight size={16} /></span>
       </button>
+      {phone && (
+        <span className="deal-quick-actions">
+          <a className="icon-btn" href={`tel:+${phone.replace(/\D/g, '')}`} title="Позвонить" aria-label={`Позвонить ${client}`}>
+            <Phone size={15} />
+          </a>
+          <button type="button" className="icon-btn" onClick={() => onCopyPhone(phone)} title="Скопировать телефон" aria-label="Скопировать телефон">
+            <Copy size={15} />
+          </button>
+        </span>
+      )}
     </li>
   );
 }

@@ -1,164 +1,231 @@
-// Карточка клиента: контакты, теги, заметки и все его сделки.
-import { useState } from 'react';
+// Карточка клиента: контакты, сделки, история, объединение дублей.
+import { useMemo, useState } from 'react';
+import { Copy, Link2, Merge, Phone, Plus, Trash2 } from 'lucide-react';
 import type { Client } from '../types';
 import { useApp } from '../store';
-import { fmtDate, fmtMoney, digitsOnly, telHref } from '../lib/dates';
-import { statusMeta } from '../lib/crm';
-import { nowIso, splitList, uid } from '../lib/utils';
+import { fmtDate, fmtMoney, fmtMoneyCompact, telHref, todayISO } from '../lib/dates';
+import { isClosedStatus, statusMeta } from '../lib/crm';
+import { buildClientTimeline, TIMELINE_META } from '../lib/crmTimeline';
+import { findDuplicateClients } from '../lib/storage';
+import { absoluteLink } from '../lib/router';
 import Modal from './Modal';
 
-const TAG_PRESETS = ['Горячий', 'Постоянный', 'Дизайнер', 'Рекомендация', 'Срочно', 'Проблема'];
-
-export default function ClientDialog({ clientId, onClose, onOpenDeal }: {
-  clientId: string;
-  onClose: () => void;
-  onOpenDeal: (id: string) => void;
-}) {
-  const { clients, deals, saveClient, removeClient, notify } = useApp();
-  const existing = clients.find((item) => item.id === clientId);
-  const isNew = !existing;
-  const [draft, setDraft] = useState<Client>(existing ?? {
-    id: uid('cli'),
+function emptyClient(): Client {
+  const stamp = new Date().toISOString();
+  return {
+    id: '',
     name: '',
     phones: [],
     emails: [],
+    address: '',
+    source: '',
     tags: [],
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-  });
-  const [phoneText, setPhoneText] = useState((existing?.phones ?? []).join(', '));
-  const [emailText, setEmailText] = useState((existing?.emails ?? []).join(', '));
-  const [tagText, setTagText] = useState('');
+    managerComment: '',
+    createdAt: stamp,
+    updatedAt: stamp,
+  };
+}
 
-  const clientDeals = deals.filter((deal) => deal.clientId === draft.id);
+export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal }: {
+  clientId: string;
+  onClose: () => void;
+  onOpenDeal: (id: string) => void;
+  onNewDeal: (clientId: string) => void;
+}) {
+  const { clients, deals, saveClient, removeClient, mergeClients, notify } = useApp();
+  const existing = clients.find((item) => item.id === clientId);
+  const [draft, setDraft] = useState<Client>(() => existing ? { ...existing } : emptyClient());
+  const [phonesText, setPhonesText] = useState((existing?.phones ?? []).join('\n'));
+  const [emailsText, setEmailsText] = useState((existing?.emails ?? []).join('\n'));
+  const [tagsText, setTagsText] = useState((existing?.tags ?? []).join(', '));
+  const isNew = !existing;
+
+  const clientDeals = useMemo(
+    () => deals.filter((deal) => deal.clientId === clientId).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [deals, clientId],
+  );
+  const timeline = useMemo(() => buildClientTimeline(clientDeals, 10), [clientDeals]);
+  const openSum = clientDeals.filter((deal) => !isClosedStatus(deal.status)).reduce((sum, deal) => sum + deal.amount, 0);
+  const today = todayISO();
+
+  const duplicates = useMemo(() => {
+    if (isNew) return [];
+    const groups = findDuplicateClients(clients);
+    const mine = groups.filter((group) => group.clients.some((client) => client.id === clientId));
+    return mine.flatMap((group) => group.clients.filter((client) => client.id !== clientId));
+  }, [clients, clientId, isNew]);
+
+  const candidates = useMemo(
+    () => clients.filter((client) => client.id !== clientId && client.name.trim().toLocaleLowerCase('ru-RU') === draft.name.trim().toLocaleLowerCase('ru-RU')),
+    [clients, clientId, draft.name],
+  );
 
   const save = () => {
     const name = draft.name.trim();
-    if (!name) { notify('Укажите имя клиента', 'error'); return; }
-    const next: Client = {
+    if (!name) { notify('У клиента должно быть имя', 'error'); return; }
+    const saved: Client = {
       ...draft,
       name,
-      phones: splitList(phoneText),
-      emails: splitList(emailText),
-      tags: draft.tags,
-      updatedAt: nowIso(),
+      phones: phonesText.split(/[\n,;]+/).map((value) => value.trim()).filter(Boolean),
+      emails: emailsText.split(/[\n,;]+/).map((value) => value.trim()).filter(Boolean),
+      tags: tagsText.split(/[,;]+/).map((value) => value.trim()).filter(Boolean),
+      id: existing?.id ?? '',
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
     };
-    saveClient(next);
-    notify(isNew ? 'Клиент добавлен' : 'Карточка клиента сохранена');
+    const id = saveClient(saved);
+    notify(isNew ? 'Клиент добавлен' : 'Клиент сохранён');
     onClose();
-  };
-
-  const toggleTag = (tag: string) => {
-    setDraft((current) => ({
-      ...current,
-      tags: current.tags.includes(tag) ? current.tags.filter((item) => item !== tag) : [...current.tags, tag],
-    }));
-  };
-
-  const addCustomTag = () => {
-    const tag = tagText.trim();
-    if (!tag) return;
-    if (!draft.tags.includes(tag)) setDraft((current) => ({ ...current, tags: [...current.tags, tag] }));
-    setTagText('');
+    if (isNew) onNewDeal(id);
   };
 
   return (
     <Modal
       title={isNew ? 'Новый клиент' : draft.name || 'Клиент'}
-      subtitle={isNew ? 'Заполните контакты — сделки привяжутся к этой карточке.' : `${clientDeals.length} сделок · в базе с ${fmtDate(draft.createdAt.slice(0, 10), { withYear: true })}`}
+      subtitle={isNew ? 'Имя обязательно, остальное можно позже.' : `В базе с ${fmtDate(draft.createdAt?.slice(0, 10))}`}
       onClose={onClose}
       size="lg"
       footer={(
         <>
           {!isNew && (
             <button type="button" className="btn danger-ghost" onClick={() => {
-              if (!confirm(`Удалить клиента «${draft.name}»? Сделки останутся, но без привязки к клиенту.`)) return;
-              removeClient(draft.id);
-              notify('Клиент удалён');
+              if (!confirm(`Удалить клиента «${draft.name}»? Сделки останутся без клиента.`)) return;
+              removeClient(clientId);
               onClose();
-            }}>Удалить</button>
+            }}>
+              <Trash2 size={14} /> Удалить
+            </button>
           )}
           <span className="foot-spacer" />
-          <button type="button" className="btn ghost" onClick={onClose}>Отмена</button>
-          <button type="button" className="btn primary" onClick={save}>Сохранить</button>
+          {!isNew && <button type="button" className="btn ghost" onClick={() => onNewDeal(clientId)}><Plus size={14} /> Сделка</button>}
+          <button type="button" className="btn primary" onClick={save}>{isNew ? 'Добавить клиента' : 'Сохранить'}</button>
         </>
       )}
     >
-      <div className="form-grid">
-        <label className="field span-2">Имя
-          <input autoFocus value={draft.name} placeholder="Анна Смирнова" onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-        </label>
-        <label className="field">Телефоны
-          <input value={phoneText} placeholder="+7 …, +7 …" onChange={(event) => setPhoneText(event.target.value)} />
-          <small className="field-hint">через запятую, если их несколько</small>
-        </label>
-        <label className="field">Email
-          <input value={emailText} placeholder="mail@example.ru" onChange={(event) => setEmailText(event.target.value)} />
-        </label>
-        <label className="field">Адрес объекта
-          <input value={draft.address ?? ''} placeholder="улица, дом, квартира" onChange={(event) => setDraft({ ...draft, address: event.target.value || undefined })} />
-        </label>
-        <label className="field">Источник
-          <input value={draft.source ?? ''} placeholder="рекомендация, сайт, Instagram…" onChange={(event) => setDraft({ ...draft, source: event.target.value || undefined })} />
-        </label>
-        <div className="field span-2">
-          <span className="field-label">Теги</span>
-          <div className="tag-picker">
-            {TAG_PRESETS.map((tag) => (
-              <button key={tag} type="button" className={`tag-btn${draft.tags.includes(tag) ? ' active' : ''}`} onClick={() => toggleTag(tag)}>{tag}</button>
-            ))}
-            {draft.tags.filter((tag) => !TAG_PRESETS.includes(tag)).map((tag) => (
-              <button key={tag} type="button" className="tag-btn active" onClick={() => toggleTag(tag)}>{tag} ✕</button>
-            ))}
-            <input
-              value={tagText}
-              placeholder="свой тег"
-              onChange={(event) => setTagText(event.target.value)}
-              onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addCustomTag(); } }}
-            />
-          </div>
+      <div className="client-grid">
+        <div className="form-grid">
+          <label className="field span-2">Имя
+            <input data-autofocus autoFocus value={draft.name} placeholder="Анна Смирнова" onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+          </label>
+          <label className="field">Телефоны
+            <textarea rows={2} value={phonesText} placeholder="+7 900 000-00-00" onChange={(event) => setPhonesText(event.target.value)} />
+            <small className="field-hint">по одному в строке</small>
+          </label>
+          <label className="field">Почта
+            <textarea rows={2} value={emailsText} placeholder="anna@example.ru" onChange={(event) => setEmailsText(event.target.value)} />
+          </label>
+          <label className="field span-2">Адрес
+            <input value={draft.address ?? ''} placeholder="город, улица, дом" onChange={(event) => setDraft({ ...draft, address: event.target.value })} />
+          </label>
+          <label className="field">Источник
+            <input value={draft.source ?? ''} placeholder="сайт, знакомые, Авито" onChange={(event) => setDraft({ ...draft, source: event.target.value })} />
+          </label>
+          <label className="field">Метки
+            <input value={tagsText} placeholder="VIP, повторный" onChange={(event) => setTagsText(event.target.value)} />
+          </label>
+          <label className="field span-2">Заметка
+            <textarea rows={2} value={draft.managerComment ?? ''} placeholder="о клиенте, о квартире, о договорённостях" onChange={(event) => setDraft({ ...draft, managerComment: event.target.value })} />
+          </label>
         </div>
-        <label className="field span-2">Заметка менеджера
-          <textarea rows={3} value={draft.managerComment ?? ''} placeholder="особенности клиента, договорённости" onChange={(event) => setDraft({ ...draft, managerComment: event.target.value })} />
-        </label>
+
+        {!isNew && (
+          <div className="client-side">
+            <div className="info-card">
+              <h3>Итого</h3>
+              <b>{openSum ? fmtMoney(openSum) : '—'}</b>
+              <span className="muted small">в активных сделках</span>
+              <span className="muted small">всего сделок: {clientDeals.length}</span>
+              <div className="contact-actions">
+                {phonesText && <a className="btn small ghost" href={telHref(phonesText.split(/[\n,;]+/)[0])}><Phone size={13} /> Позвонить</a>}
+                <button
+                  type="button"
+                  className="btn small ghost"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(absoluteLink({ view: 'crm', clientId }));
+                      notify('Ссылка на клиента скопирована');
+                    } catch { notify('Не удалось скопировать', 'error'); }
+                  }}
+                >
+                  <Link2 size={13} /> Ссылка
+                </button>
+              </div>
+            </div>
+
+            {(duplicates.length > 0 || candidates.length > 0) && (
+              <div className="info-card warn-card">
+                <h3><Copy size={13} /> Похожие карточки</h3>
+                <p className="muted small">Похоже, это тот же клиент. Объедините — сделки перейдут в эту карточку.</p>
+                <div className="merge-list">
+                  {[...new Set([...duplicates.map((client) => client.id), ...candidates.map((client) => client.id)])].map((id) => {
+                    const client = clients.find((item) => item.id === id);
+                    if (!client) return null;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        className="btn small ghost"
+                        onClick={() => {
+                          if (!confirm(`Объединить «${client.name}» с текущей карточкой?`)) return;
+                          mergeClients(clientId, id);
+                          notify('Карточки объединены');
+                          onClose();
+                        }}
+                      >
+                        <Merge size={13} /> {client.name}{client.phones[0] ? ` · ${client.phones[0]}` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="info-card">
+              <h3>Сделки</h3>
+              {clientDeals.length === 0 ? (
+                <span className="muted small">Сделок нет.</span>
+              ) : (
+                <ul className="mini-deal-list">
+                  {clientDeals.map((deal) => {
+                    const meta = statusMeta(deal.status);
+                    return (
+                      <li key={deal.id}>
+                        <button type="button" className="mini-deal" onClick={() => onOpenDeal(deal.id)}>
+                          <span>
+                            <b>{deal.title}</b>
+                            <small>{meta.label}</small>
+                          </span>
+                          <span className="mini-deal-sum">{deal.amount ? fmtMoneyCompact(deal.amount) : '—'}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            {timeline.length > 0 && (
+              <div className="info-card">
+                <h3>История</h3>
+                <ul className="timeline mini">
+                  {timeline.map((event) => (
+                    <li key={event.id} className={`timeline-row timeline-${event.kind}`}>
+                      <span className="timeline-icon">{TIMELINE_META[event.kind]?.icon ?? '•'}</span>
+                      <span className="timeline-main"><b>{event.title}</b>{event.detail && <span>{event.detail}</span>}</span>
+                      <span className="timeline-date">{fmtDate(event.at.slice(0, 10))}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+          </div>
+        )}
       </div>
 
-      {(draft.phones.length > 0 || phoneText) && (
-        <div className="client-contact-bar">
-          {splitList(phoneText).map((phone) => (
-            <span key={phone} className="contact-pill">
-              <a href={telHref(phone)}>{phone}</a>
-              <a href={`https://wa.me/${digitsOnly(phone)}`} target="_blank" rel="noreferrer" title="WhatsApp">WA</a>
-            </span>
-          ))}
+      {!isNew && clientDeals.some((deal) => deal.nextContactAt && deal.nextContactAt < today) && (
+        <div className="inline-warning">
+          Есть просроченные контакты — проверьте сделки клиента.
         </div>
-      )}
-
-      {!isNew && (
-        <section className="client-deals-block">
-          <div className="section-head">
-            <h3>Сделки клиента</h3>
-            <span className="muted">{fmtMoney(clientDeals.reduce((sum, deal) => sum + deal.amount, 0))} всего</span>
-          </div>
-          {clientDeals.length === 0 ? (
-            <div className="empty-note">Сделок пока нет. Создайте её в CRM — клиент подставится автоматически.</div>
-          ) : (
-            <ul className="client-deal-list">
-              {clientDeals.map((deal) => (
-                <li key={deal.id}>
-                  <button type="button" onClick={() => onOpenDeal(deal.id)}>
-                    <span>
-                      <b>{deal.title}</b>
-                      <small>{deal.schedule.installAt ? `монтаж ${fmtDate(deal.schedule.installAt)}` : 'монтаж не назначен'}</small>
-                    </span>
-                    <i className={`badge badge-${statusMeta(deal.status).tone}`}>{statusMeta(deal.status).label}</i>
-                    <b className="client-deal-sum">{fmtMoney(deal.amount, { compact: true })}</b>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
       )}
     </Modal>
   );

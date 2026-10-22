@@ -23,6 +23,9 @@ export type ScheduleStatus = 'planned' | 'confirmed' | 'done' | 'problem';
 
 export type HistoryKind = 'note' | 'status' | 'contact' | 'document' | 'payment' | 'project';
 
+/** Как часто повторять задачу после выполнения. */
+export type TaskRepeat = 'daily' | 'weekdays' | 'weekly' | 'monthly';
+
 export interface Client {
   id: string;
   name: string;
@@ -47,8 +50,9 @@ export interface DealTask {
   doneAt?: string;
   assignee?: string;
   comment?: string;
-  /** `auto:<правило>` — задачу поставила автоматика. */
+  /** `auto:<правило>` — задачу поставила автоматика, `repeat:<id>` — повтор. */
   origin?: string;
+  repeat?: TaskRepeat;
   createdAt: string;
 }
 
@@ -76,6 +80,9 @@ export interface DealSchedule {
   readyAt?: string;
   deliveryAt?: string;
   installAt?: string;
+  /** Время начала и окончания для дня монтажа, HH:MM. */
+  timeStart?: string;
+  timeEnd?: string;
   /** Сколько дней занимает монтаж, по умолчанию 1. */
   installDays?: number;
   team?: string;
@@ -83,6 +90,8 @@ export interface DealSchedule {
   phone?: string;
   note?: string;
   status: ScheduleStatus;
+  /** За сколько минут напомнить. Пусто — общие настройки. */
+  reminders?: number[];
 }
 
 export interface Deal {
@@ -90,7 +99,7 @@ export interface Deal {
   /** Название заказа, например «Кухня на Ленина». */
   title: string;
   clientId: string;
-  /** Сумма заказа для клиента. */
+  /** Сумма заказа для клиента. 0 — сумма ещё не заполнена. */
   amount: number;
   /** Ответственный менеджер. */
   manager?: string;
@@ -110,16 +119,50 @@ export interface Deal {
   updatedAt: string;
 }
 
+/* ----------------------------- настройки ------------------------------ */
+
+export type ThemeMode = 'light' | 'dark' | 'system';
+
+export interface MessageTemplate {
+  id: string;
+  title: string;
+  /** Текст с подстановками: {client} {deal} {total} {paid} {remainder} {date} {team}. */
+  text: string;
+  /** Показывать в карточке сделки. */
+  enabled: boolean;
+}
+
+export type RuleId = 'callAfterOffer' | 'contractAfterApproval' | 'askPrepayment' | 'afterInstall' | 'stuckDeal';
+
+export interface AutomationRule {
+  id: RuleId;
+  label: string;
+  hint: string;
+  /** Через сколько дней срабатывает. */
+  days: number;
+  enabled: boolean;
+}
+
 export interface Settings {
   companyName: string;
+  /** Имя текущего пользователя: «мои сделки» и подписи. */
+  myName: string;
   managers: string[];
   teams: string[];
-  /** Показывать подсказки-подсказки на экранах. */
   hints: boolean;
+  theme: ThemeMode;
+  /** Браузерные напоминания о монтажах. */
+  notifications: boolean;
+  /** За сколько минут напоминать по умолчанию. */
+  reminderMinutes: number;
+  messageTemplates: MessageTemplate[];
+  rules: AutomationRule[];
+  /** Показывать баннер «это демо-данные». */
+  demo: boolean;
 }
 
 export interface AppData {
-  version: 1;
+  version: 2;
   clients: Client[];
   deals: Deal[];
   settings: Settings;

@@ -1,10 +1,16 @@
-// Поля графика сделки: замер, готовность, доставка, монтаж, бригада и адрес.
-// Один компонент используется и в карточке сделки, и в быстрой правке из графика.
-
+// Поля графика сделки: замер, готовность, доставка, монтаж, время, бригада и адрес.
+import { Bell, ChevronLeft, ChevronRight, TriangleAlert } from 'lucide-react';
 import type { Deal, DealSchedule, ScheduleStatus } from '../types';
-import { addDays, todayISO } from '../lib/dates';
+import { addDays, fmtDate, fmtTimeRange, todayISO } from '../lib/dates';
 import { SCHEDULE_STATUSES } from '../lib/schedule';
 import { useApp } from '../store';
+
+const REMINDER_PRESETS = [30, 60, 120, 1440];
+
+function shift(date: string | undefined, days: number): string | undefined {
+  if (!date) return undefined;
+  return addDays(date, days);
+}
 
 export default function ScheduleFields({ deal, compact = false }: { deal: Deal; compact?: boolean }) {
   const { updateSchedule, settings } = useApp();
@@ -21,6 +27,13 @@ export default function ScheduleFields({ deal, compact = false }: { deal: Deal; 
         : schedule.installAt && !schedule.team?.trim()
           ? 'Не назначена бригада'
           : '';
+
+  const reminders = schedule.reminders ?? [settings.reminderMinutes];
+
+  const toggleReminder = (minutes: number) => {
+    const next = reminders.includes(minutes) ? reminders.filter((item) => item !== minutes) : [...reminders, minutes];
+    patch({ reminders: next.length > 0 ? next.sort((left, right) => left - right) : undefined });
+  };
 
   return (
     <div className={`schedule-fields${compact ? ' compact' : ''}`}>
@@ -40,14 +53,51 @@ export default function ScheduleFields({ deal, compact = false }: { deal: Deal; 
         <label className="field">Доставка
           <div className="date-with-quick">
             <input type="date" value={schedule.deliveryAt ?? ''} onChange={(event) => patch({ deliveryAt: event.target.value || undefined })} />
-            <button type="button" className="quick" onClick={() => patch({ deliveryAt: schedule.installAt ? addDays(schedule.installAt, -1) : addDays(today, 7) })}>перед монтажом</button>
+            <button
+              type="button"
+              className="quick"
+              title="За день до монтажа"
+              onClick={() => patch({ deliveryAt: schedule.installAt ? addDays(schedule.installAt, -1) : addDays(today, 7) })}
+            >
+              перед монтажом
+            </button>
           </div>
         </label>
-        <label className="field">Монтаж
+        <div className="field">
+          <span className="field-label">Монтаж</span>
           <div className="date-with-quick">
+            <button
+              type="button"
+              className="icon-btn small"
+              title="Сдвинуть на день раньше"
+              aria-label="Сдвинуть монтаж на день раньше"
+              disabled={!schedule.installAt}
+              onClick={() => patch({ installAt: shift(schedule.installAt, -1) })}
+            >
+              <ChevronLeft size={15} />
+            </button>
             <input type="date" value={schedule.installAt ?? ''} onChange={(event) => patch({ installAt: event.target.value || undefined })} />
+            <button
+              type="button"
+              className="icon-btn small"
+              title="Сдвинуть на день позже"
+              aria-label="Сдвинуть монтаж на день позже"
+              disabled={!schedule.installAt}
+              onClick={() => patch({ installAt: shift(schedule.installAt, 1) })}
+            >
+              <ChevronRight size={15} />
+            </button>
             <button type="button" className="quick" onClick={() => patch({ installAt: today })}>сегодня</button>
           </div>
+          <small className="field-hint">
+            {schedule.installAt ? `${fmtDate(schedule.installAt, { withYear: true })}${schedule.timeStart ? ` · ${fmtTimeRange(schedule.timeStart, schedule.timeEnd)}` : ''}` : 'дата не назначена'}
+          </small>
+        </div>
+        <label className="field">Начало
+          <input type="time" value={schedule.timeStart ?? ''} onChange={(event) => patch({ timeStart: event.target.value || undefined })} />
+        </label>
+        <label className="field">Окончание
+          <input type="time" value={schedule.timeEnd ?? ''} onChange={(event) => patch({ timeEnd: event.target.value || undefined })} />
         </label>
         <label className="field">Дней на монтаж
           <input
@@ -88,8 +138,28 @@ export default function ScheduleFields({ deal, compact = false }: { deal: Deal; 
             onChange={(event) => patch({ note: event.target.value })}
           />
         </label>
+        <div className="field span-2">
+          <span className="field-label"><Bell size={13} /> Напомнить</span>
+          <div className="quick-row">
+            {REMINDER_PRESETS.map((minutes) => (
+              <button
+                key={minutes}
+                type="button"
+                className={`quick${reminders.includes(minutes) ? ' active' : ''}`}
+                onClick={() => toggleReminder(minutes)}
+              >
+                {minutes < 60 ? `${minutes} мин` : minutes === 60 ? 'час' : minutes === 120 ? '2 часа' : 'сутки'}
+              </button>
+            ))}
+          </div>
+          <small className="field-hint">напоминание придёт, пока приложение открыто</small>
+        </div>
       </div>
-      {warning && <div className="inline-warning">⚠ {warning}</div>}
+      {warning && (
+        <div className="inline-warning">
+          <TriangleAlert size={14} /> {warning}
+        </div>
+      )}
     </div>
   );
 }

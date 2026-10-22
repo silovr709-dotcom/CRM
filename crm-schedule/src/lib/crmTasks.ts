@@ -1,7 +1,7 @@
 // Задачи и оплаты сделки. Чистые функции: получают сделку — возвращают новую.
 // Именно поэтому всё можно проверить тестами без браузера.
 
-import type { Deal, DealTask, Payment, PaymentKind, TaskKind } from '../types';
+import type { Deal, DealTask, Payment, PaymentKind, TaskKind, TaskRepeat } from '../types';
 import { addDays, daysBetween, fmtMoney, parseDay, todayISO } from './dates';
 import { nowIso, uid } from './utils';
 
@@ -115,12 +115,69 @@ export function patchTask(deal: Deal, taskId: string, patch: Partial<DealTask>):
   return touch(deal, { tasks: (deal.tasks ?? []).map((task) => (task.id === taskId ? { ...task, ...patch } : task)) });
 }
 
+/**
+ * Отметка выполнения. Если у задачи есть повторение — сразу создаётся
+ * следующая с тем же сроком через нужный интервал.
+ */
 export function toggleTask(deal: Deal, taskId: string): Deal {
-  return touch(deal, {
-    tasks: (deal.tasks ?? []).map((task) => (task.id === taskId
-      ? { ...task, done: !task.done, doneAt: task.done ? undefined : nowIso() }
-      : task)),
-  });
+  const source = (deal.tasks ?? []).find((task) => task.id === taskId);
+  if (!source) return deal;
+  const completing = !source.done;
+
+  const tasks = (deal.tasks ?? []).map((task) => (task.id === taskId
+    ? { ...task, done: !task.done, doneAt: task.done ? undefined : nowIso() }
+    : task));
+
+  if (completing && source.repeat) {
+    const nextDue = nextRepeatDate(source.dueAt ?? todayISO(), source.repeat);
+    const already = tasks.some((task) => task.origin === `repeat:${source.id}` && !task.done);
+    if (!already) {
+      tasks.push({
+        ...source,
+        id: uid('task'),
+        done: false,
+        doneAt: undefined,
+        dueAt: nextDue,
+        origin: `repeat:${source.id}`,
+        createdAt: nowIso(),
+      });
+    }
+  }
+
+  return touch(deal, { tasks });
+}
+
+/** Следующий срок для повторяющейся задачи. */
+export function nextRepeatDate(from: string, repeat: TaskRepeat): string {
+  if (repeat === 'daily') return addDays(from, 1);
+  if (repeat === 'weekly') return addDays(from, 7);
+  if (repeat === 'monthly') {
+    const date = parseDay(from);
+    const day = date.getDate();
+    date.setMonth(date.getMonth() + 1);
+    // 31-е число в коротком месяце переносим на последний день.
+    if (date.getDate() < day) date.setDate(0);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+  // Будни: пропускаем выходные.
+  let next = addDays(from, 1);
+  while ([0, 6].includes(parseDay(next).getDay())) next = addDays(next, 1);
+  return next;
+}
+
+export const REPEAT_LABELS: Array<{ id: TaskRepeat; label: string }> = [
+  { id: 'daily', label: 'каждый день' },
+  { id: 'weekdays', label: 'по будням' },
+  { id: 'weekly', label: 'каждую неделю' },
+  { id: 'monthly', label: 'каждый месяц' },
+];
+
+/** Отложить задачу на N дней (0 — на сегодня). */
+export function postponeTask(deal: Deal, taskId: string, days: number, today = todayISO()): Deal {
+  const task = (deal.tasks ?? []).find((item) => item.id === taskId);
+  if (!task) return deal;
+  const base = task.dueAt && task.dueAt > today ? task.dueAt : today;
+  return patchTask(deal, taskId, { dueAt: addDays(base, days) });
 }
 
 export function removeTask(deal: Deal, taskId: string): Deal {
