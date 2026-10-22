@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addPayment, addTask, nextTask, openTasks, paidAmount, paymentState, removeTask,
-  sortTasks, taskStats, taskTone, toggleTask,
+  addPayment, addTask, nextTask, openTasks, paidAmount, patchPayment, patchTask,
+  paymentState, removeTask, sortTasks, taskStats, taskTone, toggleTask,
 } from './crmTasks';
 import { makeDeal } from './testUtils';
 
@@ -49,6 +49,26 @@ describe('задачи сделки', () => {
   });
 });
 
+describe('правка задач', () => {
+  it('меняет текст, срок, тип и исполнителя', () => {
+    let deal = addTask(makeDeal(), { title: 'Позвонить', kind: 'call', dueAt: '2026-10-25', done: false });
+    const id = deal.tasks[0].id;
+    deal = patchTask(deal, id, { title: 'Позвонить и уточнить размеры', kind: 'measure', dueAt: '2026-10-27', assignee: 'Сергей' });
+    expect(deal.tasks[0]).toMatchObject({
+      title: 'Позвонить и уточнить размеры', kind: 'measure', dueAt: '2026-10-27', assignee: 'Сергей',
+    });
+    expect(deal.updatedAt >= deal.tasks[0].createdAt).toBe(true);
+  });
+
+  it('не трогает остальные задачи', () => {
+    let deal = addTask(makeDeal(), { title: 'Первая', kind: 'call', done: false });
+    deal = addTask(deal, { title: 'Вторая', kind: 'docs', done: false });
+    deal = patchTask(deal, deal.tasks[1].id, { title: 'Вторая, исправленная' });
+    expect(deal.tasks[0].title).toBe('Первая');
+    expect(deal.tasks[1].title).toBe('Вторая, исправленная');
+  });
+});
+
 describe('оплаты', () => {
   it('сумма и остаток считаются по платежам', () => {
     let deal = makeDeal({ amount: 100000 });
@@ -64,6 +84,15 @@ describe('оплаты', () => {
   it('полная оплата даёт зелёный статус', () => {
     const deal = addPayment(makeDeal({ amount: 50000 }), { amount: 50000, at: '2026-10-01', kind: 'final' });
     expect(paymentState(deal)).toMatchObject({ paid: 50000, remainder: 0, tone: 'ok', percent: 100 });
+  });
+
+  it('правит существующий платёж', () => {
+    let deal = addPayment(makeDeal({ amount: 100000 }), { amount: 40000, at: '2026-10-01', kind: 'prepay' });
+    const id = deal.payments[0].id;
+    deal = patchPayment(deal, id, { amount: 50000, comment: 'наличными' });
+    expect(paidAmount(deal.payments)).toBe(50000);
+    expect(deal.payments[0].comment).toBe('наличными');
+    expect(paymentState(deal).remainder).toBe(50000);
   });
 
   it('без платежей — остаток равен сумме', () => {

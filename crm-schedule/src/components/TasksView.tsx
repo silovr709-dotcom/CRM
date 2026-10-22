@@ -1,8 +1,8 @@
 // Задачи: единый список по всем сделкам, повторения, откладывание.
 import { useMemo, useState } from 'react';
-import { Check, CheckCheck, Clock, Phone, Plus, Search, X } from 'lucide-react';
-import type { TaskKind, TaskRepeat as TaskRepeatType } from '../types';
-import { addTask } from '../lib/crmTasks';
+import { Check, CheckCheck, Clock, Pencil, Phone, Plus, Search, X } from 'lucide-react';
+import type { DealTask, TaskKind } from '../types';
+import { addTask, patchTask } from '../lib/crmTasks';
 import { useApp } from '../store';
 import { fmtDate, relativeDay, todayISO } from '../lib/dates';
 import {
@@ -11,7 +11,7 @@ import {
 } from '../lib/crmTasks';
 import { usePrefs } from '../lib/viewPrefs';
 import EmptyState from './EmptyState';
-import Modal from './Modal';
+import TaskEditor from './TaskEditor';
 
 const GROUPS: Array<{ id: TaskTone; title: string; hint: string; tone: string }> = [
   { id: 'overdue', title: 'Просрочено', hint: 'сначала это', tone: 'overdue' },
@@ -22,7 +22,7 @@ const GROUPS: Array<{ id: TaskTone; title: string; hint: string; tone: string }>
 ];
 
 export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
-  const { deals, clients, clientName, updateDeal, settings, notify } = useApp();
+  const { deals, clientName, updateDeal, settings, notify } = useApp();
   const [prefs, patchPrefs] = usePrefs('tasks', {
     hideDone: true,
     assignee: '',
@@ -30,20 +30,11 @@ export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
   });
   const [query, setQuery] = useState('');
   const [doneOpen, setDoneOpen] = useState(false);
-  const [newOpen, setNewOpen] = useState(false);
-  const [draft, setDraft] = useState<{
-    dealId: string; title: string; kind: TaskKind; dueAt: string; assignee: string; repeat: '' | TaskRepeatType;
-  }>({ dealId: '', title: '', kind: 'call', dueAt: todayISO(), assignee: '', repeat: '' });
+  const [editor, setEditor] = useState<{ dealId?: string; task?: DealTask } | null>(null);
 
   const today = todayISO();
   const stats = useMemo(() => taskStats(deals, today), [deals, today]);
   const tasks = useMemo(() => allTasks(deals, today), [deals, today]);
-
-  const managers = useMemo(() => {
-    const set = new Set<string>(settings.managers);
-    if (settings.myName) set.add(settings.myName);
-    return Array.from(set).filter(Boolean);
-  }, [settings]);
 
   const assignees = useMemo(() => {
     const set = new Set<string>(settings.managers);
@@ -64,24 +55,6 @@ export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
   }, [tasks, query, prefs, clientName]);
 
   const done = useMemo(() => tasks.filter(({ task }) => task.done).slice(0, 30), [tasks]);
-
-  const createTask = () => {
-    const deal = deals.find((item) => item.id === draft.dealId);
-    if (!deal) { notify('Выберите сделку', 'error'); return; }
-    const title = draft.title.trim();
-    if (!title) { notify('Введите текст задачи', 'error'); return; }
-    updateDeal(addTask(deal, {
-      title,
-      kind: draft.kind,
-      dueAt: draft.dueAt || undefined,
-      assignee: draft.assignee || deal.manager,
-      repeat: draft.repeat || undefined,
-      done: false,
-    }));
-    setNewOpen(false);
-    setDraft({ dealId: '', title: '', kind: 'call', dueAt: todayISO(), assignee: '', repeat: '' });
-    notify('Задача добавлена');
-  };
 
   const complete = (dealId: string, taskId: string) => {
     const deal = deals.find((item) => item.id === dealId);
@@ -104,7 +77,7 @@ export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
           <p className="muted">Все задачи из карточек сделок. Повторяющиеся восстанавливаются сами.</p>
         </div>
         <div className="actions wrap">
-          <button type="button" className="btn primary" onClick={() => setNewOpen(true)}><Plus size={15} /> Задача</button>
+          <button type="button" className="btn primary" onClick={() => setEditor({})}><Plus size={15} /> Задача</button>
         </div>
       </header>
 
@@ -167,7 +140,7 @@ export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
           icon={<CheckCheck size={24} />}
           title={prefs.hideDone ? 'Открытых задач нет' : 'Задач нет'}
           hint="Поставьте звонок из карточки сделки или нажмите «Задача»."
-          action={<button type="button" className="btn small primary" onClick={() => setNewOpen(true)}>Добавить задачу</button>}
+          action={<button type="button" className="btn small primary" onClick={() => setEditor({})}>Добавить задачу</button>}
         />
       ) : (
         <div className="task-groups">
@@ -196,7 +169,9 @@ export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
                           aria-label={`Выполнить: ${task.title}`}
                         />
                         <span className="task-main">
-                          <b>{task.title}</b>
+                          <button type="button" className="task-title-btn" onClick={() => setEditor({ dealId: deal.id, task })}>
+                            {task.title}
+                          </button>
                           <span>
                             <button type="button" className="link-btn" onClick={() => props.onOpenDeal(deal.id)}>
                               {clientName(deal)}
@@ -210,6 +185,15 @@ export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
                           {task.dueAt ? <>{fmtDate(task.dueAt)}<small>{relativeDay(task.dueAt, today)}</small></> : 'без срока'}
                         </span>
                         <span className="task-postpone">
+                          <button
+                            type="button"
+                            className="icon-btn small"
+                            title="Изменить задачу"
+                            aria-label={`Изменить задачу: ${task.title}`}
+                            onClick={() => setEditor({ dealId: deal.id, task })}
+                          >
+                            <Pencil size={13} />
+                          </button>
                           {!task.done && <button type="button" className="quick" title="Отложить на завтра" onClick={() => updateDeal(postponeTask(deal, task.id, 1))}>+1</button>}
                           {!task.done && <button type="button" className="quick" title="Отложить на неделю" onClick={() => updateDeal(postponeTask(deal, task.id, 7))}>+7</button>}
                           <button type="button" className="icon-btn small" title="Удалить задачу" aria-label="Удалить задачу" onClick={() => updateDeal(removeTask(deal, task.id))}>
@@ -237,7 +221,7 @@ export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
                 <li key={`${deal.id}-${task.id}`} className="task-row task-done">
                   <input type="checkbox" checked onChange={() => complete(deal.id, task.id)} aria-label={`Вернуть: ${task.title}`} />
                   <span className="task-main">
-                    <b>{task.title}</b>
+                    <button type="button" className="task-title-btn" onClick={() => setEditor({ dealId: deal.id, task })}>{task.title}</button>
                     <span><button type="button" className="link-btn" onClick={() => props.onOpenDeal(deal.id)}>{clientName(deal)}</button> · {deal.title}</span>
                   </span>
                   <span className="task-due">{task.dueAt ? fmtDate(task.dueAt) : '—'}</span>
@@ -274,69 +258,39 @@ export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
         </ul>
       </section>
 
-      {newOpen && (
-        <Modal
-          title="Новая задача"
-          subtitle="Задача привязывается к сделке — попадёт в её карточку и в этот список."
-          onClose={() => setNewOpen(false)}
-          footer={(
-            <>
-              <button type="button" className="btn ghost" onClick={() => setNewOpen(false)}>Отмена</button>
-              <span className="foot-spacer" />
-              <button type="button" className="btn primary" onClick={createTask}>Добавить задачу</button>
-            </>
-          )}
-        >
-          <div className="form-grid">
-            <label className="field span-2">Сделка
-              <select data-autofocus value={draft.dealId} onChange={(event) => setDraft({ ...draft, dealId: event.target.value })}>
-                <option value="">— выберите сделку —</option>
-                {deals.filter((deal) => deal.status !== 'delivered' && deal.status !== 'rejected').map((deal) => (
-                  <option key={deal.id} value={deal.id}>
-                    {clientName(deal)} · {deal.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field span-2">Что сделать
-              <input
-                value={draft.title}
-                placeholder="позвонить, отправить документы, замерить"
-                onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-                onKeyDown={(event) => { if (event.key === 'Enter') createTask(); }}
-              />
-            </label>
-            <label className="field">Тип
-              <select value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value as TaskKind })}>
-                {TASK_KINDS.map((kind) => <option key={kind.id} value={kind.id}>{kind.label}</option>)}
-              </select>
-            </label>
-            <label className="field">Срок
-              <input type="date" value={draft.dueAt} onChange={(event) => setDraft({ ...draft, dueAt: event.target.value })} />
-            </label>
-            <label className="field">Исполнитель
-              <input
-                list="task-assignees"
-                value={draft.assignee}
-                placeholder={settings.myName || 'кто делает'}
-                onChange={(event) => setDraft({ ...draft, assignee: event.target.value })}
-              />
-              <datalist id="task-assignees">
-                {managers.map((name) => <option key={name} value={name} />)}
-              </datalist>
-            </label>
-            <label className="field">Повтор
-              <select
-                value={draft.repeat}
-                onChange={(event) => setDraft({ ...draft, repeat: event.target.value as '' | TaskRepeatType })}
-              >
-                <option value="">без повтора</option>
-                {REPEAT_LABELS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-              </select>
-            </label>
-          </div>
-          {clients.length === 0 && <p className="form-note">Сначала добавьте клиента и сделку — задача живёт внутри сделки.</p>}
-        </Modal>
+      {editor && (
+        <TaskEditor
+          task={editor.task}
+          deals={deals.filter((deal) => deal.status !== 'delivered' && deal.status !== 'rejected')}
+          dealId={editor.dealId}
+          onClose={() => setEditor(null)}
+          onSave={(values, dealId) => {
+            const deal = deals.find((item) => item.id === dealId);
+            if (!deal) { notify('Сделка не найдена', 'error'); return; }
+            if (editor.task) {
+              updateDeal(patchTask(deal, editor.task.id, values));
+              notify('Задача сохранена');
+            } else {
+              updateDeal(addTask(deal, values));
+              notify('Задача добавлена');
+            }
+            setEditor(null);
+          }}
+          onDelete={editor.task ? () => {
+            const deal = deals.find((item) => item.id === editor.dealId) ?? deals.find((item) => (item.tasks ?? []).some((task) => task.id === editor.task?.id));
+            if (!deal || !editor.task) return;
+            updateDeal(removeTask(deal, editor.task.id));
+            setEditor(null);
+            notify('Задача удалена');
+          } : undefined}
+          onToggleDone={editor.task ? () => {
+            const deal = deals.find((item) => item.id === editor.dealId) ?? deals.find((item) => (item.tasks ?? []).some((task) => task.id === editor.task?.id));
+            if (!deal || !editor.task) return;
+            updateDeal(toggleTask(deal, editor.task.id));
+            setEditor(null);
+            notify('Готово');
+          } : undefined}
+        />
       )}
     </div>
   );

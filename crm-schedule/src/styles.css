@@ -1787,3 +1787,40 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select:
 }
 .nc-note-muted { background: var(--surface-2); border-color: var(--line); color: var(--ink-2); }
 [data-theme='dark'] .nc-note-muted { background: var(--surface-2); border-color: var(--line); color: var(--ink-2); }
+
+/* ------------------------- задачи: редактирование ------------------------ */
+
+.task-title-btn {
+  border: 0; background: transparent; padding: 0; text-align: left;
+  font-size: 13px; font-weight: 600; color: var(--ink); line-height: 1.35;
+  border-bottom: 1px dashed transparent; width: fit-content; max-width: 100%;
+}
+.task-title-btn:hover { color: var(--accent); border-bottom-color: currentColor; }
+.task-done .task-title-btn { text-decoration: line-through; color: var(--muted); }
+
+.task-editor .field-hint { margin-top: 2px; }
+.field-error { color: var(--red); font-size: 12px; font-weight: 500; }
+
+.client-tasks { display: flex; flex-direction: column; gap: 14px; }
+.client-tasks .task-toolbar { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.client-task-group { display: flex; flex-direction: column; gap: 4px; }
+.client-task-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); font-weight: 600;
+}
+.client-task-head b {
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px;
+  padding: 0 6px; font-size: 10.5px; color: var(--ink-2); letter-spacing: 0;
+}
+.client-task-head.tone-overdue { color: var(--red); }
+.client-task-head.tone-today { color: #b45309; }
+.client-task-head.tone-done { color: var(--green); }
+.client-task-group .task-list .task-row { border-bottom: 1px solid var(--line); padding: 9px 2px; }
+.client-task-group .task-list .task-row:last-child { border-bottom: 0; }
+[data-theme='dark'] .client-task-head.tone-today { color: #fbbf24; }
+[data-theme='dark'] .task-title-btn { color: var(--ink); }
+
+.note-form { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.note-form input { flex: 1; min-width: 0; }
+.payment-editing { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

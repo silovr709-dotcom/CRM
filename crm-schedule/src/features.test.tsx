@@ -94,6 +94,34 @@ describe('новые возможности интерфейса', () => {
     expect(within(dialog).getByText(/Всего событий/)).toBeTruthy();
   });
 
+  it('не теряет правки клиента при закрытии карточки', () => {
+    renderApp();
+    fireEvent.click(within(nav()).getByRole('button', { name: /CRM/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Клиенты' }));
+    fireEvent.click(screen.getAllByRole('button', { name: /Анна Смирнова/ })[0]);
+    let dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByPlaceholderText('+7 900 000-00-00'), { target: { value: '+7 999 111-22-33' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Закрыть' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(screen.getAllByRole('button', { name: /Анна Смирнова/ })[0]);
+    dialog = screen.getByRole('dialog');
+    expect((within(dialog).getByPlaceholderText('+7 900 000-00-00') as HTMLTextAreaElement).value)
+      .toBe('+7 999 111-22-33');
+  });
+
+  it('правит задачу из общего списка', () => {
+    renderApp();
+    fireEvent.click(within(nav()).getByRole('button', { name: /Задачи/ }));
+    const title = screen.getAllByRole('button', { name: /Изменить задачу:/ })[0];
+    fireEvent.click(title);
+    const editor = screen.getAllByRole('dialog').at(-1) as HTMLElement;
+    const input = within(editor).getByPlaceholderText(/позвонить/u) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Позвонить и уточнить адрес' } });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Сохранить' }));
+    expect(screen.getAllByText('Позвонить и уточнить адрес').length).toBeGreaterThan(0);
+  });
+
   it('переключает CRM на доску и обратно', () => {
     renderApp();
     fireEvent.click(within(nav()).getByRole('button', { name: /CRM/ }));
@@ -155,8 +183,35 @@ describe('вложения в карточках', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Клиенты' }));
     fireEvent.click(screen.getAllByRole('button', { name: /Анна Смирнова/ })[0]);
     const dialog = screen.getByRole('dialog');
+    const tabs = within(dialog).getByRole('navigation', { name: 'Разделы карточки' });
+    fireEvent.click(within(tabs).getByRole('button', { name: /Файлы/ }));
     expect(within(dialog).getByText('Документы и фото')).toBeTruthy();
     expect(within(dialog).getByText('фото-замера.jpg')).toBeTruthy();
+  });
+
+  it('правит задачу прямо в карточке клиента', () => {
+    renderApp();
+    fireEvent.click(within(nav()).getByRole('button', { name: /CRM/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Клиенты' }));
+    fireEvent.click(screen.getAllByRole('button', { name: /Анна Смирнова/ })[0]);
+    const dialog = screen.getByRole('dialog');
+    const tabs = within(dialog).getByRole('navigation', { name: 'Разделы карточки' });
+    fireEvent.click(within(tabs).getByRole('button', { name: /Задачи/ }));
+
+    // добавляем задачу клиенту
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Задача$/ }));
+    const editor = screen.getAllByRole('dialog').at(-1) as HTMLElement;
+    fireEvent.change(within(editor).getByPlaceholderText(/позвонить/u), { target: { value: 'Уточнить размеры' } });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Добавить задачу' }));
+    expect(within(dialog).getByRole('button', { name: 'Уточнить размеры' })).toBeTruthy();
+
+    // открываем её на редактирование и меняем текст
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Уточнить размеры' }));
+    const edit = screen.getAllByRole('dialog').at(-1) as HTMLElement;
+    expect(within(edit).getByRole('button', { name: 'Сохранить' })).toBeTruthy();
+    fireEvent.change(within(edit).getByPlaceholderText(/позвонить/u), { target: { value: 'Уточнить размеры и цвет' } });
+    fireEvent.click(within(edit).getByRole('button', { name: 'Сохранить' }));
+    expect(within(dialog).getByRole('button', { name: 'Уточнить размеры и цвет' })).toBeTruthy();
   });
 });
 

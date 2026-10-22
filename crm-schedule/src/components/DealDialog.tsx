@@ -1,18 +1,19 @@
 // Карточка сделки: этап, следующий шаг, задачи, деньги, график и история.
 import { useMemo, useState } from 'react';
 import {
-  Calendar, Check, CheckCheck, Clock, Copy, Link2, MessageSquare, Phone, Plus,
+  Calendar, Check, CheckCheck, Clock, Copy, Link2, MessageSquare, Pencil, Phone, Plus,
   Printer, Share2, Trash2, Wallet, X,
 } from 'lucide-react';
-import type { DealStatus, PaymentKind, TaskKind, TaskRepeat } from '../types';
+import type { DealStatus, DealTask, PaymentKind, TaskKind, TaskRepeat } from '../types';
 import { useApp } from '../store';
 import {
   addDays, digitsOnly, fmtDate, fmtDateTime, fmtMoney, relativeDay, telHref, todayISO,
 } from '../lib/dates';
 import { DEAL_STATUSES, dealMessage, defaultNextAction, statusMeta } from '../lib/crm';
 import {
-  addPayment, addTask, nextTask, paymentKindLabel, paymentState, postponeTask, removePayment,
-  removeTask, REPEAT_LABELS, sortedPayments, TASK_KINDS, taskKindMeta, taskTone, toggleTask,
+  addPayment, addTask, nextTask, patchPayment, patchTask, paymentKindLabel, paymentState,
+  postponeTask, removePayment, removeTask, REPEAT_LABELS, sortedPayments, TASK_KINDS,
+  taskKindMeta, taskTone, toggleTask,
 } from '../lib/crmTasks';
 import { buildDealTimeline, TIMELINE_META } from '../lib/crmTimeline';
 import { enabledTemplates, renderTemplate, templateContext } from '../lib/templates';
@@ -22,6 +23,7 @@ import { printDealCard } from '../lib/print';
 import Modal from './Modal';
 import ScheduleFields from './ScheduleFields';
 import Attachments from './Attachments';
+import TaskEditor from './TaskEditor';
 
 const TABS = [
   { id: 'overview', label: 'Обзор' },
@@ -56,6 +58,9 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
   const [payDraft, setPayDraft] = useState<{ amount: string; at: string; kind: PaymentKind; comment: string }>({
     amount: '', at: todayISO(), kind: 'prepay', comment: '',
   });
+  const [payEditId, setPayEditId] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
+  const [editingTask, setEditingTask] = useState<DealTask | null>(null);
   const [templateId, setTemplateId] = useState('');
   const [messageDraft, setMessageDraft] = useState('');
 
@@ -104,15 +109,21 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
   const createPayment = () => {
     const amount = Number(payDraft.amount.replace(/\s/g, '').replace(',', '.'));
     if (!amount) { notify('Укажите сумму платежа', 'error'); return; }
-    updateDeal(addPayment(deal, {
+    const patch = {
       amount: payDraft.kind === 'refund' ? -Math.abs(amount) : Math.abs(amount),
       at: payDraft.at || today,
       kind: payDraft.kind,
       comment: payDraft.comment.trim() || undefined,
-    }));
-    patchDeal(deal.id, {}, { kind: 'payment', title: `${paymentKindLabel(payDraft.kind)}: ${fmtMoney(amount)}` });
+    };
+    if (payEditId) {
+      updateDeal(patchPayment(deal, payEditId, patch));
+    } else {
+      updateDeal(addPayment(deal, patch));
+      patchDeal(deal.id, {}, { kind: 'payment', title: `${paymentKindLabel(payDraft.kind)}: ${fmtMoney(amount)}` });
+    }
     setPayDraft({ amount: '', at: today, kind: 'final', comment: '' });
-    notify('Платёж добавлен');
+    setPayEditId('');
+    notify(payEditId ? 'Платёж сохранён' : 'Платёж добавлен');
   };
 
   const copy = async (text: string, label: string) => {
@@ -316,6 +327,9 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
                       <button type="button" className="btn small ghost" onClick={() => updateDeal(postponeTask(deal, next.id, 1))}>
                         <Clock size={13} /> На завтра
                       </button>
+                      <button type="button" className="btn small ghost" onClick={() => setEditingTask(next)}>
+                        <Pencil size={13} /> Изменить
+                      </button>
                     </div>
                     <button type="button" className="link-btn" onClick={() => setTab('tasks')}>все задачи →</button>
                   </>
@@ -450,6 +464,15 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
                         </span>
                       )}
                       <span className={`task-due tone-${tone}`}>{task.dueAt ? relativeDay(task.dueAt, today) : 'без срока'}</span>
+                      <button
+                        type="button"
+                        className="icon-btn small"
+                        onClick={() => setEditingTask(task)}
+                        aria-label={`Изменить задачу: ${task.title}`}
+                        title="Изменить"
+                      >
+                        <Pencil size={13} />
+                      </button>
                       <button type="button" className="icon-btn small" onClick={() => updateDeal(removeTask(deal, task.id))} aria-label="Удалить задачу">
                         <X size={13} />
                       </button>
@@ -474,6 +497,18 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
               <Wallet size={14} /> Сумма заказа не заполнена — остаток и оплаты считать не из чего.
             </div>
           )}
+          {payEditId && (
+            <div className="form-note payment-editing">
+              Правим существующий платёж.
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => { setPayEditId(''); setPayDraft({ amount: '', at: today, kind: 'final', comment: '' }); }}
+              >
+                отменить правку
+              </button>
+            </div>
+          )}
           <div className="payment-form">
             <label className="field">Сумма, ₽
               <input inputMode="numeric" value={payDraft.amount} placeholder="0" onChange={(event) => setPayDraft({ ...payDraft, amount: event.target.value })} />
@@ -492,7 +527,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
             <label className="field">Комментарий
               <input value={payDraft.comment} placeholder="например, наличными" onChange={(event) => setPayDraft({ ...payDraft, comment: event.target.value })} />
             </label>
-            <button type="button" className="btn primary" onClick={createPayment}>Внести платёж</button>
+            <button type="button" className="btn primary" onClick={createPayment}>{payEditId ? 'Сохранить платёж' : 'Внести платёж'}</button>
           </div>
           {deal.payments.length > 0 && pay.remainder > 0 && (
             <button type="button" className="btn small ghost" onClick={() => setPayDraft({ ...payDraft, amount: String(pay.remainder), kind: 'final' })}>
@@ -508,6 +543,23 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
                   <span className="pay-kind">{paymentKindLabel(payment.kind)}</span>
                   <b className={payment.amount < 0 ? 'warn' : 'ok'}>{fmtMoney(payment.amount)}</b>
                   <span className="muted">{fmtDate(payment.at)}{payment.comment ? ` · ${payment.comment}` : ''}</span>
+                  <button
+                    type="button"
+                    className="icon-btn small"
+                    aria-label={`Изменить платёж: ${fmtMoney(payment.amount)}`}
+                    title="Изменить"
+                    onClick={() => {
+                      setPayEditId(payment.id);
+                      setPayDraft({
+                        amount: String(Math.abs(payment.amount)),
+                        at: payment.at,
+                        kind: payment.kind,
+                        comment: payment.comment ?? '',
+                      });
+                    }}
+                  >
+                    <Pencil size={13} />
+                  </button>
                   <button type="button" className="icon-btn small" onClick={() => updateDeal(removePayment(deal, payment.id))} aria-label="Удалить платёж">
                     <X size={13} />
                   </button>
@@ -545,6 +597,32 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
 
       {tab === 'history' && (
         <div className="timeline">
+          <div className="note-form">
+            <input
+              value={noteDraft}
+              placeholder="Заметка по сделке: о чём договорились, что уточнить…"
+              aria-label="Новая заметка"
+              onChange={(event) => setNoteDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || !noteDraft.trim()) return;
+                patchDeal(deal.id, {}, { kind: 'note', title: noteDraft.trim() });
+                setNoteDraft('');
+                notify('Заметка добавлена');
+              }}
+            />
+            <button
+              type="button"
+              className="btn small ghost"
+              disabled={!noteDraft.trim()}
+              onClick={() => {
+                patchDeal(deal.id, {}, { kind: 'note', title: noteDraft.trim() });
+                setNoteDraft('');
+                notify('Заметка добавлена');
+              }}
+            >
+              <Plus size={13} /> Заметка
+            </button>
+          </div>
           {timeline.length === 0 ? (
             <div className="empty-note">Событий пока нет.</div>
           ) : (
@@ -571,6 +649,32 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
           )}
         </div>
       )}
+      {editingTask && (
+        <TaskEditor
+          task={editingTask}
+          deals={[deal]}
+          dealId={deal.id}
+          onClose={() => setEditingTask(null)}
+          onSave={(values) => {
+            updateDeal(patchTask(deal, editingTask.id, values));
+            setEditingTask(null);
+            notify('Задача сохранена');
+          }}
+          onDelete={() => {
+            updateDeal(removeTask(deal, editingTask.id));
+            setEditingTask(null);
+            notify('Задача удалена', 'ok', {
+              label: 'Вернуть',
+              run: () => updateDeal(addTask(deal, { ...editingTask, done: false })),
+            });
+          }}
+          onToggleDone={() => {
+            updateDeal(toggleTask(deal, editingTask.id));
+            setEditingTask(null);
+          }}
+        />
+      )}
+
     </Modal>
   );
 }

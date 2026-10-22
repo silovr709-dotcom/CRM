@@ -199,6 +199,11 @@ export function addPayment(deal: Deal, entry: Omit<Payment, 'id'>): Deal {
   return touch(deal, { payments: [...(deal.payments ?? []), payment] });
 }
 
+/** Правка уже внесённого платежа: сумма, дата, тип или комментарий. */
+export function patchPayment(deal: Deal, id: string, patch: Partial<Payment>): Deal {
+  return touch(deal, { payments: (deal.payments ?? []).map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)) });
+}
+
 export function removePayment(deal: Deal, id: string): Deal {
   return touch(deal, { payments: (deal.payments ?? []).filter((entry) => entry.id !== id) });
 }
