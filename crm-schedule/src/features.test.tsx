@@ -124,6 +124,28 @@ describe('новые возможности интерфейса', () => {
     expect(within(screen.getByRole('dialog')).getByText('Анна Смирнова')).toBeTruthy();
   });
 
+  it('настраивает личное напоминание задачи', () => {
+    renderApp();
+    fireEvent.click(within(nav()).getByRole('button', { name: /Задачи/ }));
+    fireEvent.click(screen.getAllByRole('button', { name: /Изменить задачу:/ })[0]);
+    const editor = screen.getAllByRole('dialog').at(-1) as HTMLElement;
+
+    expect(within(editor).getByRole('button', { name: 'Как у всех' })).toBeTruthy();
+    fireEvent.click(within(editor).getByRole('button', { name: 'Своё' }));
+    fireEvent.click(within(editor).getByRole('button', { name: 'за 30 минут' }));
+    fireEvent.click(within(editor).getByRole('button', { name: 'за 3 часа' }));
+    expect(within(editor).getByText(/Будет:/u).textContent).toContain('30 минут');
+
+    fireEvent.click(within(editor).getByRole('button', { name: 'Сохранить' }));
+    expect(screen.getAllByRole('img', { name: /Напоминание:/ }).length).toBeGreaterThan(0);
+
+    // настройки сохранились: у задачи снова открывается режим «Своё»
+    fireEvent.click(screen.getAllByRole('button', { name: /Изменить задачу:/ })[0]);
+    const again = screen.getAllByRole('dialog').at(-1) as HTMLElement;
+    expect(within(again).getByRole('button', { name: 'Своё' }).className).toContain('active');
+    expect(within(again).getByText(/Будет:/u).textContent).toContain('3 часа');
+  });
+
   it('правит задачу из общего списка', () => {
     renderApp();
     fireEvent.click(within(nav()).getByRole('button', { name: /Задачи/ }));

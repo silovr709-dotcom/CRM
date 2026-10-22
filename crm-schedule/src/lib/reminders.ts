@@ -6,7 +6,7 @@
 // без DOM — поэтому проверяется тестами и не зависит от браузера.
 import type {
   Deal, DigestSettings, QuietHours, ReminderChannel, ReminderPriority, ReminderRule,
-  ReminderSource, Settings,
+  ReminderSource, Settings, TaskReminder,
 } from '../types';
 import { addDays, isoDay, parseDay, todayISO } from './dates';
 import { isClosedStatus } from './crm';
@@ -45,7 +45,7 @@ export const SOURCE_META: Record<ReminderSource, { label: string; hint: string; 
   measure: { label: 'Замер', hint: 'по дате замера', what: 'замер' },
   delivery: { label: 'Доставка', hint: 'по дате доставки', what: 'доставка' },
   ready: { label: 'Готовность на фабрике', hint: 'когда заказ готов к отгрузке', what: 'готовность' },
-  task: { label: 'Задачи', hint: 'по сроку задачи в карточке сделки', what: 'задача' },
+  task: { label: 'Задачи', hint: 'по сроку задачи; у отдельной задачи можно задать своё', what: 'задача' },
   contact: { label: 'Связаться с клиентом', hint: 'по дате следующего контакта', what: 'контакт' },
   payment: { label: 'Остаток к оплате', hint: 'если к монтажу не всё оплачено', what: 'оплата' },
   stale: { label: 'Сделка без движения', hint: 'нет изменений столько дней', what: 'сделка' },
@@ -192,6 +192,33 @@ export function defaultReminderRules(): ReminderRule[] {
   ];
 }
 
+/** Личное напоминание задачи по умолчанию: за час, в приложении и системным окном. */
+export function defaultTaskReminder(): TaskReminder {
+  return {
+    enabled: true,
+    offsets: [60],
+    atTime: '09:00',
+    channels: ['inapp', 'browser'],
+    priority: 'normal',
+    repeatDaily: false,
+    respectQuietHours: true,
+  };
+}
+
+/** Смещения, которые чаще всего нужны задаче. */
+export const TASK_OFFSET_PRESETS: Array<{ minutes: number; label: string; short: string }> =
+  OFFSET_PRESETS.filter((preset) => preset.minutes >= 0);
+
+/** Подпись личного напоминания задачи для списков и подсказок. */
+export function describeTaskReminder(reminder: TaskReminder): string {
+  if (!reminder.enabled) return 'напоминаний нет';
+  const offsets = (reminder.offsets.length > 0 ? reminder.offsets : [0])
+    .slice().sort((left, right) => right - left).map(fmtOffset).join(', ');
+  const channels = (reminder.channels ?? ['inapp'])
+    .map((channel) => CHANNEL_META[channel].label.toLowerCase()).join(', ');
+  return `${offsets}${channels ? ` · ${channels}` : ''}${reminder.repeatDaily ? ' · каждый день' : ''}`;
+}
+
 export function defaultQuietHours(): QuietHours {
   return { enabled: true, from: '21:00', to: '08:00', skipWeekends: true, mode: 'wait' };
 }
@@ -218,6 +245,9 @@ export interface ReminderMoment {
   address?: string;
   /** Свои смещения из карточки (только для монтажа). */
   customOffsets?: number[];
+  /** Личные настройки напоминания (только у задач). */
+  taskReminder?: TaskReminder;
+  taskId?: string;
 }
 
 interface MomentContext {
@@ -234,6 +264,9 @@ export function collectMoments(
   const moments: ReminderMoment[] = [];
   const today = context.today ?? todayISO();
   const staleRule = rules.find((rule) => rule.source === 'stale' && rule.enabled);
+  /** Время дня из правила — для дат без часов (задачи, контакты, оплата). */
+  const ruleTime = (source: ReminderSource, fallback: string) =>
+    rules.find((rule) => rule.source === source && rule.enabled)?.atTime ?? fallback;
 
   for (const deal of deals) {
     const client = context.clientName(deal);
@@ -267,9 +300,12 @@ export function collectMoments(
           dealId: deal.id,
           title: task.title,
           detail: [client, deal.title, task.assignee].filter(Boolean).join(' · '),
-          at: momentAt(task.dueAt, undefined, '09:00'),
+          // Своё время дня задачи важнее правила, правило — важнее значения по умолчанию.
+          at: momentAt(task.dueAt, undefined, task.reminder?.atTime ?? ruleTime('task', '09:00')),
           client,
           address: deal.schedule?.address,
+          taskId: task.id,
+          taskReminder: task.reminder,
         });
       }
 
@@ -280,7 +316,7 @@ export function collectMoments(
           dealId: deal.id,
           title: `Связаться: ${client}`,
           detail: [deal.title, deal.nextAction].filter(Boolean).join(' · '),
-          at: momentAt(deal.nextContactAt, undefined, '10:00'),
+          at: momentAt(deal.nextContactAt, undefined, ruleTime('contact', '10:00')),
           client,
           address: deal.schedule?.address,
         });
@@ -294,7 +330,7 @@ export function collectMoments(
           dealId: deal.id,
           title: `Остаток к оплате: ${deal.title}`,
           detail: [client, `осталось ${Math.round(pay.remainder).toLocaleString('ru-RU')} ₽`].filter(Boolean).join(' · '),
-          at: momentAt(deal.schedule.installAt, undefined, '11:00'),
+          at: momentAt(deal.schedule.installAt, undefined, ruleTime('payment', '11:00')),
           client,
           address: deal.schedule?.address,
         });
@@ -468,6 +504,17 @@ export function reminderId(ruleId: string, momentKey: string, offset: number, no
   return `${ruleId}|${momentKey}|${offset}|${dayKey(notifyAt)}`;
 }
 
+interface PlanConfig {
+  ruleId: string;
+  ruleLabel: string;
+  offsets: number[];
+  atTime?: string;
+  channels: ReminderChannel[];
+  priority: ReminderPriority;
+  repeatDaily?: boolean;
+  respectQuietHours?: boolean;
+}
+
 export function evaluateReminders(input: EvaluateInput): EvaluateResult {
   const now = input.now ?? new Date();
   const sent = input.sent ?? {};
@@ -484,11 +531,90 @@ export function evaluateReminders(input: EvaluateInput): EvaluateResult {
   const skipped: string[] = [];
   const horizon = new Date(now.getTime() + UPCOMING_DAYS * 86400000);
 
+  /** Один момент в одном наборе настроек: правило или личное напоминание задачи. */
+  const planMoment = (config: PlanConfig, moment: ReminderMoment) => {
+    const offsets = config.offsets.length > 0 ? config.offsets : [0];
+    for (const offset of offsets) {
+      let notifyAt = new Date(moment.at.getTime() - offset * 60000);
+
+      // Повторяющиеся напоминания: пока дело не закрыто, показываем раз в день.
+      if (config.repeatDaily && notifyAt.getTime() < now.getTime()) {
+        const minutes = minutesOfTime(config.atTime, 9 * 60);
+        const today = new Date(now);
+        today.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+        // Сегодняшнее время ещё впереди — покажем по расписанию, иначе сразу.
+        notifyAt = today.getTime() > now.getTime()
+          ? today
+          : new Date(Math.floor(now.getTime() / 60000) * 60000);
+      }
+
+      // Отложенное напоминание показываем по времени «после», а не по сроку.
+      const snoozeUntil = snoozes[reminderId(config.ruleId, moment.key, offset, notifyAt)];
+      if (snoozeUntil) {
+        const at = new Date(snoozeUntil);
+        if (at.getTime() > now.getTime()) {
+          continue;
+        }
+        notifyAt = at;
+      }
+
+      const id = reminderId(config.ruleId, moment.key, offset, notifyAt);
+      if (sent[id]) continue;
+
+      const planned: PlannedReminder = {
+        id,
+        ruleId: config.ruleId,
+        ruleLabel: config.ruleLabel,
+        source: moment.source,
+        dealId: moment.dealId,
+        title: moment.title,
+        detail: moment.detail,
+        momentAt: moment.at.toISOString(),
+        notifyAt: notifyAt.toISOString(),
+        offsetMinutes: offset,
+        priority: config.priority,
+        channels: config.channels,
+        waitingForQuiet: false,
+      };
+
+      // Тихие часы: «дождаться утра» переносит показ на конец окна тишины.
+      const window = config.respectQuietHours ? quietWindow(quiet, notifyAt) : null;
+      if (window) {
+        if (quiet.mode === 'skip') {
+          skipped.push(id);
+          continue;
+        }
+        if (window.end.getTime() > now.getTime()) {
+          planned.notifyAt = window.end.toISOString();
+          planned.waitingForQuiet = true;
+          waiting.push(planned);
+          continue;
+        }
+        notifyAt = window.end;
+        planned.notifyAt = notifyAt.toISOString();
+      }
+
+      const delta = now.getTime() - notifyAt.getTime();
+      const catchUp = window ? QUIET_CATCH_UP_MINUTES : CATCH_UP_MINUTES;
+
+      if (delta >= 0) {
+        if (delta <= catchUp * 60000) {
+          fire.push(planned);
+        } else if (!snoozeUntil) {
+          // Слишком старое — считаем пропущенным, чтобы не всплывало через неделю.
+          skipped.push(id);
+        }
+      } else if (notifyAt <= horizon) {
+        upcoming.push(planned);
+      }
+    }
+  };
+
   for (const rule of input.rules) {
     if (!rule.enabled) continue;
 
     if (rule.source === 'digest') {
-      const notifyAt = momentAt(isoDay(now), rule.atTime ?? input.settings.quietHours?.to ?? '08:30');
+      const notifyAt = momentAt(isoDay(now), rule.atTime ?? '08:30');
       const id = reminderId(rule.id, `digest:${dayKey(notifyAt)}`, 0, notifyAt);
       if (sent[id]) continue;
       const planned: PlannedReminder = {
@@ -517,87 +643,41 @@ export function evaluateReminders(input: EvaluateInput): EvaluateResult {
     for (const moment of moments) {
       if (moment.source !== rule.source) continue;
       if (Number.isNaN(moment.at.getTime())) continue;
+      // У задачи свои настройки — она не подчиняется общему правилу.
+      if (moment.source === 'task' && moment.taskReminder) continue;
       if (rule.onlyMine && input.settings.myName) {
         const deal = input.deals.find((item) => item.id === moment.dealId);
         if (!deal || (deal.manager ?? '') !== input.settings.myName) continue;
       }
 
-      const offsets = moment.customOffsets?.length ? moment.customOffsets : rule.offsets;
-      for (const offset of offsets) {
-        let notifyAt = new Date(moment.at.getTime() - offset * 60000);
-
-        // Повторяющиеся напоминания: пока дело не закрыто, показываем раз в день.
-        if (rule.repeatDaily && notifyAt.getTime() < now.getTime()) {
-          const minutes = minutesOfTime(rule.atTime, 9 * 60);
-          const today = new Date(now);
-          today.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
-          // Сегодняшнее время ещё впереди — покажем по расписанию, иначе сразу.
-          notifyAt = today.getTime() > now.getTime()
-            ? today
-            : new Date(Math.floor(now.getTime() / 60000) * 60000);
-        }
-
-        // Отложенное напоминание показываем по времени «после», а не по сроку.
-        const snoozeUntil = snoozes[reminderId(rule.id, moment.key, offset, notifyAt)];
-        if (snoozeUntil) {
-          const at = new Date(snoozeUntil);
-          if (at.getTime() > now.getTime()) {
-            continue;
-          }
-          notifyAt = at;
-        }
-
-        const id = reminderId(rule.id, moment.key, offset, notifyAt);
-        if (sent[id]) continue;
-
-        const planned: PlannedReminder = {
-          id,
-          ruleId: rule.id,
-          ruleLabel: rule.label,
-          source: moment.source,
-          dealId: moment.dealId,
-          title: moment.title,
-          detail: moment.detail,
-          momentAt: moment.at.toISOString(),
-          notifyAt: notifyAt.toISOString(),
-          offsetMinutes: offset,
-          priority: rule.priority,
-          channels: rule.channels,
-          waitingForQuiet: false,
-        };
-
-        // Тихие часы: «дождаться утра» переносит показ на конец окна тишины.
-        const window = rule.respectQuietHours ? quietWindow(quiet, notifyAt) : null;
-        if (window) {
-          if (quiet.mode === 'skip') {
-            skipped.push(id);
-            continue;
-          }
-          if (window.end.getTime() > now.getTime()) {
-            planned.notifyAt = window.end.toISOString();
-            planned.waitingForQuiet = true;
-            waiting.push(planned);
-            continue;
-          }
-          notifyAt = window.end;
-          planned.notifyAt = notifyAt.toISOString();
-        }
-
-        const delta = now.getTime() - notifyAt.getTime();
-        const catchUp = window ? QUIET_CATCH_UP_MINUTES : CATCH_UP_MINUTES;
-
-        if (delta >= 0) {
-          if (delta <= catchUp * 60000) {
-            fire.push(planned);
-          } else if (!snoozeUntil) {
-            // Слишком старое — считаем пропущенным, чтобы не всплывало через неделю.
-            skipped.push(id);
-          }
-        } else if (notifyAt <= horizon) {
-          upcoming.push(planned);
-        }
-      }
+      planMoment({
+        ruleId: rule.id,
+        ruleLabel: rule.label,
+        // Свои смещения из карточки монтажа важнее правила.
+        offsets: moment.customOffsets?.length ? moment.customOffsets : rule.offsets,
+        atTime: rule.atTime,
+        channels: rule.channels,
+        priority: rule.priority,
+        repeatDaily: rule.repeatDaily,
+        respectQuietHours: rule.respectQuietHours,
+      }, moment);
     }
+  }
+
+  // Личные напоминания задач: у каждой задачи своё расписание и каналы.
+  for (const moment of moments) {
+    const personal = moment.taskReminder;
+    if (moment.source !== 'task' || !personal?.enabled) continue;
+    planMoment({
+      ruleId: `task:${moment.taskId ?? moment.key}`,
+      ruleLabel: 'Своё напоминание',
+      offsets: personal.offsets,
+      atTime: personal.atTime,
+      channels: personal.channels?.length ? personal.channels : ['inapp'],
+      priority: personal.priority ?? 'normal',
+      repeatDaily: personal.repeatDaily,
+      respectQuietHours: personal.respectQuietHours !== false,
+    }, moment);
   }
 
   const byNotify = (left: PlannedReminder, right: PlannedReminder) =>

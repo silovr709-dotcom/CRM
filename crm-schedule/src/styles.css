@@ -1824,3 +1824,22 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select:
 .note-form { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
 .note-form input { flex: 1; min-width: 0; }
 .payment-editing { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ------------------- личные напоминания задач ------------------- */
+
+.task-bell { display: inline-flex; align-items: center; vertical-align: -1px; color: var(--accent); }
+.task-bell.off { color: var(--muted); opacity: 0.7; }
+
+.task-reminder-block {
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2);
+  padding: 10px 12px; gap: 8px;
+}
+.reminder-mode { align-self: flex-start; }
+.task-reminder-body { display: flex; flex-direction: column; gap: 10px; }
+.task-reminder-row { display: flex; flex-direction: column; gap: 4px; }
+.task-reminder-row.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.task-reminder-block .field-hint { margin-top: 0; }
+
+@media (max-width: 720px) {
+  .task-reminder-row.two { grid-template-columns: 1fr; }
+}

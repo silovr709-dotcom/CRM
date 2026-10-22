@@ -2,11 +2,14 @@
 // Раньше задачу можно было только добавить и удалить, а поменять срок или текст —
 // нигде. Теперь любая строка задачи открывается в этом окне.
 import { useState } from 'react';
-import { CalendarDays, Check, Trash2 } from 'lucide-react';
-import type { Deal, DealTask, TaskKind, TaskRepeat } from '../types';
+import { Bell, BellOff, CalendarDays, Check, Trash2 } from 'lucide-react';
+import type { Deal, DealTask, ReminderChannel, ReminderPriority, TaskKind, TaskReminder, TaskRepeat } from '../types';
 import { useApp } from '../store';
 import { addDays, todayISO } from '../lib/dates';
 import { REPEAT_LABELS, TASK_KINDS, taskKindMeta } from '../lib/crmTasks';
+import {
+  CHANNEL_META, PRIORITY_META, TASK_OFFSET_PRESETS, defaultTaskReminder, describeTaskReminder, fmtOffset,
+} from '../lib/reminders';
 import Modal from './Modal';
 
 export interface TaskValues {
@@ -17,6 +20,24 @@ export interface TaskValues {
   repeat?: TaskRepeat;
   comment?: string;
   done: boolean;
+  /** Личные напоминания: undefined — как в общих правилах, enabled:false — тишина. */
+  reminder?: TaskReminder;
+}
+
+const CHANNELS: ReminderChannel[] = ['inapp', 'browser', 'sound', 'title'];
+const PRIORITIES: ReminderPriority[] = ['low', 'normal', 'high'];
+
+type ReminderMode = 'inherit' | 'custom' | 'off';
+
+/** Значок в списках: у задачи своё напоминание или оно выключено. */
+export function TaskBell({ reminder }: { reminder?: TaskReminder }) {
+  if (!reminder) return null;
+  const label = `Напоминание: ${describeTaskReminder(reminder)}`;
+  return (
+    <span className={`task-bell${reminder.enabled ? '' : ' off'}`} role="img" aria-label={label} title={label}>
+      {reminder.enabled ? <Bell size={11} /> : <BellOff size={11} />}
+    </span>
+  );
 }
 
 const QUICK_DAYS: Array<{ label: string; days: number }> = [
@@ -59,6 +80,10 @@ export default function TaskEditor({
   });
   const [target, setTarget] = useState(dealId ?? deals[0]?.id ?? '');
   const [error, setError] = useState('');
+  const [mode, setMode] = useState<ReminderMode>(
+    task?.reminder ? (task.reminder.enabled ? 'custom' : 'off') : 'inherit',
+  );
+  const [reminder, setReminder] = useState<TaskReminder>(task?.reminder ?? defaultTaskReminder());
 
   const assignees = Array.from(new Set([
     ...settings.managers,
@@ -79,6 +104,10 @@ export default function TaskEditor({
       setError('Выберите сделку — задача живёт внутри сделки');
       return;
     }
+    if (mode === 'custom' && reminder.offsets.length === 0) {
+      setError('Выберите хотя бы один момент для напоминания');
+      return;
+    }
     onSave({
       ...values,
       title,
@@ -86,6 +115,9 @@ export default function TaskEditor({
       assignee: (values.assignee ?? '').trim() || undefined,
       repeat: values.repeat || undefined,
       comment: values.comment?.trim() || undefined,
+      reminder: mode === 'inherit'
+        ? undefined
+        : { ...reminder, enabled: mode === 'custom' },
     }, target);
   };
 
@@ -210,6 +242,139 @@ export default function TaskEditor({
             onChange={(event) => setValues({ ...values, comment: event.target.value })}
           />
         </label>
+
+        <div className="field span-2 task-reminder-block">
+          <span className="field-label">Напоминание об этой задаче</span>
+          <div className="segmented reminder-mode" role="group" aria-label="Напоминание об этой задаче">
+            <button type="button" className={mode === 'inherit' ? 'active' : ''} onClick={() => setMode('inherit')}>Как у всех</button>
+            <button
+              type="button"
+              className={mode === 'custom' ? 'active' : ''}
+              onClick={() => {
+                setMode('custom');
+                if (reminder.offsets.length === 0) setReminder({ ...reminder, offsets: [60] });
+                setError('');
+              }}
+            >
+              Своё
+            </button>
+            <button type="button" className={mode === 'off' ? 'active' : ''} onClick={() => setMode('off')}>Не напоминать</button>
+          </div>
+
+          {mode === 'inherit' && (
+            <small className="field-hint">
+              Действуют правила «Задачи» из «Данных» → «Напоминания».
+            </small>
+          )}
+          {mode === 'off' && (
+            <small className="field-hint">
+              По этой задаче уведомлений не будет, даже если общие правила включены.
+            </small>
+          )}
+          {mode === 'custom' && (
+            <div className="task-reminder-body">
+              <div className="task-reminder-row">
+                <span className="field-label">Когда</span>
+                <div className="quick-row">
+                  {TASK_OFFSET_PRESETS.map((preset) => {
+                    const has = reminder.offsets.includes(preset.minutes);
+                    return (
+                      <button
+                        key={preset.minutes}
+                        type="button"
+                        className={`quick${has ? ' active' : ''}`}
+                        onClick={() => setReminder({
+                          ...reminder,
+                          offsets: has
+                            ? reminder.offsets.filter((item) => item !== preset.minutes)
+                            : [...reminder.offsets, preset.minutes].sort((left, right) => right - left),
+                        })}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {reminder.offsets.length === 0 && (
+                  <small className="field-hint">Пока ничего не выбрано — напоминать не о чем.</small>
+                )}
+              </div>
+
+              <div className="task-reminder-row two">
+                <label className="field">Время дня
+                  <input
+                    type="time"
+                    value={reminder.atTime ?? '09:00'}
+                    onChange={(event) => setReminder({ ...reminder, atTime: event.target.value })}
+                  />
+                  <small className="field-hint">если у задачи только дата</small>
+                </label>
+                <label className="field">Важность
+                  <select
+                    value={reminder.priority ?? 'normal'}
+                    onChange={(event) => setReminder({ ...reminder, priority: event.target.value as ReminderPriority })}
+                  >
+                    {PRIORITIES.map((priority) => (
+                      <option key={priority} value={priority}>{PRIORITY_META[priority].label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="task-reminder-row">
+                <span className="field-label">Куда</span>
+                <div className="quick-row">
+                  {CHANNELS.map((channel) => {
+                    const channels = reminder.channels ?? ['inapp'];
+                    const has = channels.includes(channel);
+                    return (
+                      <button
+                        key={channel}
+                        type="button"
+                        className={`quick${has ? ' active' : ''}`}
+                        title={CHANNEL_META[channel].hint}
+                        onClick={() => {
+                          const next = has
+                            ? channels.filter((item) => item !== channel)
+                            : [...channels, channel];
+                          setReminder({ ...reminder, channels: next.length > 0 ? next : ['inapp'] });
+                        }}
+                      >
+                        {CHANNEL_META[channel].label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="quick-row">
+                <label className="chip-toggle">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(reminder.repeatDaily)}
+                    onChange={(event) => setReminder({ ...reminder, repeatDaily: event.target.checked })}
+                  />
+                  каждый день, пока не выполнена
+                </label>
+                <label className="chip-toggle">
+                  <input
+                    type="checkbox"
+                    checked={reminder.respectQuietHours !== false}
+                    onChange={(event) => setReminder({ ...reminder, respectQuietHours: event.target.checked })}
+                  />
+                  не будить в тихие часы
+                </label>
+              </div>
+
+              <small className="field-hint">
+                Будет: {describeTaskReminder({ ...reminder, enabled: true })}
+                {reminder.offsets.length > 0
+                  ? ` · ${reminder.offsets.slice().sort((left, right) => right - left).map(fmtOffset).join(', ')}`
+                  : ''}
+              </small>
+            </div>
+          )}
+        </div>
 
         {error && <p className="field-error span-2" role="alert">{error}</p>}
 

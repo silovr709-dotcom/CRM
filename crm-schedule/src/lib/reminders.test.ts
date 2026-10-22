@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ReminderRule, Settings } from '../types';
 import {
   CHANNEL_META, clearSent, clearSnoozes, collectMoments, defaultDigest, defaultQuietHours,
-  defaultReminderRules, describeRule, digestText, evaluateReminders, fmtOffset, inQuietHours,
-  markSentMap, momentAt, quietWindow, readSent, readSnoozes, reminderId, snoozePresets,
-  snoozeReminder, SOURCE_META, OFFSET_PRESETS,
+  defaultReminderRules, defaultTaskReminder, describeRule, describeTaskReminder, digestText,
+  evaluateReminders, fmtOffset, inQuietHours, markSentMap, momentAt, quietWindow, readSent,
+  readSnoozes, reminderId, snoozePresets, snoozeReminder, SOURCE_META, OFFSET_PRESETS,
+  TASK_OFFSET_PRESETS,
 } from './reminders';
+import { normalizeTaskReminder } from './reminderSettings';
 import { makeDeal } from './testUtils';
 
 const clientName = () => 'Иванов';
@@ -495,6 +497,178 @@ describe('история и откладывание', () => {
     expect(presets[0].until.getTime()).toBe(at('2026-10-24T12:10:00').getTime());
     expect(presets[3].until.getDate()).toBe(25);
     expect(presets[3].until.getHours()).toBe(9);
+  });
+});
+
+describe('личные напоминания задач', () => {
+  const taskDeal = (reminder = undefined as undefined | { enabled: boolean; offsets: number[] }) => makeDeal({
+    tasks: [{
+      id: 't1',
+      title: 'Позвонить',
+      kind: 'call',
+      dueAt: '2026-10-25',
+      createdAt: '',
+      reminder: reminder && { ...defaultTaskReminder(), ...reminder },
+    }],
+  });
+
+  it('свои смещения важнее общего правила', () => {
+    const result = evaluateReminders({
+      deals: [taskDeal({ enabled: true, offsets: [120] })],
+      rules: [rule({ source: 'task', offsets: [1440], atTime: '09:00' })],
+      settings: settings(),
+      now: at('2026-10-25T07:00:00'),
+      clientName,
+    });
+    expect(result.fire).toHaveLength(1);
+    expect(result.fire[0].offsetMinutes).toBe(120);
+    expect(result.fire[0].ruleId).toBe('task:t1');
+    expect(result.fire[0].ruleLabel).toBe('Своё напоминание');
+    expect(result.upcoming).toHaveLength(0);
+  });
+
+  it('не дублируется общим правилом', () => {
+    const result = evaluateReminders({
+      deals: [taskDeal({ enabled: true, offsets: [60] })],
+      rules: [rule({ source: 'task', offsets: [60], atTime: '09:00' })],
+      settings: settings(),
+      now: at('2026-10-25T08:00:00'),
+      clientName,
+    });
+    expect(result.fire).toHaveLength(1);
+  });
+
+  it('«не напоминать» выключает задачу совсем', () => {
+    const result = evaluateReminders({
+      deals: [taskDeal({ enabled: false, offsets: [60] })],
+      rules: [rule({ source: 'task', offsets: [60], atTime: '09:00' })],
+      settings: settings(),
+      now: at('2026-10-25T08:00:00'),
+      clientName,
+    });
+    expect(result.fire).toHaveLength(0);
+    expect(result.upcoming).toHaveLength(0);
+  });
+
+  it('берёт каналы и важность из личных настроек', () => {
+    const deal = makeDeal({
+      tasks: [{
+        id: 't1',
+        title: 'Позвонить',
+        kind: 'call',
+        dueAt: '2026-10-25',
+        createdAt: '',
+        reminder: {
+          ...defaultTaskReminder(),
+          enabled: true,
+          offsets: [0],
+          channels: ['sound', 'title'],
+          priority: 'high',
+        },
+      }],
+    });
+    const result = evaluateReminders({
+      deals: [deal],
+      rules: [rule({ source: 'task', offsets: [0], channels: ['inapp'], priority: 'low' })],
+      settings: settings(),
+      now: at('2026-10-25T09:00:00'),
+      clientName,
+    });
+    expect(result.fire[0].channels).toEqual(['sound', 'title']);
+    expect(result.fire[0].priority).toBe('high');
+  });
+
+  it('личное правило уважает тихие часы', () => {
+    const deal = makeDeal({
+      tasks: [{
+        id: 't1',
+        title: 'Позвонить',
+        kind: 'call',
+        dueAt: '2026-10-25',
+        createdAt: '',
+        reminder: { ...defaultTaskReminder(), enabled: true, offsets: [0], atTime: '22:00' },
+      }],
+    });
+    const result = evaluateReminders({
+      deals: [deal],
+      rules: [rule({ source: 'task', offsets: [0], atTime: '09:00' })],
+      settings: settings({ quietHours: waitQuiet }),
+      now: at('2026-10-25T22:05:00'),
+      clientName,
+    });
+    expect(result.fire).toHaveLength(0);
+    expect(result.waiting).toHaveLength(1);
+    expect(new Date(result.waiting[0].notifyAt).getHours()).toBe(8);
+  });
+
+  it('«каждый день» работает и для личного напоминания', () => {
+    const deal = makeDeal({
+      tasks: [{
+        id: 't1',
+        title: 'Позвонить',
+        kind: 'call',
+        dueAt: '2026-10-20',
+        createdAt: '',
+        reminder: { ...defaultTaskReminder(), enabled: true, offsets: [0], repeatDaily: true, atTime: '09:00' },
+      }],
+    });
+    const result = evaluateReminders({
+      deals: [deal],
+      rules: [rule({ source: 'task', offsets: [0], atTime: '09:00', repeatDaily: true })],
+      settings: settings(),
+      now: at('2026-10-25T16:00:00'),
+      clientName,
+    });
+    expect(result.fire).toHaveLength(1);
+    expect(result.fire[0].ruleId).toBe('task:t1');
+  });
+
+  it('задачи без личных настроек живут по общему правилу', () => {
+    const plain = makeDeal({
+      id: 'deal-2',
+      tasks: [{ id: 't2', title: 'Отправить КП', kind: 'docs', dueAt: '2026-10-25', createdAt: '' }],
+    });
+    const result = evaluateReminders({
+      deals: [taskDeal({ enabled: true, offsets: [120] }), plain],
+      rules: [rule({ source: 'task', offsets: [60], atTime: '09:00' })],
+      settings: settings(),
+      now: at('2026-10-25T08:00:00'),
+      clientName,
+    });
+    const fromRule = result.fire.filter((item) => item.ruleId === 'r1');
+    expect(fromRule).toHaveLength(1);
+    expect(fromRule[0].dealId).toBe('deal-2');
+  });
+
+  it('подписывает личное напоминание для списка', () => {
+    expect(describeTaskReminder({ ...defaultTaskReminder(), enabled: false })).toBe('напоминаний нет');
+    const text = describeTaskReminder({
+      ...defaultTaskReminder(), enabled: true, offsets: [60, 15], channels: ['inapp'], repeatDaily: true,
+    });
+    expect(text).toContain('1 час до');
+    expect(text).toContain('15 минут до');
+    expect(text).toContain('каждый день');
+  });
+
+  it('набор смещений для задачи без «после срока»', () => {
+    expect(TASK_OFFSET_PRESETS.every((preset) => preset.minutes >= 0)).toBe(true);
+    expect(TASK_OFFSET_PRESETS.some((preset) => preset.minutes === 0)).toBe(true);
+  });
+
+  it('настройки задачи по умолчанию разумны', () => {
+    expect(defaultTaskReminder()).toMatchObject({
+      enabled: true, offsets: [60], channels: ['inapp', 'browser'], priority: 'normal',
+    });
+    expect(defaultTaskReminder().respectQuietHours).toBe(true);
+  });
+
+  it('чинит личные настройки из старой копии', () => {
+    expect(normalizeTaskReminder(undefined)).toBeUndefined();
+    const fixed = normalizeTaskReminder({ offsets: [15, 'мусор', 100000], channels: ['sound', 'нет'], enabled: false });
+    expect(fixed?.enabled).toBe(false);
+    expect(fixed?.offsets).toEqual([15]);
+    expect(fixed?.channels).toEqual(['sound']);
+    expect(normalizeTaskReminder({})?.offsets).toEqual([60]);
   });
 });
 

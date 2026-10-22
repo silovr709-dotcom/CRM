@@ -11,7 +11,7 @@ import {
 } from '../lib/crmTasks';
 import { usePrefs } from '../lib/viewPrefs';
 import EmptyState from './EmptyState';
-import TaskEditor from './TaskEditor';
+import TaskEditor, { TaskBell } from './TaskEditor';
 
 const GROUPS: Array<{ id: TaskTone; title: string; hint: string; tone: string }> = [
   { id: 'overdue', title: 'Просрочено', hint: 'сначала это', tone: 'overdue' },
@@ -179,6 +179,7 @@ export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
                             {' · '}{deal.title}{' · '}{meta.label}
                             {task.assignee ? ` · ${task.assignee}` : ''}
                             {repeat ? ` · повтор: ${repeat}` : ''}
+                            {' '}<TaskBell reminder={task.reminder} />
                           </span>
                         </span>
                         <span className={`task-due tone-${tone}`}>

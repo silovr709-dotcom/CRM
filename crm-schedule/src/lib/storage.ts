@@ -14,7 +14,9 @@ import { DEAL_STATUSES } from './crm';
 import { DEFAULT_RULES, normalizeRules } from './crmAutomation';
 import { normalizeTemplates } from './templates';
 import { defaultSettings } from './settings';
-import { normalizeDigest, normalizeQuietHours, normalizeReminderRules } from './reminderSettings';
+import {
+  normalizeDigest, normalizeQuietHours, normalizeReminderRules, normalizeTaskReminder,
+} from './reminderSettings';
 
 export const STORAGE_KEY = 'crm-schedule.v1';
 const AUTO_BACKUP_KEY = 'crm-schedule.autobackup.v1';
@@ -183,6 +185,7 @@ function normalizeTask(raw: Partial<DealTask>): DealTask {
     comment: raw.comment,
     origin: raw.origin,
     repeat: raw.repeat && repeats.includes(raw.repeat) ? raw.repeat : undefined,
+    reminder: normalizeTaskReminder(raw.reminder),
     createdAt: raw.createdAt ?? nowIso(),
   };
 }

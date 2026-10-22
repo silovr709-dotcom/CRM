@@ -20,7 +20,7 @@ import { absoluteLink } from '../lib/router';
 import Modal from './Modal';
 import Attachments from './Attachments';
 import EmptyState from './EmptyState';
-import TaskEditor from './TaskEditor';
+import TaskEditor, { TaskBell } from './TaskEditor';
 
 const TABS = [
   { id: 'overview', label: 'Обзор' },
@@ -534,6 +534,7 @@ function ClientTaskRow({
           {' · '}{meta.label}
           {task.assignee ? ` · ${task.assignee}` : ''}
           {repeat ? ` · повтор: ${repeat}` : ''}
+          {' '}<TaskBell reminder={task.reminder} />
         </span>
       </span>
       <span className={`task-due tone-${tone}`}>

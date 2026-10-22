@@ -77,6 +77,8 @@ export interface DealTask {
   /** `auto:<правило>` — задачу поставила автоматика, `repeat:<id>` — повтор. */
   origin?: string;
   repeat?: TaskRepeat;
+  /** Личные напоминания: важнее общих правил «Задачи» из настроек. */
+  reminder?: TaskReminder;
   createdAt: string;
 }
 
@@ -205,6 +207,24 @@ export interface ReminderRule {
   repeatDaily?: boolean;
   /** Для «зависших» сделок: сколько дней без движения. */
   staleDays?: number;
+}
+
+/**
+ * Личное напоминание задачи. Если задано — общие правила «Задачи» для неё
+ * не работают: либо своё расписание, либо (enabled: false) полная тишина.
+ */
+export interface TaskReminder {
+  enabled: boolean;
+  /** Минуты до срока: 1440 — за сутки, 120 — за два часа, −60 — через час после. */
+  offsets: number[];
+  /** Время дня, если у задачи только дата (по умолчанию 09:00). */
+  atTime?: string;
+  channels?: ReminderChannel[];
+  priority?: ReminderPriority;
+  /** Напоминать каждый день, пока задача не выполнена. */
+  repeatDaily?: boolean;
+  /** Не будить в тихие часы. */
+  respectQuietHours?: boolean;
 }
 
 export interface QuietHours {

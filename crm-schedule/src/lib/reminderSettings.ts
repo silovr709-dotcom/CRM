@@ -2,8 +2,11 @@
 // Отдельный модуль: storage.ts и так большой, а правил здесь много.
 import type {
   DigestSettings, QuietHours, ReminderChannel, ReminderPriority, ReminderRule, ReminderSource,
+  TaskReminder,
 } from '../types';
-import { defaultDigest, defaultQuietHours, defaultReminderRules } from './reminders';
+import {
+  defaultDigest, defaultQuietHours, defaultReminderRules, defaultTaskReminder,
+} from './reminders';
 
 const SOURCES: ReminderSource[] = [
   'install', 'measure', 'delivery', 'ready', 'task', 'contact', 'payment', 'stale', 'digest',
@@ -61,6 +64,27 @@ export function normalizeReminderRules(raw: unknown): ReminderRule[] {
     .map((item) => normalizeReminderRule(item as Partial<ReminderRule>))
     .filter((item): item is ReminderRule => item !== null);
   return rules.length > 0 ? rules.slice(0, 40) : defaultReminderRules();
+}
+
+/** Личное напоминание задачи из копии или старой версии. */
+export function normalizeTaskReminder(raw: unknown): TaskReminder | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const value = raw as Partial<TaskReminder>;
+  const base = defaultTaskReminder();
+  const channels = Array.isArray(value.channels)
+    ? value.channels.filter((item): item is ReminderChannel => CHANNELS.includes(item as ReminderChannel))
+    : base.channels ?? ['inapp'];
+  return {
+    enabled: value.enabled !== false,
+    offsets: offsets(value.offsets, base.offsets),
+    atTime: time(value.atTime, base.atTime ?? '09:00'),
+    channels: channels.length > 0 ? channels : ['inapp'],
+    priority: PRIORITIES.includes(value.priority as ReminderPriority)
+      ? value.priority as ReminderPriority
+      : base.priority ?? 'normal',
+    repeatDaily: Boolean(value.repeatDaily),
+    respectQuietHours: value.respectQuietHours !== false,
+  };
 }
 
 export function normalizeQuietHours(raw: unknown): QuietHours {

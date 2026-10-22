@@ -23,7 +23,7 @@ import { printDealCard } from '../lib/print';
 import Modal from './Modal';
 import ScheduleFields from './ScheduleFields';
 import Attachments from './Attachments';
-import TaskEditor from './TaskEditor';
+import TaskEditor, { TaskBell } from './TaskEditor';
 
 const TABS = [
   { id: 'overview', label: 'Обзор' },
@@ -455,6 +455,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
                           {task.assignee ? ` · ${task.assignee}` : ''}
                           {repeat ? ` · повтор: ${repeat}` : ''}
                           {task.origin?.startsWith('auto:') ? ' · автоматика' : ''}
+                          {' '}<TaskBell reminder={task.reminder} />
                         </span>
                       </span>
                       {!task.done && (
