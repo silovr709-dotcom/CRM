@@ -4,12 +4,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
-  AppData, Client, Deal, DealSchedule, DealStatus, HistoryEntry, Settings,
+  AppData, Attachment, Client, Deal, DealSchedule, DealStatus, HistoryEntry, Settings,
 } from './types';
 import { demoData } from './lib/demoData';
 import { emptyData, loadData, saveData, writeAutoBackup } from './lib/storage';
 import { nowIso, uid } from './lib/utils';
 import { defaultNextAction, statusMeta } from './lib/crm';
+import {
+  MAX_FILE_BYTES, compressImage, detectKind, removeFile, saveFile, type OwnerType,
+} from './lib/attachments';
 
 export interface ToastAction {
   label: string;
@@ -21,6 +24,11 @@ export interface ToastMessage {
   kind: 'ok' | 'error' | 'info';
   text: string;
   action?: ToastAction;
+}
+
+export interface AttachmentResult {
+  added: number;
+  failed: Array<{ name: string; reason: string }>;
 }
 
 interface UndoEntry {
@@ -46,6 +54,10 @@ interface AppContextValue {
   mergeClients: (targetId: string, sourceId: string) => void;
   /** Добавить сделку из ссылки, которую прислал коллега. */
   importSharedDeal: (deal: Deal, client?: Client) => string;
+  /** Загрузить файлы в сделку или клиента. Возвращает, что получилось. */
+  addAttachments: (ownerType: OwnerType, ownerId: string, files: File[]) => Promise<AttachmentResult>;
+  /** Удалить вложение: и запись, и файл. */
+  removeAttachment: (ownerType: OwnerType, ownerId: string, attachmentId: string) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   replaceData: (next: AppData, options?: { backupReason?: string; undoLabel?: string }) => void;
   resetDemo: () => void;
@@ -311,6 +323,108 @@ export function AppProvider({ children }: { children: ReactNode }) {
     notify('Клиенты объединены', 'ok', { label: 'Вернуть', run: () => undo() });
   }, [notify, pushUndo, undo]);
 
+  const addAttachments = useCallback(async (ownerType: OwnerType, ownerId: string, files: File[]): Promise<AttachmentResult> => {
+    const result: AttachmentResult = { added: 0, failed: [] };
+    if (files.length === 0) return result;
+
+    const list: Attachment[] = [];
+    const blobs = new Map<string, Blob>();
+    for (const file of files) {
+      if (file.size > MAX_FILE_BYTES) {
+        result.failed.push({ name: file.name, reason: 'файл больше 25 МБ' });
+        continue;
+      }
+      try {
+        const prepared = await compressImage(file);
+        const mime = prepared.blob.type || file.type || 'application/octet-stream';
+        const attachment: Attachment = {
+          id: uid('file'),
+          name: file.name,
+          mime,
+          size: prepared.blob.size,
+          kind: detectKind({ name: file.name, mime }),
+          createdAt: nowIso(),
+          width: prepared.width,
+          height: prepared.height,
+          addedBy: dataRef.current.settings.myName || undefined,
+        };
+        await saveFile(attachment, ownerType, ownerId, prepared.blob);
+        list.push(attachment);
+        blobs.set(attachment.id, prepared.blob);
+        result.added += 1;
+      } catch (error) {
+        result.failed.push({
+          name: file.name,
+          reason: error instanceof Error ? error.message : 'не удалось сохранить',
+        });
+      }
+    }
+
+    if (list.length === 0) return result;
+
+    pushUndo('добавлены файлы');
+    const stamp = nowIso();
+    setData((current) => {
+      if (ownerType === 'deal') {
+        return {
+          ...current,
+          deals: current.deals.map((deal) => (deal.id === ownerId
+            ? {
+              ...deal,
+              attachments: [...(deal.attachments ?? []), ...list],
+              history: [...(deal.history ?? []), {
+                id: uid('h'),
+                createdAt: stamp,
+                kind: 'document' as const,
+                title: `Добавлены файлы: ${list.length}`,
+                text: list.map((item) => item.name).join(', ').slice(0, 300),
+              }],
+              updatedAt: stamp,
+            }
+            : deal)),
+          updatedAt: stamp,
+        };
+      }
+      return {
+        ...current,
+        clients: current.clients.map((client) => (client.id === ownerId
+          ? { ...client, attachments: [...(client.attachments ?? []), ...list], updatedAt: stamp }
+          : client)),
+        updatedAt: stamp,
+      };
+    });
+    return result;
+  }, [pushUndo]);
+
+  const removeAttachment = useCallback((ownerType: OwnerType, ownerId: string, attachmentId: string) => {
+    pushUndo('удалён файл');
+    const stamp = nowIso();
+    setData((current) => {
+      if (ownerType === 'deal') {
+        return {
+          ...current,
+          deals: current.deals.map((deal) => (deal.id === ownerId
+            ? {
+              ...deal,
+              attachments: (deal.attachments ?? []).filter((item) => item.id !== attachmentId),
+              updatedAt: stamp,
+            }
+            : deal)),
+          updatedAt: stamp,
+        };
+      }
+      return {
+        ...current,
+        clients: current.clients.map((client) => (client.id === ownerId
+          ? { ...client, attachments: (client.attachments ?? []).filter((item) => item.id !== attachmentId), updatedAt: stamp }
+          : client)),
+        updatedAt: stamp,
+      };
+    });
+    removeFile(attachmentId).catch(() => {});
+    notify('Файл удалён', 'info', { label: 'Вернуть', run: undo });
+  }, [notify, pushUndo, undo]);
+
   const importSharedDeal = useCallback((deal: Deal, client?: Client) => {
     pushUndo('импорт сделки по ссылке');
     const clientId = client ? uid('cli') : deal.clientId;
@@ -386,6 +500,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     removeClient,
     mergeClients,
     importSharedDeal,
+    addAttachments,
+    removeAttachment,
     updateSettings,
     replaceData,
     resetDemo,
@@ -399,7 +515,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     savedAt,
   }), [
     data, clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
-    removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, updateSettings, replaceData,
+    removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
+    removeAttachment, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,
   ]);
 

@@ -7,7 +7,7 @@ import App from './App';
 import { AppProvider } from './store';
 import { demoData } from './lib/demoData';
 import {
-  autoBackupInfo, emptyData, mergeImport, previewImport, readAutoBackup, writeAutoBackup,
+  autoBackupInfo, emptyData, mergeImport, previewImport, readAutoBackup, saveData, writeAutoBackup,
 } from './lib/storage';
 import { makeDeal } from './lib/testUtils';
 import { installAvailable, isStandalone, promptInstall } from './lib/pwa';
@@ -101,6 +101,62 @@ describe('новые возможности интерфейса', () => {
     expect(screen.getAllByText('Согласовано').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('tab', { name: 'Список' }));
     expect(screen.getAllByText('Кухня на Ленина, 42').length).toBeGreaterThan(0);
+  });
+});
+
+describe('вложения в карточках', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.scrollTo = () => {};
+    window.location.hash = '';
+    const data = demoData();
+    data.deals[0] = {
+      ...data.deals[0],
+      attachments: [{
+        id: 'file-demo',
+        name: 'договор-Ленина.pdf',
+        mime: 'application/pdf',
+        size: 2048,
+        kind: 'document',
+        createdAt: new Date().toISOString(),
+      }],
+    };
+    data.clients[0] = {
+      ...data.clients[0],
+      attachments: [{
+        id: 'file-client-demo',
+        name: 'фото-замера.jpg',
+        mime: 'image/jpeg',
+        size: 4096,
+        kind: 'photo',
+        createdAt: new Date().toISOString(),
+      }],
+    };
+    saveData(data);
+  });
+
+  afterEach(() => cleanup());
+
+  it('показывает вкладку «Файлы» со списком вложений', () => {
+    renderApp();
+    fireEvent.click(within(nav()).getByRole('button', { name: /CRM/ }));
+    fireEvent.click(screen.getAllByText('Кухня на Ленина, 42')[0]);
+    const dialog = screen.getByRole('dialog');
+    const tabs = within(dialog).getByRole('navigation', { name: 'Разделы карточки' });
+    fireEvent.click(within(tabs).getByRole('button', { name: /Файлы/ }));
+    expect(within(dialog).getByText('договор-Ленина.pdf')).toBeTruthy();
+    expect(within(dialog).getByText(/Перетащите файлы сюда/)).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /Скачать всё/ })).toBeTruthy();
+  });
+
+  it('показывает документы в карточке клиента', () => {
+    renderApp();
+    fireEvent.click(within(nav()).getByRole('button', { name: /CRM/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Клиенты' }));
+    fireEvent.click(screen.getAllByRole('button', { name: /Анна Смирнова/ })[0]);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Документы и фото')).toBeTruthy();
+    expect(within(dialog).getByText('фото-замера.jpg')).toBeTruthy();
   });
 });
 

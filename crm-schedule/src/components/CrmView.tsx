@@ -1,7 +1,8 @@
 // CRM: сделки и клиенты, воронка, фильтры, доска и разбор очереди.
 import { useMemo, useState } from 'react';
 import {
-  ArrowRight, Copy, Filter, LayoutGrid, List, Phone, Play, Search, Trash2, Users, X,
+  ArrowRight, Copy, Filter, LayoutGrid, List, Paperclip, Phone, Play, Search, Trash2,
+  Users, X,
 } from 'lucide-react';
 import type { Deal, DealStatus } from '../types';
 import { useApp } from '../store';
@@ -81,7 +82,8 @@ export default function CrmView(props: {
   const duplicates = useMemo(() => findDuplicateClients(clients), [clients]);
 
   const clientRows = useMemo(() => {
-    const byClient = new Map<string, { id: string; name: string; phone: string; email: string; tags: string[]; deals: Deal[] }>();
+    type ClientRow = { id: string; name: string; phone: string; email: string; tags: string[]; deals: Deal[]; files: number };
+    const byClient = new Map<string, ClientRow>();
     for (const client of clients) {
       byClient.set(client.id, {
         id: client.id,
@@ -90,12 +92,13 @@ export default function CrmView(props: {
         email: client.emails[0] ?? '',
         tags: client.tags,
         deals: [],
+        files: client.attachments?.length ?? 0,
       });
     }
     for (const deal of deals) {
       const entry = byClient.get(deal.clientId);
       if (entry) entry.deals.push(deal);
-      else if (deal.clientId) byClient.set(deal.clientId, { id: deal.clientId, name: clientName(deal), phone: '', email: '', tags: [], deals: [deal] });
+      else if (deal.clientId) byClient.set(deal.clientId, { id: deal.clientId, name: clientName(deal), phone: '', email: '', tags: [], deals: [deal], files: 0 });
     }
     const needle = query.trim().toLocaleLowerCase('ru-RU');
     return Array.from(byClient.values())
@@ -418,7 +421,12 @@ export default function CrmView(props: {
                     <span className="client-main">
                       <b>{row.name}</b>
                       <span>{[row.phone, row.email].filter(Boolean).join(' · ') || 'контакты не заполнены'}</span>
-                      {row.tags.length > 0 && <em>{row.tags.map((tag) => <i key={tag} className="tag">{tag}</i>)}</em>}
+                      {(row.tags.length > 0 || row.files > 0) && (
+                        <em>
+                          {row.tags.map((tag) => <i key={tag} className="tag">{tag}</i>)}
+                          {row.files > 0 && <i className="tag tag-file"><Paperclip size={10} /> {row.files}</i>}
+                        </em>
+                      )}
                     </span>
                     <span className="client-deals">
                       <b>{row.activeCount}</b>
@@ -525,6 +533,9 @@ function DealListRow({ row, client, today, selected, onSelect, onOpen, onCopyPho
             {pay.paid > 0 && <span>{pay.label}</span>}
             {tone !== 'none' && !row.closed && <span className={`tone-${tone}`}>{relativeDay(deal.nextContactAt, today)}</span>}
             {deal.schedule.installAt && <span>монтаж {fmtDate(deal.schedule.installAt)}</span>}
+            {(deal.attachments?.length ?? 0) > 0 && (
+              <span className="with-icon"><Paperclip size={11} /> {deal.attachments?.length}</span>
+            )}
           </span>
         </span>
         <span className="deal-money">

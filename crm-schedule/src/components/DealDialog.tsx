@@ -21,12 +21,14 @@ import { encodeShare } from '../lib/share';
 import { printDealCard } from '../lib/print';
 import Modal from './Modal';
 import ScheduleFields from './ScheduleFields';
+import Attachments from './Attachments';
 
 const TABS = [
   { id: 'overview', label: 'Обзор' },
   { id: 'tasks', label: 'Задачи' },
   { id: 'money', label: 'Оплата' },
   { id: 'schedule', label: 'График' },
+  { id: 'files', label: 'Файлы' },
   { id: 'history', label: 'История' },
 ] as const;
 
@@ -204,6 +206,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
             {item.id === 'schedule' && (deal.schedule.installAt
               ? <b>{fmtDate(deal.schedule.installAt)}</b>
               : <b className="warn">нет</b>)}
+            {item.id === 'files' && (deal.attachments?.length ?? 0) > 0 && <b>{deal.attachments?.length}</b>}
           </button>
         ))}
       </nav>
@@ -534,6 +537,10 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
             </button>
           </div>
         </div>
+      )}
+
+      {tab === 'files' && (
+        <Attachments ownerType="deal" ownerId={deal.id} attachments={deal.attachments ?? []} />
       )}
 
       {tab === 'history' && (

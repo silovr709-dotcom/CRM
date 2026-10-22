@@ -9,6 +9,7 @@ import { buildClientTimeline, TIMELINE_META } from '../lib/crmTimeline';
 import { findDuplicateClients } from '../lib/storage';
 import { absoluteLink } from '../lib/router';
 import Modal from './Modal';
+import Attachments from './Attachments';
 
 function emptyClient(): Client {
   const stamp = new Date().toISOString();
@@ -34,6 +35,8 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
 }) {
   const { clients, deals, saveClient, removeClient, mergeClients, notify } = useApp();
   const existing = clients.find((item) => item.id === clientId);
+  /** Живая карточка из стора: вложения добавляются мимо формы. */
+  const live = clients.find((item) => item.id === clientId);
   const [draft, setDraft] = useState<Client>(() => existing ? { ...existing } : emptyClient());
   const [phonesText, setPhonesText] = useState((existing?.phones ?? []).join('\n'));
   const [emailsText, setEmailsText] = useState((existing?.emails ?? []).join('\n'));
@@ -63,8 +66,11 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
   const save = () => {
     const name = draft.name.trim();
     if (!name) { notify('У клиента должно быть имя', 'error'); return; }
+    const fresh = clients.find((item) => item.id === clientId);
     const saved: Client = {
       ...draft,
+      // Вложения живут отдельно от формы: не затираем то, что добавили в другом окне.
+      attachments: fresh?.attachments ?? draft.attachments ?? [],
       name,
       phones: phonesText.split(/[\n,;]+/).map((value) => value.trim()).filter(Boolean),
       emails: emailsText.split(/[\n,;]+/).map((value) => value.trim()).filter(Boolean),
@@ -221,6 +227,18 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
           </div>
         )}
       </div>
+
+      {!isNew && (
+        <section className="client-attachments">
+          <div className="section-head sub">
+            <div>
+              <h3>Документы и фото</h3>
+              <span className="muted">договор с клиентом, паспорт объекта, фото замеров</span>
+            </div>
+          </div>
+          <Attachments ownerType="client" ownerId={clientId} attachments={live?.attachments ?? []} />
+        </section>
+      )}
 
       {!isNew && clientDeals.some((deal) => deal.nextContactAt && deal.nextContactAt < today) && (
         <div className="inline-warning">

@@ -1,12 +1,13 @@
 // Настройки и данные: реквизиты, тема, напоминания, шаблоны, автоматика, бэкапы и импорт.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Bell, Check, Download, FileDown, FileUp, MessageSquare, Moon, Plus, RotateCcw,
-  Save, Settings2, Sun, Trash2, TriangleAlert, Upload, Users,
+  Bell, Check, Download, FileDown, FileUp, HardDrive, MessageSquare, Moon, Plus,
+  RotateCcw, Save, Settings2, Sun, Trash2, TriangleAlert, Upload, Users,
 } from 'lucide-react';
 import type { Deal } from '../types';
 import { useApp } from '../store';
 import { fmtDate, fmtDateTime, fmtMoney, todayISO } from '../lib/dates';
+import { fmtBytes } from '../lib/attachments';
 import {
   autoBackupInfo, downloadFile, exportBackup, exportIcs, findDuplicateClients, mergeImport,
   previewImport, readAutoBackup, writeAutoBackup, type AutoBackupInfo, type ImportPreview,
@@ -14,6 +15,10 @@ import {
 import { DEFAULT_TEMPLATES, normalizeTemplates, renderTemplate, templateContext } from '../lib/templates';
 import { DEFAULT_RULES, normalizeRules } from '../lib/crmAutomation';
 import { ruleDaysLabel, ruleTitle } from '../lib/storage';
+import {
+  collectAttachments, buildBackupZip, readBackupZip, restoreArchiveFiles,
+} from '../lib/backupZip';
+import { pruneFiles, storageInfo, type StorageInfo } from '../lib/attachments';
 import { askNotifyPermission, clearNotificationHistory, notifyPermission } from '../lib/notify';
 import Modal from './Modal';
 
@@ -66,6 +71,8 @@ export default function DataView() {
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [backupInfo, setBackupInfo] = useState<AutoBackupInfo | null>(() => autoBackupInfo());
   const [permission, setPermission] = useState(() => notifyPermission());
+  const [archive, setArchive] = useState<{ preview: ImportPreview; files: number; blobs: Map<string, Blob> } | null>(null);
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [templates, setTemplates] = useState(() => normalizeTemplates(settings.messageTemplates));
   const [rules, setRules] = useState(() => normalizeRules(settings.rules));
@@ -74,6 +81,15 @@ export default function DataView() {
     setTemplates(normalizeTemplates(settings.messageTemplates));
     setRules(normalizeRules(settings.rules));
   }, [settings.messageTemplates, settings.rules]);
+
+  useEffect(() => {
+    let active = true;
+    storageInfo().then((info) => { if (active) setStorage(info); }).catch(() => {});
+    return () => { active = false; };
+  }, [data.deals, data.clients]);
+
+  const attachments = useMemo(() => collectAttachments(data), [data]);
+  const attachmentsSize = useMemo(() => attachments.reduce((sum, item) => sum + item.attachment.size, 0), [attachments]);
 
   const duplicates = useMemo(() => findDuplicateClients(clients), [clients]);
   const totalTasks = deals.reduce((sum, deal) => sum + deal.tasks.length, 0);
@@ -98,8 +114,38 @@ export default function DataView() {
   };
 
   const readFile = async (file: File) => {
+    const isZip = /\.zip$/i.test(file.name) || file.type === 'application/zip';
+    if (isZip) {
+      try {
+        const archiveImport = await readBackupZip(file);
+        const preview = previewImport(JSON.stringify(archiveImport.payload), data);
+        if (preview.error) { notify(preview.error, 'error'); return; }
+        setArchive({ preview, files: archiveImport.files, blobs: archiveImport.blobs });
+        setPreview(preview);
+        if (archiveImport.skipped.length > 0) {
+          notify(`Файлы со сжатием пропущены: ${archiveImport.skipped.length}`, 'info');
+        }
+      } catch (error) {
+        notify(error instanceof Error ? error.message : 'Не удалось прочитать архив', 'error');
+      }
+      return;
+    }
+    setArchive(null);
     const text = await file.text();
     setPreview(previewImport(text, data));
+  };
+
+  const importArchive = async (mode: 'replace' | 'merge') => {
+    if (!preview?.data) return;
+    const next = mode === 'merge' ? mergeImport(data, preview.data) : preview.data;
+    if (mode === 'replace' && !confirm('Заменить все данные содержимым архива? Текущая база уйдёт в авто-копию.')) return;
+    replaceData(next, { backupReason: 'перед импортом архива', undoLabel: 'импорт архива' });
+    if (archive) {
+      const restored = await restoreArchiveFiles(preview.data, archive.blobs);
+      notify(`Файлов восстановлено: ${restored.saved}${restored.missing ? `, не найдено: ${restored.missing}` : ''}`, 'ok');
+    }
+    setPreview(null);
+    setArchive(null);
   };
 
   const applyPreview = (mode: 'replace' | 'merge') => {
@@ -113,6 +159,7 @@ export default function DataView() {
       notify('Данные заменены импортом', 'ok', { label: 'Отменить', run: undo });
     }
     setPreview(null);
+    setArchive(null);
   };
 
   return (
@@ -129,7 +176,7 @@ export default function DataView() {
           <input
             ref={fileRef}
             type="file"
-            accept="application/json,.json"
+            accept="application/json,.json,application/zip,.zip"
             hidden
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -392,7 +439,28 @@ export default function DataView() {
 
           <div className="backup-actions">
             <button type="button" className="btn ghost" onClick={() => exportBackup(data)}>
-              <Download size={14} /> Файл .json
+              <Download size={14} /> Только данные .json
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              onClick={async () => {
+                const payload = {
+                  kind: 'crm-schedule-backup',
+                  exportedAt: new Date().toISOString(),
+                  version: 2,
+                  clients: data.clients,
+                  deals: data.deals,
+                  settings: data.settings,
+                  createdAt: data.createdAt,
+                  updatedAt: data.updatedAt,
+                };
+                const { blob, files, missing } = await buildBackupZip(data, payload);
+                downloadFile(`crm-архив-${todayISO()}.zip`, blob, 'application/zip');
+                notify(`Архив: ${files} файлов${missing ? `, ${missing} не найдено` : ''}`);
+              }}
+            >
+              <FileDown size={14} /> Архив с файлами .zip
             </button>
             <button type="button" className="btn ghost" onClick={() => exportIcs(data, () => '')}>
               <FileDown size={14} /> Календарь .ics
@@ -418,13 +486,41 @@ export default function DataView() {
             .ics открывается в Google Календаре, Яндекс Календаре и на телефоне. .csv — для Excel и рассылок.
           </p>
 
+          <div className="storage-box">
+            <HardDrive size={15} />
+            <div>
+              <b>Файлы вложений: {attachments.length} · {fmtBytes(attachmentsSize)}</b>
+              <span className="muted small">
+                {storage && storage.quota > 0
+                  ? `Занято приложением ${fmtBytes(storage.usage)} из ${fmtBytes(storage.quota)}`
+                  : 'Хранятся в этом браузере (IndexedDB)'}
+                {storage && storage.quota > 0 && storage.usage / storage.quota > 0.8 ? ' · место почти закончилось' : ''}
+                {attachments.length > 0 ? ' · после удаления сделок файлы остаются для отмены' : ''}
+              </span>
+            </div>
+            {attachments.length > 0 && (
+              <button
+                type="button"
+                className="btn small ghost"
+                onClick={async () => {
+                  if (!confirm('Удалить файлы, которые больше не привязаны к сделкам и клиентам?')) return;
+                  const removed = await pruneFiles(attachments.map((item) => item.attachment.id));
+                  storageInfo().then(setStorage).catch(() => {});
+                  notify(removed > 0 ? `Удалено лишних файлов: ${removed}` : 'Лишних файлов нет');
+                }}
+              >
+                Почистить лишние
+              </button>
+            )}
+          </div>
+
           <div className="section-head sub">
             <h3>Восстановление</h3>
           </div>
 
           <div className="restore-row">
             <button type="button" className="btn small ghost" onClick={() => fileRef.current?.click()}>
-              <Upload size={14} /> Выбрать файл копии
+              <Upload size={14} /> Выбрать .json или .zip
             </button>
             <span className="muted small">перед заменой покажем, что внутри</span>
           </div>
@@ -509,16 +605,28 @@ export default function DataView() {
       {preview && (
         <Modal
           title="Импорт файла"
-          subtitle={preview.kind === 'calculator' ? 'Копия калькулятора — переносим сделки и график' : 'Копия CRM и графика'}
+          subtitle={archive
+            ? `Архив с файлами: ${archive.files}`
+            : preview.kind === 'calculator' ? 'Копия калькулятора — переносим сделки и график' : 'Копия CRM и графика'}
           onClose={() => setPreview(null)}
           footer={(
             <>
               <button type="button" className="btn ghost" onClick={() => setPreview(null)}>Отмена</button>
               <span className="foot-spacer" />
-              <button type="button" className="btn ghost" disabled={!preview.data} onClick={() => applyPreview('merge')}>
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={!preview.data}
+                onClick={() => (archive ? importArchive('merge') : applyPreview('merge'))}
+              >
                 Добавить к текущим
               </button>
-              <button type="button" className="btn primary" disabled={!preview.data} onClick={() => applyPreview('replace')}>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!preview.data}
+                onClick={() => (archive ? importArchive('replace') : applyPreview('replace'))}
+              >
                 Заменить всё
               </button>
             </>
@@ -535,6 +643,7 @@ export default function DataView() {
                 <li><span>Событий графика</span><b>{preview.events}</b></li>
                 <li><span>Сумма сделок</span><b>{fmtMoney(preview.amount)}</b></li>
                 <li><span>Совпадений с текущими</span><b>{preview.conflicts}</b></li>
+                {archive && <li><span>Файлов в архиве</span><b>{archive.files}</b></li>}
               </ul>
               {preview.warning && <div className="inline-warning"><TriangleAlert size={14} /> {preview.warning}</div>}
               <p className="field-hint">

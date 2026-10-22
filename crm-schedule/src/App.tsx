@@ -81,8 +81,8 @@ export default function App() {
     navigate({ view: next });
   }, []);
 
-  const openDeal = useCallback((id: string) => {
-    navigate({ view: 'crm', dealId: id });
+  const openDeal = useCallback((id: string, tab?: string) => {
+    navigate({ view: 'crm', dealId: id, tab });
   }, []);
 
   const openClient = useCallback((id: string) => {
@@ -414,7 +414,7 @@ export default function App() {
         <DealDialog
           key={dealForRoute.id}
           dealId={dealForRoute.id}
-          initialTab={route.tab === 'schedule' || route.tab === 'tasks' || route.tab === 'money' || route.tab === 'history' ? route.tab : undefined}
+          initialTab={(['schedule', 'tasks', 'money', 'history', 'files'] as const).find((tab) => tab === route.tab)}
           onClose={closeOverlays}
           onOpenClient={(id) => openClient(id)}
           onOpenSchedule={() => go('schedule')}

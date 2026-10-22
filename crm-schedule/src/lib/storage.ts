@@ -2,6 +2,7 @@
 // и импорт резервной копии калькулятора (проекты + клиенты).
 
 import type {
+  Attachment, AttachmentKind,
   AppData, AutomationRule, Client, Deal, DealSchedule, DealStatus, DealTask, HistoryEntry,
   MessageTemplate, RuleId, ScheduleStatus, Settings, TaskKind, TaskRepeat, ThemeMode,
 } from '../types';
@@ -122,6 +123,33 @@ export function normalizeSettings(raw: Partial<Settings> | undefined): Settings 
 }
 
 /** Клиент из старой копии: обязательные массивы на месте. */
+const ATTACHMENT_KINDS: AttachmentKind[] = ['photo', 'document', 'drawing', 'contract', 'other'];
+
+/** Вложения: чиним только описание, сами файлы живут в IndexedDB. */
+export function normalizeAttachment(raw: Partial<Attachment>): Attachment | null {
+  if (!raw || typeof raw.id !== 'string' || !raw.id) return null;
+  if (typeof raw.name !== 'string' || !raw.name.trim()) return null;
+  return {
+    id: raw.id,
+    name: raw.name.trim().slice(0, 200),
+    mime: typeof raw.mime === 'string' && raw.mime ? raw.mime : 'application/octet-stream',
+    size: Math.max(0, Number(raw.size) || 0),
+    kind: ATTACHMENT_KINDS.includes(raw.kind as AttachmentKind) ? raw.kind as AttachmentKind : 'document',
+    createdAt: raw.createdAt ?? nowIso(),
+    note: typeof raw.note === 'string' && raw.note ? raw.note.slice(0, 500) : undefined,
+    width: Number(raw.width) || undefined,
+    height: Number(raw.height) || undefined,
+    addedBy: typeof raw.addedBy === 'string' ? raw.addedBy.slice(0, 80) : undefined,
+  };
+}
+
+export function normalizeAttachments(raw: unknown): Attachment[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => normalizeAttachment(item as Partial<Attachment>))
+    .filter((item): item is Attachment => item !== null);
+}
+
 function normalizeClient(raw: Partial<Client>): Client {
   return {
     id: raw.id ?? uid('cli'),
@@ -132,6 +160,7 @@ function normalizeClient(raw: Partial<Client>): Client {
     source: raw.source,
     managerComment: raw.managerComment,
     tags: Array.isArray(raw.tags) ? raw.tags : [],
+    attachments: normalizeAttachments(raw.attachments),
     createdAt: raw.createdAt ?? nowIso(),
     updatedAt: raw.updatedAt ?? nowIso(),
   };
@@ -180,6 +209,7 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
       }))
       : [],
     history: Array.isArray(raw.history) ? raw.history : [],
+    attachments: normalizeAttachments(raw.attachments),
     schedule: {
       ...schedule,
       status: (schedule.status ?? 'planned') as ScheduleStatus,

@@ -1,7 +1,7 @@
 // Быстрый поиск и действия: ⌘K / Ctrl+K из любого места.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CalendarDays, CheckSquare, Contact, Plus, Search, User, X,
+  CalendarDays, CheckSquare, Contact, Paperclip, Plus, Search, User, X,
 } from 'lucide-react';
 import { useApp } from '../store';
 import { fmtDate, fmtMoney } from '../lib/dates';
@@ -18,7 +18,8 @@ interface Item {
 
 export default function CommandPalette(props: {
   onClose: () => void;
-  onOpenDeal: (id: string) => void;
+  /** tab — сразу открыть нужную вкладку карточки, например «Файлы». */
+  onOpenDeal: (id: string, tab?: string) => void;
   onOpenClient: (id: string) => void;
   onView: (view: 'overview' | 'crm' | 'schedule' | 'tasks' | 'data') => void;
   onNewDeal: () => void;
@@ -58,7 +59,25 @@ export default function CommandPalette(props: {
       run: () => props.onOpenClient(client.id),
     }));
 
-    return [...actions, ...dealItems, ...clientItems];
+    // Файлы ищем по имени: «договор», «эскиз», «чек».
+    const fileItems: Item[] = [
+      ...deals.flatMap((deal) => (deal.attachments ?? []).map((attachment) => ({
+        id: `f-${attachment.id}`,
+        group: 'Файлы',
+        title: attachment.name,
+        subtitle: `${clientName(deal)} · ${deal.title}`,
+        run: () => props.onOpenDeal(deal.id, 'files'),
+      }))),
+      ...clients.flatMap((client) => (client.attachments ?? []).map((attachment) => ({
+        id: `fc-${attachment.id}`,
+        group: 'Файлы',
+        title: attachment.name,
+        subtitle: client.name,
+        run: () => props.onOpenClient(client.id),
+      }))),
+    ];
+
+    return [...actions, ...dealItems, ...clientItems, ...fileItems];
   }, [deals, clients, clientName, props]);
 
   const filtered = useMemo(() => {
@@ -113,6 +132,7 @@ export default function CommandPalette(props: {
   const iconFor = (group: string) => {
     if (group === 'Сделки') return <CheckSquare size={15} />;
     if (group === 'Клиенты') return <User size={15} />;
+    if (group === 'Файлы') return <Paperclip size={15} />;
     if (group === 'Перейти') return <CalendarDays size={15} />;
     return <Plus size={15} />;
   };

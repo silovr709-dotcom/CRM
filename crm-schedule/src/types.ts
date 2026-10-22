@@ -23,6 +23,28 @@ export type ScheduleStatus = 'planned' | 'confirmed' | 'done' | 'problem';
 
 export type HistoryKind = 'note' | 'status' | 'contact' | 'document' | 'payment' | 'project';
 
+/** Тип вложения: по нему выбираются иконка и способ превью. */
+export type AttachmentKind = 'photo' | 'document' | 'drawing' | 'contract' | 'other';
+
+/**
+ * Вложение сделки или клиента. Сам файл лежит в IndexedDB, здесь — только
+ * описание: имя, тип, размер и дата. Благодаря этому копия JSON остаётся лёгкой.
+ */
+export interface Attachment {
+  id: string;
+  name: string;
+  mime: string;
+  /** Размер в байтах. */
+  size: number;
+  kind: AttachmentKind;
+  createdAt: string;
+  note?: string;
+  width?: number;
+  height?: number;
+  /** Добавил: имя менеджера на момент загрузки. */
+  addedBy?: string;
+}
+
 /** Как часто повторять задачу после выполнения. */
 export type TaskRepeat = 'daily' | 'weekdays' | 'weekly' | 'monthly';
 
@@ -36,6 +58,8 @@ export interface Client {
   source?: string;
   managerComment?: string;
   tags: string[];
+  /** Договоры, фото объекта и прочие файлы клиента. */
+  attachments?: Attachment[];
   createdAt: string;
   updatedAt: string;
 }
@@ -113,6 +137,8 @@ export interface Deal {
   comment?: string;
   tasks: DealTask[];
   payments: Payment[];
+  /** Документы заказа: договор, эскизы, чеки, фото с монтажа. */
+  attachments?: Attachment[];
   history: HistoryEntry[];
   schedule: DealSchedule;
   createdAt: string;
