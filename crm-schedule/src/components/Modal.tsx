@@ -7,6 +7,15 @@ import { X } from 'lucide-react';
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+// Окна могут открываться друг из друга (задача поверх карточки клиента).
+// Стек нужен, чтобы Esc и Tab слушалось только верхнее окно, а фон не разблокировался раньше времени.
+const modalStack: string[] = [];
+let bodyOverflow = '';
+
+function isTopModal(id: string): boolean {
+  return modalStack[modalStack.length - 1] === id;
+}
+
 export default function Modal(props: {
   title: ReactNode;
   subtitle?: ReactNode;
@@ -19,13 +28,30 @@ export default function Modal(props: {
   compact?: boolean;
 }) {
   const titleId = useId();
+  const modalId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+
+  // Стек открытых окон: фон блокируем один раз, снимаем — когда закрылось последнее.
+  useEffect(() => {
+    modalStack.push(modalId);
+    if (modalStack.length === 1) {
+      bodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+    }
+    return () => {
+      const index = modalStack.indexOf(modalId);
+      if (index >= 0) modalStack.splice(index, 1);
+      if (modalStack.length === 0) document.body.style.overflow = bodyOverflow;
+    };
+  }, [modalId]);
 
   useEffect(() => {
     previousFocus.current = document.activeElement as HTMLElement | null;
 
     const onKey = (event: KeyboardEvent) => {
+      // Слушаем только верхнее окно: иначе Esc закрывал бы и родительскую карточку.
+      if (!isTopModal(modalId)) return;
       if (event.key === 'Escape') {
         event.stopPropagation();
         props.onClose();
@@ -49,8 +75,6 @@ export default function Modal(props: {
     };
 
     document.addEventListener('keydown', onKey, true);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
 
     // Первый инпут или кнопка внутри — фокус сразу туда.
     const timer = window.setTimeout(() => {
@@ -64,15 +88,18 @@ export default function Modal(props: {
     return () => {
       document.removeEventListener('keydown', onKey, true);
       window.clearTimeout(timer);
-      document.body.style.overflow = previousOverflow;
       previousFocus.current?.focus?.();
     };
-  }, [props.onClose]);
+  }, [modalId, props.onClose]);
 
   return createPortal(
     <div
       className="modal-overlay"
-      onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose(); }}
+      onMouseDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (!isTopModal(modalId)) return;
+        props.onClose();
+      }}
     >
       <div
         ref={panelRef}

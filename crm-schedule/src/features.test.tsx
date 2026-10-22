@@ -110,6 +110,20 @@ describe('новые возможности интерфейса', () => {
       .toBe('+7 999 111-22-33');
   });
 
+  it('закрывает по Esc только верхнее окно', () => {
+    renderApp();
+    fireEvent.click(within(nav()).getByRole('button', { name: /CRM/ }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Клиенты' }));
+    fireEvent.click(screen.getAllByRole('button', { name: /Анна Смирнова/ })[0]);
+    const card = screen.getByRole('dialog');
+    fireEvent.click(within(within(card).getByRole('navigation', { name: 'Разделы карточки' })).getByRole('button', { name: /Задачи/ }));
+    fireEvent.click(within(card).getByRole('button', { name: /^Задача$/ }));
+    expect(screen.getAllByRole('dialog')).toHaveLength(2);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(within(screen.getByRole('dialog')).getByText('Анна Смирнова')).toBeTruthy();
+  });
+
   it('правит задачу из общего списка', () => {
     renderApp();
     fireEvent.click(within(nav()).getByRole('button', { name: /Задачи/ }));
