@@ -1,8 +1,8 @@
 // Единое приложение: CRM + график монтажей. Маршруты в адресе, ⌘K, тема, карточки.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CalendarDays, CheckSquare, LayoutDashboard, Menu, Moon, Plus, Search, Settings2,
-  Sun, TriangleAlert, Users, X,
+  CalendarDays, CheckSquare, Download, LayoutDashboard, Menu, Moon, Plus, Search,
+  Settings2, Sun, TriangleAlert, Users, WifiOff, X,
 } from 'lucide-react';
 import { useApp } from './store';
 import Dashboard from './components/Dashboard';
@@ -24,6 +24,10 @@ import { collectEvents, scheduleWarnings } from './lib/schedule';
 import { normalizeRules, runAutomations } from './lib/crmAutomation';
 import { dueReminders, notifyPermission, pushNotifications } from './lib/notify';
 import { decodeShare } from './lib/share';
+import {
+  applyUpdate, onInstallAvailability, promptInstall, registerServiceWorker, watchOnline,
+  isStandalone,
+} from './lib/pwa';
 import { navigate, useRoute, type ViewId } from './lib/router';
 
 const NAV: Array<{ id: ViewId; label: string; short: string; icon: typeof LayoutDashboard }> = [
@@ -53,6 +57,9 @@ export default function App() {
   const [sharePreview, setSharePreview] = useState<string | null>(null);
   const [shareError, setShareError] = useState(false);
   const [queue, setQueue] = useState<string[] | null>(null);
+  const [online, setOnline] = useState(true);
+  const [installable, setInstallable] = useState(false);
+  const [updateReady, setUpdateReady] = useState(false);
   const ranAutomation = useRef(false);
 
   const counts = useMemo(() => {
@@ -116,6 +123,23 @@ export default function App() {
     if (!payload) { setShareError(true); return; }
     setSharePreview(route.share);
   }, [route.share]);
+
+  // PWA: сеть, установка на телефон, обновление версии.
+  useEffect(() => watchOnline(setOnline), []);
+  useEffect(() => onInstallAvailability(setInstallable), []);
+  useEffect(() => registerServiceWorker({ onUpdateReady: () => setUpdateReady(true) }), []);
+  useEffect(() => {
+    if (!updateReady) return;
+    notify('Доступна новая версия приложения', 'info', {
+      label: 'Обновить',
+      run: () => { applyUpdate().catch(() => window.location.reload()); },
+    });
+  }, [updateReady, notify]);
+
+  const install = async () => {
+    const done = await promptInstall();
+    if (done) notify('Приложение установлено на устройство');
+  };
 
   // ?new=deal|client|install — быстрые ссылки «создать» из меню и писем.
   useEffect(() => {
@@ -254,6 +278,11 @@ export default function App() {
 
         <div className="side-foot">
           <SavedBadge />
+          {installable && !isStandalone() && (
+            <button type="button" className="side-install" onClick={install}>
+              <Download size={13} /> Установить на телефон
+            </button>
+          )}
           {settings.demo && (
             <button
               type="button"
@@ -301,7 +330,19 @@ export default function App() {
           <button type="button" onClick={() => { setMenuOpen(false); setInstallDay(today); }}>
             <CalendarDays size={17} /> Поставить монтаж
           </button>
+          {installable && !isStandalone() && (
+            <button type="button" onClick={() => { setMenuOpen(false); install(); }}>
+              <Download size={17} /> Установить приложение
+            </button>
+          )}
           <div className="mobile-menu-foot"><SavedBadge /></div>
+        </div>
+      )}
+
+      {!online && (
+        <div className="offline-banner" role="status">
+          <WifiOff size={15} />
+          <span>Нет сети. Приложение работает, изменения сохраняются в браузере и никуда не денутся.</span>
         </div>
       )}
 

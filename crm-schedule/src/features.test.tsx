@@ -10,6 +10,7 @@ import {
   autoBackupInfo, emptyData, mergeImport, previewImport, readAutoBackup, writeAutoBackup,
 } from './lib/storage';
 import { makeDeal } from './lib/testUtils';
+import { installAvailable, isStandalone, promptInstall } from './lib/pwa';
 
 function renderApp() {
   return render(<AppProvider><App /></AppProvider>);
@@ -100,6 +101,28 @@ describe('новые возможности интерфейса', () => {
     expect(screen.getAllByText('Согласовано').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('tab', { name: 'Список' }));
     expect(screen.getAllByText('Кухня на Ленина, 42').length).toBeGreaterThan(0);
+  });
+});
+
+describe('офлайн и установка', () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => {
+    fireEvent(window, new Event('online'));
+  });
+
+  it('показывает плашку, когда пропала сеть', () => {
+    renderApp();
+    expect(screen.queryByText(/Нет сети/u)).toBeNull();
+    fireEvent(window, new Event('offline'));
+    expect(screen.getByText(/Нет сети/u)).toBeTruthy();
+    fireEvent(window, new Event('online'));
+    expect(screen.queryByText(/Нет сети/u)).toBeNull();
+  });
+
+  it('не предлагает установку, пока браузер её не разрешил', async () => {
+    expect(installAvailable()).toBe(false);
+    expect(isStandalone()).toBe(false);
+    await expect(promptInstall()).resolves.toBe(false);
   });
 });
 

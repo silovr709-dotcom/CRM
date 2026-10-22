@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "icons": "python3 scripts/make-icons.py"
   },
   "dependencies": {
     "lucide-react": "^1.61.0",

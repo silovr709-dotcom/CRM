@@ -1474,3 +1474,20 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select:
   .tabs button b { display: none; }
   .deal-head-actions { width: 100%; }
 }
+
+/* ---------- офлайн и установка ---------- */
+
+.offline-banner {
+  display: flex; align-items: center; gap: 9px;
+  margin: 0 0 4px; padding: 9px 13px; border-radius: 12px;
+  background: #1f2937; color: #e5e7eb; font-size: 12.5px;
+}
+.offline-banner svg { color: #fbbf24; flex: none; }
+[data-theme='dark'] .offline-banner { background: #253047; color: #e8eefb; }
+
+.side-install {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  border: 1px solid rgba(165, 180, 252, 0.45); background: rgba(99, 102, 241, 0.16);
+  color: #e0e7ff; border-radius: 999px; padding: 4px 10px; font-size: 11px;
+}
+.side-install:hover { background: rgba(99, 102, 241, 0.32); color: #fff; }

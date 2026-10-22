@@ -103,8 +103,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const theme = resolvedTheme(data.settings.theme);
       document.documentElement.dataset.theme = theme;
       document.documentElement.style.colorScheme = theme;
-      document.querySelector('meta[name="theme-color"]')
-        ?.setAttribute('content', theme === 'dark' ? '#0b1220' : '#f3f5fa');
+      document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+        meta.setAttribute('content', theme === 'dark' ? '#0b1120' : '#f3f5fa');
+      });
     };
     apply();
     if (data.settings.theme !== 'system' || typeof window.matchMedia !== 'function') return;
