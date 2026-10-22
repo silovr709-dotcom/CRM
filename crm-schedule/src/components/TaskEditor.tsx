@@ -366,6 +366,11 @@ export default function TaskEditor({
                 </label>
               </div>
 
+              {!values.dueAt && (
+                <small className="field-hint tone-overdue">
+                  Без срока напоминание не сработает — выберите дату выше.
+                </small>
+              )}
               <small className="field-hint">
                 Будет: {describeTaskReminder({ ...reminder, enabled: true })}
                 {reminder.offsets.length > 0
