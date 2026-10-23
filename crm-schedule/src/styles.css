@@ -852,6 +852,43 @@ label { font-size: 12.5px; color: var(--ink-2); }
 .saved-badge.error { background: rgba(239, 68, 68, 0.16); color: #fca5a5; border-color: rgba(239, 68, 68, 0.35); }
 .content .saved-badge, .topbar .saved-badge { background: var(--green-soft); color: var(--green); border-color: #a7f3d0; }
 
+/* Общая база: значок рядом с «сохранено» и карточка в «Данных». */
+.sync-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  border-radius: 999px; padding: 3px 9px; font-size: 11px;
+  background: rgba(59, 130, 246, 0.14); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.28);
+}
+.sync-badge.busy { background: rgba(59, 130, 246, 0.22); }
+.sync-badge.error { background: rgba(239, 68, 68, 0.16); color: #fca5a5; border-color: rgba(239, 68, 68, 0.35); }
+
+.sync-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 600;
+  background: var(--green-soft); color: var(--green); border: 1px solid #a7f3d0;
+}
+.sync-chip.error { background: var(--red-soft); color: var(--red); border-color: #fecaca; }
+
+.sync-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 18px; letter-spacing: 1.5px; font-weight: 700;
+  padding: 12px 14px; border-radius: 12px;
+  background: var(--surface-2); border: 1px dashed var(--line);
+  text-align: center; word-break: break-all; user-select: all;
+}
+.sync-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.sync-actions .btn { text-decoration: none; }
+.sync-join { display: flex; align-items: flex-end; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.sync-join .field { flex: 1 1 260px; }
+.sync-join input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1px; text-transform: uppercase; }
+.sync-state { margin-top: 12px; font-size: 12.5px; color: var(--ink-2); }
+.sync-state.error { color: var(--red); }
+.sync-ok { display: inline-flex; align-items: center; gap: 5px; color: var(--green); }
+
+@media (max-width: 720px) {
+  .sync-code { font-size: 16px; }
+  .sync-join .btn { width: 100%; justify-content: center; }
+}
+
 .mobile-menu {
   position: fixed; inset: 0 0 auto 0; z-index: 60;
   background: var(--surface); border-bottom: 1px solid var(--line);

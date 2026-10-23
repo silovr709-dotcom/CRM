@@ -21,6 +21,7 @@ import {
 import { pruneFiles, storageInfo, type StorageInfo } from '../lib/attachments';
 import Modal from './Modal';
 import ReminderSettings from './ReminderSettings';
+import SyncCard from './SyncCard';
 
 function emptyPreviewDeal(): Deal {
   const stamp = new Date().toISOString();
@@ -193,6 +194,8 @@ export default function DataView() {
       <ReminderSettings />
 
       <div className="data-grid">
+        <SyncCard />
+
         <section className="card">
           <div className="section-head">
             <div>

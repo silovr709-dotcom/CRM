@@ -13,6 +13,12 @@ import { defaultNextAction, statusMeta } from './lib/crm';
 import {
   MAX_FILE_BYTES, compressImage, detectKind, removeFile, saveFile, type OwnerType,
 } from './lib/attachments';
+import {
+  buildEnvelope, clearSyncConfig, deviceName, emptyRemoved, envelopeSignature, isFreshData,
+  loadSyncConfig, makeDeviceId, mergeRemoved, mergeSyncData, MIN_CODE_LENGTH, normalizeSyncCode,
+  pullSpace, pushSpace, saveSyncConfig, syncUiFromConfig,
+  type Removed, type SyncConfig, type SyncUiState,
+} from './lib/sync';
 
 export interface ToastAction {
   label: string;
@@ -70,7 +76,28 @@ interface AppContextValue {
   storageOk: boolean;
   /** Когда данные последний раз сохранены. */
   savedAt: string;
+  /** Общая база: включена ли синхронизация и как она себя чувствует. */
+  sync: SyncUiState;
+  /** Включить общую базу. `create` — создать новую по новому коду. */
+  enableSync: (code: string, options?: { create?: boolean }) => Promise<boolean>;
+  /** Выключить синхронизацию на этом устройстве (данные остаются). */
+  disableSync: () => void;
+  /** Проверить общую базу прямо сейчас. */
+  syncNow: () => Promise<void>;
 }
+
+interface SyncRoundOptions {
+  /** Можно создавать базу, если её ещё нет (так делает первое устройство). */
+  allowCreate?: boolean;
+}
+
+interface SyncRoundResult {
+  ok: boolean;
+  error?: string;
+  created?: boolean;
+}
+
+const SYNC_NOT_FOUND = 'not_found';
 
 const AppContext = createContext<AppContextValue | null>(null);
 
@@ -94,7 +121,7 @@ function resolvedTheme(mode: Settings['theme']): 'light' | 'dark' {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<AppData>(ensureData);
+  const [data, setDataState] = useState<AppData>(ensureData);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [storageOk, setStorageOk] = useState(true);
   const [savedAt, setSavedAt] = useState('');
@@ -102,6 +129,229 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const timers = useRef<number[]>([]);
   const dataRef = useRef(data);
   dataRef.current = data;
+
+  /* ------------------------- общая база устройств ------------------------- */
+
+  const syncRef = useRef<SyncConfig | null>(loadSyncConfig());
+  const [sync, setSync] = useState<SyncUiState>(() => syncUiFromConfig(syncRef.current));
+  /** Отпечаток документа, который уже лежит на сервере. */
+  const serverSig = useRef('');
+  const syncBusy = useRef(false);
+  const syncRerun = useRef(false);
+  const pushTimer = useRef(0);
+  const syncRoundRef = useRef<(options?: SyncRoundOptions) => Promise<SyncRoundResult>>(
+    async () => ({ ok: false }),
+  );
+
+  const patchSyncUi = useCallback((patch: Partial<SyncUiState>) => {
+    setSync((current) => ({ ...current, ...patch }));
+  }, []);
+
+  /**
+   * Удаления нужно запоминать: без этого запись, удалённая на телефоне,
+   * вернулась бы с компьютера при следующем обмене.
+   */
+  const rememberRemovals = useCallback((prev: AppData, next: AppData) => {
+    const config = syncRef.current;
+    if (!config) return;
+    const at = nowIso();
+    const pairs: Array<[keyof Removed, Array<{ id: string }>, Array<{ id: string }>]> = [
+      ['clients', prev.clients, next.clients],
+      ['deals', prev.deals, next.deals],
+    ];
+    let touched = false;
+    for (const [kind, before, after] of pairs) {
+      const beforeIds = new Set(before.map((item) => item.id));
+      const afterIds = new Set(after.map((item) => item.id));
+      for (const id of beforeIds) {
+        if (!afterIds.has(id)) {
+          config.removed[kind][id] = at;
+          touched = true;
+        }
+      }
+      for (const id of afterIds) {
+        if (!beforeIds.has(id) && config.removed[kind][id]) {
+          delete config.removed[kind][id];
+          touched = true;
+        }
+      }
+    }
+    if (touched) saveSyncConfig(config);
+  }, []);
+
+  /** Данные с сервера кладём напрямую: их удаления уже учтены в слиянии. */
+  const applyRemoteData = useCallback((next: AppData) => {
+    setDataState(next);
+  }, []);
+
+  /** Любое локальное изменение: сохраняем и попутно отмечаем удалённые записи. */
+  const setData = useCallback((updater: AppData | ((current: AppData) => AppData)) => {
+    setDataState((current) => {
+      const next = typeof updater === 'function' ? (updater as (value: AppData) => AppData)(current) : updater;
+      if (next !== current) rememberRemovals(current, next);
+      return next;
+    });
+  }, [rememberRemovals]);
+
+  /** Один круг обмена: прочитать сервер, слить, записать обратно при расхождении. */
+  const syncRound = useCallback(async (options: SyncRoundOptions = {}): Promise<SyncRoundResult> => {
+    const config = syncRef.current;
+    if (!config) return { ok: false, error: 'off' };
+    if (syncBusy.current) {
+      syncRerun.current = true;
+      return { ok: true };
+    }
+    syncBusy.current = true;
+    syncRerun.current = false;
+    let failure = '';
+    const result: SyncRoundResult = { ok: true };
+
+    patchSyncUi({ status: 'syncing', error: '' });
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const remote = await pullSpace(config.code);
+
+        // Базы ещё нет: создаём её данными этого устройства.
+        if (!remote.found) {
+          if (!options.allowCreate && !config.known) {
+            failure = SYNC_NOT_FOUND;
+            break;
+          }
+          const envelope = buildEnvelope(dataRef.current, config.removed, config.deviceName);
+          const created = await pushSpace(config.code, envelope, 0);
+          if (created.ok) {
+            config.revision = created.revision;
+            config.known = true;
+            config.lastSyncAt = nowIso();
+            config.serverAt = config.lastSyncAt;
+            config.serverDevice = config.deviceName;
+            saveSyncConfig(config);
+            serverSig.current = envelopeSignature(envelope);
+            result.created = true;
+            break;
+          }
+          if (created.conflict) continue;
+          failure = created.error;
+          break;
+        }
+
+        if (!remote.envelope) {
+          failure = 'Данные в общей базе повреждены';
+          break;
+        }
+
+        const local = dataRef.current;
+        const firstConnect = !config.known && isFreshData(local);
+        const merged = firstConnect
+          ? {
+            data: {
+              ...remote.envelope.data,
+              settings: {
+                ...remote.envelope.data.settings,
+                theme: local.settings.theme,
+                notifications: local.settings.notifications,
+              },
+            },
+            removed: mergeRemoved(remote.envelope.removed, config.removed),
+          }
+          : mergeSyncData(local, remote.envelope.data, mergeRemoved(config.removed, remote.envelope.removed));
+
+        // Удаление, сделанное на этом устройстве, не должно «воскресать»
+        // при первом подключении к чужой базе.
+        if (!firstConnect) {
+          merged.removed = mergeRemoved(merged.removed, config.removed);
+        }
+
+        config.revision = remote.revision;
+        config.known = true;
+        config.removed = merged.removed;
+        config.serverAt = remote.updatedAt;
+        config.serverDevice = remote.device;
+        config.lastSyncAt = nowIso();
+        saveSyncConfig(config);
+        serverSig.current = remote.signature;
+
+        if (JSON.stringify(merged.data) !== JSON.stringify(local)) applyRemoteData(merged.data);
+
+        const envelope = buildEnvelope(merged.data, merged.removed, config.deviceName);
+        if (envelopeSignature(envelope) === remote.signature) break;
+
+        const pushed = await pushSpace(config.code, envelope, remote.revision);
+        if (pushed.ok) {
+          config.revision = pushed.revision;
+          config.lastSyncAt = nowIso();
+          config.serverAt = config.lastSyncAt;
+          config.serverDevice = config.deviceName;
+          saveSyncConfig(config);
+          serverSig.current = envelopeSignature(envelope);
+          break;
+        }
+        if (pushed.conflict) continue;
+        failure = pushed.error;
+        break;
+      }
+    } catch (error) {
+      failure = error instanceof Error ? error.message : 'Не удалось связаться с сервером';
+    } finally {
+      syncBusy.current = false;
+    }
+
+    if (failure) {
+      patchSyncUi({ status: 'error', error: failure });
+      return { ok: false, error: failure, created: result.created };
+    }
+
+    const fresh = syncUiFromConfig(syncRef.current);
+    setSync({ ...fresh, status: 'ok', error: '' });
+
+    if (syncRerun.current) {
+      syncRerun.current = false;
+      window.setTimeout(() => { void syncRoundRef.current(options); }, 0);
+    }
+    return result;
+  }, [applyRemoteData, patchSyncUi]);
+
+  useEffect(() => {
+    syncRoundRef.current = syncRound;
+  }, [syncRound]);
+
+  // Первый обмен при запуске и дальше — раз в 20 секунд, пока экран открыт.
+  useEffect(() => {
+    const config = syncRef.current;
+    if (!config) return undefined;
+    void syncRoundRef.current({ allowCreate: config.known });
+
+    const tick = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      void syncRoundRef.current({ allowCreate: syncRef.current?.known === true });
+    };
+    const timer = window.setInterval(tick, 20000);
+    window.addEventListener('online', tick);
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('online', tick);
+      window.removeEventListener('focus', tick);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [sync.enabled]);
+
+  // Локальные правки уходят на сервер через секунду после последней.
+  useEffect(() => {
+    const config = syncRef.current;
+    if (!config) return undefined;
+    const envelope = buildEnvelope(data, config.removed, config.deviceName);
+    if (envelopeSignature(envelope) === serverSig.current) return undefined;
+    window.clearTimeout(pushTimer.current);
+    pushTimer.current = window.setTimeout(() => {
+      const current = syncRef.current;
+      if (!current) return;
+      void syncRoundRef.current({ allowCreate: current.known });
+    }, 1200);
+    return () => window.clearTimeout(pushTimer.current);
+  }, [data]);
 
   useEffect(() => {
     const ok = saveData(data);
@@ -140,6 +390,65 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const dismissToast = useCallback((id: string) => {
     setToasts((current) => current.filter((item) => item.id !== id));
   }, []);
+
+  const enableSync = useCallback(async (rawCode: string, options: { create?: boolean } = {}) => {
+    const code = normalizeSyncCode(rawCode);
+    if (code.length < MIN_CODE_LENGTH) {
+      notify('Код состоит из 24 символов — проверьте, что скопировали его целиком', 'error');
+      return false;
+    }
+    const config: SyncConfig = {
+      code,
+      revision: 0,
+      deviceId: makeDeviceId(),
+      deviceName: deviceName(),
+      lastSyncAt: '',
+      serverAt: '',
+      serverDevice: '',
+      known: false,
+      removed: emptyRemoved(),
+    };
+    syncRef.current = config;
+    saveSyncConfig(config);
+    serverSig.current = '';
+    setSync(syncUiFromConfig(config));
+
+    const result = await syncRound({ allowCreate: options.create === true });
+    if (!result.ok) {
+      if (result.error === SYNC_NOT_FOUND) {
+        syncRef.current = null;
+        clearSyncConfig();
+        setSync(syncUiFromConfig(null));
+        notify('База с таким кодом не найдена. Проверьте код или создайте новую', 'error');
+      } else {
+        notify(`Синхронизация не включилась: ${result.error}`, 'error');
+      }
+      return false;
+    }
+    notify(
+      options.create
+        ? 'Общая база создана. Откройте ссылку на телефоне — данные подтянутся сами'
+        : 'База подключена, данные синхронизированы',
+      'ok',
+    );
+    return true;
+  }, [notify, syncRound]);
+
+  const disableSync = useCallback(() => {
+    syncRef.current = null;
+    clearSyncConfig();
+    serverSig.current = '';
+    setSync(syncUiFromConfig(null));
+    notify('Синхронизация отключена. Данные остались на этом устройстве', 'info');
+  }, [notify]);
+
+  const syncNow = useCallback(async () => {
+    if (!syncRef.current) return;
+    const result = await syncRound({ allowCreate: syncRef.current.known });
+    if (result.ok) notify('Данные синхронизированы', 'ok');
+    else notify(`Не удалось синхронизировать: ${result.error}`, 'error');
+  }, [notify, syncRound]);
+
 
   /** Снимок «как было» для отмены. React не любит побочные эффекты в
    *  обновлении состояния, поэтому снимок берём из ссылки на текущие данные. */
@@ -513,11 +822,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dismissToast,
     storageOk,
     savedAt,
+    sync,
+    enableSync,
+    disableSync,
+    syncNow,
   }), [
     data, clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
     removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
     removeAttachment, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,
+    sync, enableSync, disableSync, syncNow,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

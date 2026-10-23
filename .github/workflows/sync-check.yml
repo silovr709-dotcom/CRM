@@ -1,0 +1,25 @@
+# Ручная проверка сервера общей базы (Supabase).
+# Запуск: Actions → «Проверка общей базы» → Run workflow.
+# Ключ здесь публичный (anon): он и так уходит в браузер, доступ к строкам закрыт.
+name: Проверка общей базы
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: RPC отвечает и принимает код
+        run: |
+          set -e
+          URL="https://iswkzclegjcbhxaatmbb.supabase.co/rest/v1/rpc/crm_sync_pull"
+          KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlzd2t6Y2xlZ2pjYmh4YWF0bWJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0NzQzNzMsImV4cCI6MjEwODA1MDM3M30.g_DgKVMd9MvCOLmTctHQowKwroX2RhIS7FfGIZYaR9M"
+          echo "Проверяем, что база по неизвестному коду «не найдена»:"
+          curl -sS -f -X POST "$URL" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"p_token":"CHECKONLYTOKEN000000000000"}' | tee /tmp/pull.json
+          grep -q '"found": *false' /tmp/pull.json
+          echo
+          echo "ОК: сервер отвечает, код принимается."

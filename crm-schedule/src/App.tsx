@@ -16,6 +16,7 @@ import NewDealDialog from './components/NewDealDialog';
 import CommandPalette from './components/CommandPalette';
 import Toasts from './components/Toasts';
 import SavedBadge from './components/SavedBadge';
+import SyncBadge from './components/SyncBadge';
 import Modal from './components/Modal';
 import { fmtDate, fmtMoney, todayISO } from './lib/dates';
 import { contactTone, isClosedStatus } from './lib/crm';
@@ -287,6 +288,7 @@ export default function App() {
 
         <div className="side-foot">
           <SavedBadge />
+          <SyncBadge />
           {installable && !isStandalone() && (
             <button type="button" className="side-install" onClick={install}>
               <Download size={13} /> Установить на телефон
@@ -344,7 +346,7 @@ export default function App() {
               <Download size={17} /> Установить приложение
             </button>
           )}
-          <div className="mobile-menu-foot"><SavedBadge /></div>
+          <div className="mobile-menu-foot"><SavedBadge /><SyncBadge /></div>
         </div>
       )}
 
