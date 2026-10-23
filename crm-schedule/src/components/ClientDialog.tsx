@@ -202,7 +202,7 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
         <div className="client-grid">
           <div className="form-grid">
             <label className="field span-2">Имя
-              <input data-autofocus autoFocus value={draft.name} placeholder="Анна Смирнова" onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+              <input data-autofocus value={draft.name} placeholder="Анна Смирнова" onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
             </label>
             <label className="field">Телефоны
               <textarea rows={2} value={phonesText} placeholder="+7 900 000-00-00" onChange={(event) => setPhonesText(event.target.value)} />

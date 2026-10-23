@@ -13,11 +13,12 @@ import { DEAL_STATUSES, dealMessage, defaultNextAction, statusMeta } from '../li
 import {
   addPayment, addTask, nextTask, patchPayment, patchTask, paymentKindLabel, paymentState,
   postponeTask, removePayment, removeTask, REPEAT_LABELS, sortedPayments, TASK_KINDS,
-  taskKindMeta, taskTone, toggleTask,
+  taskKindMeta, taskTone, toggleTask, toggleTasks,
 } from '../lib/crmTasks';
 import { buildDealTimeline, TIMELINE_META } from '../lib/crmTimeline';
 import { enabledTemplates, renderTemplate, templateContext } from '../lib/templates';
 import { absoluteLink } from '../lib/router';
+import { amountFromInput } from '../lib/utils';
 import { encodeShare } from '../lib/share';
 import { printDealCard } from '../lib/print';
 import Modal from './Modal';
@@ -138,7 +139,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
   const markDone = () => {
     const open = deal.tasks.filter((task) => !task.done);
     if (open.length === 0) { notify('Открытых задач нет', 'info'); return; }
-    open.forEach((task) => updateDeal(toggleTask(deal, task.id)));
+    updateDeal(toggleTasks(deal, open.map((task) => task.id)));
     notify(`Выполнено задач: ${open.length}`);
   };
 
@@ -249,7 +250,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
                 inputMode="numeric"
                 value={deal.amount || ''}
                 placeholder="0"
-                onChange={(event) => patchDeal(deal.id, { amount: Number(event.target.value.replace(/\s/g, '').replace(',', '.')) || 0 })}
+                onChange={(event) => patchDeal(deal.id, { amount: amountFromInput(event.target.value) })}
               />
             </label>
             <label className="field">Ответственный

@@ -13,6 +13,17 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * Сумма из поля ввода: буквы и лишние знаки просто игнорируются.
+ * Раньше `Number('12a')` давало NaN → 0, и поле очищалось на середине ввода.
+ */
+export function amountFromInput(text: string): number {
+  const clean = text.replace(/[^\d.,]/g, '').replace(',', '.');
+  if (!clean) return 0;
+  const value = Number(clean);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
 export function splitList(value: string): string[] {
   return value
     .split(/[,;\n]/)

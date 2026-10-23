@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addPayment, addTask, nextTask, openTasks, paidAmount, patchPayment, patchTask,
-  paymentState, removeTask, sortTasks, taskStats, taskTone, toggleTask,
+  paymentState, postponeTasks, removeTask, sortTasks, taskStats, taskTone, toggleTask, toggleTasks,
 } from './crmTasks';
 import { makeDeal } from './testUtils';
 
@@ -46,6 +46,37 @@ describe('задачи сделки', () => {
       makeDeal({ id: 'deal-2', tasks: [{ id: 'c', title: 'c', kind: 'call', done: true, createdAt: '' }] }),
     ];
     expect(taskStats(deals, today)).toEqual({ open: 2, overdue: 1, today: 1 });
+  });
+});
+
+describe('массовые действия с задачами', () => {
+  const withThree = () => {
+    let deal = makeDeal();
+    deal = addTask(deal, { title: 'A', kind: 'call', dueAt: '2026-10-01', done: false });
+    deal = addTask(deal, { title: 'B', kind: 'call', dueAt: '2026-10-01', done: false });
+    deal = addTask(deal, { title: 'C', kind: 'call', dueAt: '2026-10-01', done: false });
+    return deal;
+  };
+
+  it('выполняет все задачи одной операцией, а не только последнюю', () => {
+    const deal = withThree();
+    const done = toggleTasks(deal, deal.tasks.map((task) => task.id));
+    expect(done.tasks.every((task) => task.done)).toBe(true);
+  });
+
+  it('откладывает все просроченные задачи', () => {
+    const deal = withThree();
+    const moved = postponeTasks(deal, deal.tasks.map((task) => task.id), 1, '2026-10-01');
+    expect(moved.tasks.map((task) => task.dueAt)).toEqual(['2026-10-02', '2026-10-02', '2026-10-02']);
+  });
+
+  it('повторяющаяся задача при массовом выполнении создаёт следующую', () => {
+    let deal = makeDeal();
+    deal = addTask(deal, { title: 'Планёрка', kind: 'meet', dueAt: '2026-10-01', done: false, repeat: 'daily' });
+    const done = toggleTasks(deal, deal.tasks.map((task) => task.id));
+    expect(done.tasks).toHaveLength(2);
+    expect(done.tasks[1].dueAt).toBe('2026-10-02');
+    expect(done.tasks[1].done).toBe(false);
   });
 });
 
@@ -97,5 +128,18 @@ describe('оплаты', () => {
 
   it('без платежей — остаток равен сумме', () => {
     expect(paymentState(makeDeal({ amount: 70000 }))).toMatchObject({ paid: 0, remainder: 70000, tone: 'muted' });
+  });
+});
+
+describe('сумма из поля ввода', () => {
+  it('не сбрасывает поле из-за случайной буквы', async () => {
+    const { amountFromInput } = await import('./utils');
+    expect(amountFromInput('150000')).toBe(150000);
+    expect(amountFromInput('150 000')).toBe(150000);
+    expect(amountFromInput('12a')).toBe(12);
+    expect(amountFromInput('1,5')).toBe(1.5);
+    expect(amountFromInput('')).toBe(0);
+    expect(amountFromInput('abc')).toBe(0);
+    expect(amountFromInput('-5')).toBe(5);
   });
 });

@@ -31,6 +31,11 @@ export default function Modal(props: {
   const modalId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  // Колбэк закрытия держим в ref: в карточках он создаётся на каждый рендер и,
+  // попадая в зависимости эффекта, заставлял его перезапускаться на любую букву —
+  // фокус прыгал обратно в первое поле.
+  const onCloseRef = useRef(props.onClose);
+  onCloseRef.current = props.onClose;
 
   // Стек открытых окон: фон блокируем один раз, снимаем — когда закрылось последнее.
   useEffect(() => {
@@ -54,7 +59,7 @@ export default function Modal(props: {
       if (!isTopModal(modalId)) return;
       if (event.key === 'Escape') {
         event.stopPropagation();
-        props.onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -76,21 +81,26 @@ export default function Modal(props: {
 
     document.addEventListener('keydown', onKey, true);
 
-    // Первый инпут или кнопка внутри — фокус сразу туда.
+    // Первое поле (или кнопка) внутри — фокус сразу туда, но только если человек
+    // ещё не успел ткнуть в другое поле сам.
     const timer = window.setTimeout(() => {
       const panel = panelRef.current;
       if (!panel) return;
+      const active = document.activeElement;
+      if (active && panel.contains(active) && active !== panel) return;
       const preferred = panel.querySelector<HTMLElement>('[data-autofocus]')
         ?? Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).find((element) => element.offsetParent !== null);
       preferred?.focus();
     }, 30);
 
+    // Возврат фокуса — только при закрытии окна, а не при каждом рендере.
     return () => {
       document.removeEventListener('keydown', onKey, true);
       window.clearTimeout(timer);
-      previousFocus.current?.focus?.();
+      const target = previousFocus.current;
+      if (target && document.contains(target)) target.focus?.();
     };
-  }, [modalId, props.onClose]);
+  }, [modalId]);
 
   return createPortal(
     <div
@@ -98,7 +108,7 @@ export default function Modal(props: {
       onMouseDown={(event) => {
         if (event.target !== event.currentTarget) return;
         if (!isTopModal(modalId)) return;
-        props.onClose();
+        onCloseRef.current();
       }}
     >
       <div
