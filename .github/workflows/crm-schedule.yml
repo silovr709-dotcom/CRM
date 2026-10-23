@@ -1,0 +1,71 @@
+# Сборка, проверки и публикация приложения CRM + График монтажей на GitHub Pages.
+#
+# Проверки (npm ci, тесты, сборка) идут на каждый pull request — сломанная ветка
+# не попадёт на сайт. Публикация — только из main, после тех же проверок.
+# Включить: Settings → Pages → Build and deployment → Source: GitHub Actions.
+name: CRM + График монтажей
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crm-schedule/**'
+      - '.github/workflows/crm-schedule.yml'
+  pull_request:
+    paths:
+      - 'crm-schedule/**'
+      - '.github/workflows/crm-schedule.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Отдельная группа для каждой ветки: сборка PR не отменяет публикацию сайта.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Проверки и сборка
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crm-schedule
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crm-schedule/package-lock.json
+
+      - name: Установка зависимостей
+        run: npm ci
+
+      - name: Тесты
+        run: npm test
+
+      - name: Сборка
+        run: npm run build
+
+      - name: Подготовка артефакта для Pages
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: crm-schedule/dist
+
+  deploy:
+    name: Публикация
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
