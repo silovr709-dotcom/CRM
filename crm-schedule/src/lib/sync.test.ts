@@ -1,0 +1,199 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AppData, Client } from '../types';
+import { emptyData } from './storage';
+import { daysAgoIso, makeDeal } from './testUtils';
+import {
+  buildEnvelope, emptyRemoved, envelopeSignature, formatSyncCode, makeSyncCode, mergeRemoved,
+  mergeSyncData, normalizeSyncCode, parseEnvelope, pullSpace, pushSpace, SYNC_ENDPOINT,
+} from './sync';
+
+function makeClient(patch: Partial<Client> = {}): Client {
+  return {
+    id: 'client-1',
+    name: 'Анна Смирнова',
+    phones: [],
+    emails: [],
+    tags: [],
+    createdAt: '2026-01-01T09:00:00.000Z',
+    updatedAt: '2026-01-01T09:00:00.000Z',
+    ...patch,
+  };
+}
+
+function makeData(patch: Partial<AppData> = {}): AppData {
+  return { ...emptyData(), createdAt: '2026-01-01T09:00:00.000Z', updatedAt: '2026-01-01T09:00:00.000Z', ...patch };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  localStorage.clear();
+});
+
+describe('код общей базы', () => {
+  it('создаёт 24 символа без похожих друг на друга знаков', () => {
+    const code = makeSyncCode();
+    expect(code).toHaveLength(24);
+    expect(code).toMatch(/^[A-HJ-NP-Z2-9]{24}$/);
+    expect(makeSyncCode()).not.toBe(code);
+  });
+
+  it('понимает код с дефисами, пробелами и в нижнем регистре', () => {
+    expect(normalizeSyncCode('abcd-efgh 2345 jklm')).toBe('ABCDEFGH2345JKLM');
+    expect(formatSyncCode('ABCDEFGH2345JKLMN')).toBe('ABCD-EFGH-2345-JKLM-N');
+    expect(formatSyncCode('')).toBe('');
+  });
+});
+
+describe('слияние двух устройств', () => {
+  it('оставляет более свежую версию каждой записи', () => {
+    const local = makeData({
+      updatedAt: '2026-03-01T10:00:00.000Z',
+      deals: [makeDeal({ id: 'deal-1', title: 'Кухня на Ленина', updatedAt: '2026-03-02T10:00:00.000Z' })],
+      clients: [makeClient({ name: 'Анна (компьютер)' })],
+    });
+    const remote = makeData({
+      updatedAt: '2026-03-03T10:00:00.000Z',
+      deals: [makeDeal({ id: 'deal-1', title: 'Кухня на Ленина', updatedAt: '2026-03-03T10:00:00.000Z' })],
+      clients: [makeClient({ name: 'Анна (телефон)', updatedAt: '2026-03-03T10:00:00.000Z' })],
+    });
+
+    const merged = mergeSyncData(local, remote, emptyRemoved());
+
+    expect(merged.data.deals).toHaveLength(1);
+    expect(merged.data.deals[0].updatedAt).toBe('2026-03-03T10:00:00.000Z');
+    expect(merged.data.clients[0].name).toBe('Анна (телефон)');
+    expect(merged.data.updatedAt).toBe('2026-03-03T10:00:00.000Z');
+  });
+
+  it('добавляет записи с другого устройства и не теряет свои', () => {
+    const local = makeData({
+      clients: [makeClient({ id: 'c-local', name: 'С компьютера' })],
+      deals: [makeDeal({ id: 'd-local', clientId: 'c-local' })],
+    });
+    const remote = makeData({
+      clients: [makeClient({ id: 'c-phone', name: 'С телефона' })],
+      deals: [makeDeal({ id: 'd-phone', clientId: 'c-phone', createdAt: '2026-02-01T09:00:00.000Z' })],
+    });
+
+    const merged = mergeSyncData(local, remote, emptyRemoved());
+    expect(merged.data.clients.map((client) => client.id).sort()).toEqual(['c-local', 'c-phone']);
+    expect(merged.data.deals.map((deal) => deal.id).sort()).toEqual(['d-local', 'd-phone']);
+  });
+
+  it('не возвращает запись, удалённую позже последней правки', () => {
+    const edited = daysAgoIso(10);
+    const removedAt = daysAgoIso(2);
+    const local = makeData({ deals: [] });
+    const remote = makeData({ deals: [makeDeal({ id: 'deal-1', updatedAt: edited })] });
+
+    const merged = mergeSyncData(local, remote, { clients: {}, deals: { 'deal-1': removedAt } });
+    expect(merged.data.deals).toHaveLength(0);
+    expect(merged.removed.deals['deal-1']).toBe(removedAt);
+  });
+
+  it('возвращает запись, если её изменили после удаления', () => {
+    const local = makeData({ clients: [makeClient({ id: 'c1', updatedAt: '2026-03-01T09:00:00.000Z' })] });
+    const remote = makeData({ clients: [] });
+
+    const merged = mergeSyncData(local, remote, { clients: { c1: '2026-02-01T09:00:00.000Z' }, deals: {} });
+    expect(merged.data.clients).toHaveLength(1);
+    expect(merged.removed.clients.c1).toBeUndefined();
+  });
+
+  it('забывает старые удаления и хранит свежие', () => {
+    const old = new Date(Date.now() - 400 * 86400000).toISOString();
+    const fresh = new Date(Date.now() - 3 * 86400000).toISOString();
+    const merged = mergeSyncData(makeData(), makeData(), { clients: { old: old, fresh: fresh }, deals: {} });
+    expect(merged.removed.clients.old).toBeUndefined();
+    expect(merged.removed.clients.fresh).toBe(fresh);
+  });
+
+  it('берёт свежие настройки, но тема и разрешение уведомлений — свои', () => {
+    const local = makeData({
+      updatedAt: '2026-02-01T09:00:00.000Z',
+      settings: { ...makeData().settings, theme: 'dark', notifications: true, companyName: 'Старое имя' },
+    });
+    const remote = makeData({
+      updatedAt: '2026-03-01T09:00:00.000Z',
+      settings: { ...makeData().settings, theme: 'light', notifications: false, companyName: 'Новое имя' },
+    });
+
+    const merged = mergeSyncData(local, remote, emptyRemoved());
+    expect(merged.data.settings.companyName).toBe('Новое имя');
+    expect(merged.data.settings.theme).toBe('dark');
+    expect(merged.data.settings.notifications).toBe(true);
+  });
+
+  it('объединяет «надгробия» по самому свежему времени', () => {
+    const merged = mergeRemoved(
+      { clients: { a: '2026-01-01T00:00:00.000Z' }, deals: { x: '2026-01-05T00:00:00.000Z' } },
+      { clients: { a: '2026-02-01T00:00:00.000Z', b: '2026-01-02T00:00:00.000Z' }, deals: {} },
+    );
+    expect(merged.clients.a).toBe('2026-02-01T00:00:00.000Z');
+    expect(merged.clients.b).toBe('2026-01-02T00:00:00.000Z');
+    expect(merged.deals.x).toBe('2026-01-05T00:00:00.000Z');
+  });
+});
+
+describe('документ общей базы', () => {
+  it('собирает и разбирает конверт, отбрасывая мусор', () => {
+    const data = makeData({ deals: [makeDeal()] });
+    const envelope = buildEnvelope(data, { clients: {}, deals: { 'deal-1': '2026-02-01T00:00:00.000Z' } }, 'телефон');
+    const parsed = parseEnvelope(JSON.parse(JSON.stringify(envelope)));
+    expect(parsed?.data.deals).toHaveLength(1);
+    expect(parsed?.removed.deals['deal-1']).toBe('2026-02-01T00:00:00.000Z');
+    expect(parseEnvelope({ hello: 'world' })).toBeNull();
+    expect(parseEnvelope(null)).toBeNull();
+  });
+
+  it('понимает старый формат без конверта и не зависит от порядка ключей', () => {
+    const data = makeData({ clients: [makeClient()] });
+    expect(parseEnvelope(data)?.data.clients).toHaveLength(1);
+
+    const left = envelopeSignature({ data, removed: { clients: { a: '1', b: '2' }, deals: {} } });
+    const right = envelopeSignature({ data, removed: { clients: { b: '2', a: '1' }, deals: {} } });
+    expect(left).toBe(right);
+  });
+});
+
+describe('обмен с сервером', () => {
+  it('читает базу по коду и убирает дефисы из кода', async () => {
+    const payload = buildEnvelope(makeData({ clients: [makeClient()] }), emptyRemoved(), 'компьютер');
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ found: true, payload, revision: 4, updated_at: '2026-03-01T10:00:00.000Z', device: 'телефон' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await pullSpace('ABCD-EFGH-2345-JKLM-NPQR');
+    expect(result.found).toBe(true);
+    expect(result.revision).toBe(4);
+    expect(result.device).toBe('телефон');
+    expect(result.envelope?.data.clients).toHaveLength(1);
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${SYNC_ENDPOINT}/rest/v1/rpc/crm_sync_pull`);
+    expect(JSON.parse(String(init.body))).toEqual({ p_token: 'ABCDEFGH2345JKLMNPQR' });
+  });
+
+  it('сообщает, что базы ещё нет', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ found: false }) })));
+    const result = await pullSpace('ABCDEFGH2345JKLMNPQR');
+    expect(result.found).toBe(false);
+    expect(result.envelope).toBeNull();
+  });
+
+  it('отправляет документ и разбирает конфликт версий', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: false, conflict: true, revision: 9 }) })));
+    const envelope = buildEnvelope(makeData(), emptyRemoved(), 'телефон');
+    const result = await pushSpace('ABCDEFGH2345JKLMNPQR', envelope, 3);
+    expect(result).toMatchObject({ ok: false, conflict: true, revision: 9 });
+  });
+
+  it('превращает сетевую ошибку в понятный текст', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fail'); }));
+    await expect(pullSpace('ABCDEFGH2345JKLMNPQR')).rejects.toThrow('Нет связи с сервером синхронизации');
+  });
+});

@@ -12,6 +12,8 @@ export interface Route {
   create?: 'deal' | 'client' | 'install';
   /** Принять сделку из ссылки: #/share/<payload>. */
   share?: string;
+  /** Подключиться к общей базе: #/sync/<code>. */
+  sync?: string;
   /** Вкладка карточки сделки. */
   tab?: string;
 }
@@ -34,6 +36,7 @@ export function parseHash(hash: string): Route {
 
   if (segments.length === 0) return base;
   if (segments[0] === 'share' && segments[1]) return { ...base, share: decodeURIComponent(segments[1]) };
+  if (segments[0] === 'sync' && segments[1]) return { ...base, view: 'data', sync: decodeURIComponent(segments[1]) };
   if (segments[0] === 'deal' && segments[1]) return { ...base, view: 'crm', dealId: decodeURIComponent(segments[1]) };
   if (segments[0] === 'client' && segments[1]) return { ...base, view: 'crm', clientId: decodeURIComponent(segments[1]) };
   if (VIEWS.includes(segments[0] as ViewId)) {
@@ -49,6 +52,7 @@ export function buildHash(route: Route): string {
   if (route.dealId) path = `#/deal/${encodeURIComponent(route.dealId)}`;
   else if (route.clientId) path = `#/client/${encodeURIComponent(route.clientId)}`;
   else if (route.share) path = `#/share/${encodeURIComponent(route.share)}`;
+  else if (route.sync) path = `#/sync/${encodeURIComponent(route.sync)}`;
 
   const query = new URLSearchParams();
   if (route.create) query.set('new', route.create);
