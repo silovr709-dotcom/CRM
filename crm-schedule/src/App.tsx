@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarDays, CheckSquare, Download, LayoutDashboard, Menu, Moon, Plus, Search,
-  Settings2, Sun, TriangleAlert, Users, WifiOff, X,
+  Settings2, Smartphone, Sun, TriangleAlert, Users, WifiOff, X,
 } from 'lucide-react';
 import { useApp } from './store';
 import Dashboard from './components/Dashboard';
@@ -42,11 +42,12 @@ const NAV: Array<{ id: ViewId; label: string; short: string; icon: typeof Layout
 ];
 
 const AUTOMATION_KEY = 'crm-schedule.automation.lastRun';
+const SYNC_HINT_KEY = 'crm-schedule.sync.hint.v1';
 
 export default function App() {
   const {
     data, deals, clients, settings, clientName, importSharedDeal, updateSettings,
-    replaceData, updateSchedule, notify, undo,
+    replaceData, updateSchedule, notify, undo, sync,
   } = useApp();
   const route = useRoute();
   const view = route.view;
@@ -63,7 +64,23 @@ export default function App() {
   const [online, setOnline] = useState(true);
   const [installable, setInstallable] = useState(false);
   const [updateReady, setUpdateReady] = useState(false);
+  const [syncHint, setSyncHint] = useState(() => {
+    try {
+      return !localStorage.getItem(SYNC_HINT_KEY);
+    } catch {
+      return false;
+    }
+  });
   const ranAutomation = useRef(false);
+
+  const dismissSyncHint = useCallback(() => {
+    try {
+      localStorage.setItem(SYNC_HINT_KEY, '1');
+    } catch {
+      /* приватный режим — подсказка просто скроется до перезагрузки */
+    }
+    setSyncHint(false);
+  }, []);
 
   const counts = useMemo(() => {
     const active = deals.filter((deal) => !isClosedStatus(deal.status));
@@ -367,6 +384,28 @@ export default function App() {
             aria-label="Скрыть подсказку о демо-данных"
             title="Скрыть"
             onClick={() => updateSettings({ demo: false })}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {syncHint && !sync.enabled && (
+        <div className="demo-banner sync-hint" role="status">
+          <Smartphone size={15} />
+          <span>
+            Клиенты и сделки могут быть сразу на телефоне и компьютере. Включите общую базу —
+            код и ссылка появятся в «Данных».
+          </span>
+          <button type="button" className="link-btn" onClick={() => { dismissSyncHint(); go('data'); }}>
+            Включить
+          </button>
+          <button
+            type="button"
+            className="icon-btn small"
+            aria-label="Скрыть подсказку об общей базе"
+            title="Скрыть"
+            onClick={dismissSyncHint}
           >
             <X size={14} />
           </button>

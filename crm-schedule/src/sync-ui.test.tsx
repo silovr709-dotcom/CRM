@@ -120,6 +120,14 @@ describe('общая база в интерфейсе', () => {
     expect(screen.getAllByText(/общая база/i).length).toBeGreaterThan(0);
   });
 
+  it('подсказывает про общую базу один раз', () => {
+    renderApp();
+    expect(screen.getByText(/Включите общую базу/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Скрыть подсказку об общей базе' }));
+    expect(screen.queryByText(/Включите общую базу/)).toBeNull();
+    expect(localStorage.getItem('crm-schedule.sync.hint.v1')).toBe('1');
+  });
+
   it('не подключается по несуществующему коду и не теряет данные', async () => {
     const { fetchMock } = fakeServer(null);
     vi.stubGlobal('fetch', fetchMock);
