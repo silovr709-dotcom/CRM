@@ -1,0 +1,29 @@
+name: Проверка записи (временно)
+on:
+  push:
+    paths:
+      - '.github/workflows/sync-check-push.yml'
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: push и pull
+        run: |
+          set -e
+          KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlzd2t6Y2xlZ2pjYmh4YWF0bWJiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0NzQzNzMsImV4cCI6MjEwODA1MDM3M30.g_DgKVMd9MvCOLmTctHQowKwroX2RhIS7FfGIZYaR9M"
+          BASE="https://iswkzclegjcbhxaatmbb.supabase.co/rest/v1/rpc"
+          TOKEN="CHECKONLYTOKEN000000000001"
+          curl -sS -f -X POST "$BASE/crm_sync_push" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"p_token":"'$TOKEN'","p_payload":{"kind":"crm-schedule/sync","schema":1,"device":"проверка","savedAt":"2026-10-23T00:00:00.000Z","data":{"version":2,"clients":[],"deals":[],"settings":{},"createdAt":"2026-10-23T00:00:00.000Z","updatedAt":"2026-10-23T00:00:00.000Z"},"removed":{"clients":{},"deals":{}}},"p_revision":0,"p_device":"проверка"}' | tee /tmp/push.json
+          grep -q '"ok": *true' /tmp/push.json
+          echo
+          curl -sS -f -X POST "$BASE/crm_sync_pull" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"p_token":"'$TOKEN'"}' | tee /tmp/pull.json
+          grep -q '"found": *true' /tmp/pull.json
+          grep -q '"revision": *1' /tmp/pull.json
+          echo
+          echo "ОК: запись и чтение работают, revision = 1"
