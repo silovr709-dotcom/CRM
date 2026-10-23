@@ -56,7 +56,6 @@ export default function DataView() {
     managers: settings.managers.join(', '),
     teams: settings.teams.join(', '),
     hints: settings.hints,
-    theme: settings.theme,
     reminderMinutes: settings.reminderMinutes,
   }));
   const [preview, setPreview] = useState<ImportPreview | null>(null);
@@ -96,7 +95,6 @@ export default function DataView() {
       managers: draft.managers.split(',').map((value) => value.trim()).filter(Boolean),
       teams: draft.teams.split(',').map((value) => value.trim()).filter(Boolean),
       hints: draft.hints,
-      theme: draft.theme,
       reminderMinutes: draft.reminderMinutes,
     });
     notify('Настройки сохранены');
@@ -221,6 +219,7 @@ export default function DataView() {
 
           <div className="section-head sub">
             <h3>Тема и подсказки</h3>
+            <span className="muted small">тема применяется сразу, остальное — по кнопке</span>
           </div>
           <div className="theme-picker" role="radiogroup" aria-label="Тема оформления">
             {([
@@ -232,9 +231,9 @@ export default function DataView() {
                 key={option.value}
                 type="button"
                 role="radio"
-                aria-checked={draft.theme === option.value}
-                className={draft.theme === option.value ? 'active' : ''}
-                onClick={() => setDraft({ ...draft, theme: option.value })}
+                aria-checked={settings.theme === option.value}
+                className={settings.theme === option.value ? 'active' : ''}
+                onClick={() => updateSettings({ theme: option.value })}
               >
                 {option.icon} {option.label}
               </button>

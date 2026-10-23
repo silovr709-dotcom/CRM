@@ -180,6 +180,19 @@ export function postponeTask(deal: Deal, taskId: string, days: number, today = t
   return patchTask(deal, taskId, { dueAt: addDays(base, days) });
 }
 
+/**
+ * Массовые действия. Раньше интерфейс вызывал toggleTask/postponeTask в цикле,
+ * каждый раз от одной и той же версии сделки, — в итоге применялось только
+ * последнее изменение. Здесь изменения накапливаются.
+ */
+export function toggleTasks(deal: Deal, taskIds: string[]): Deal {
+  return taskIds.reduce((current, id) => toggleTask(current, id), deal);
+}
+
+export function postponeTasks(deal: Deal, taskIds: string[], days: number, today = todayISO()): Deal {
+  return taskIds.reduce((current, id) => postponeTask(current, id, days, today), deal);
+}
+
 export function removeTask(deal: Deal, taskId: string): Deal {
   return touch(deal, { tasks: (deal.tasks ?? []).filter((task) => task.id !== taskId) });
 }

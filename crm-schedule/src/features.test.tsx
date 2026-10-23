@@ -146,6 +146,30 @@ describe('новые возможности интерфейса', () => {
     expect(within(again).getByText(/Будет:/u).textContent).toContain('3 часа');
   });
 
+  it('«Выполнить все» закрывает все задачи сделки, а не одну', () => {
+    renderApp();
+    fireEvent.click(within(nav()).getByRole('button', { name: /CRM/ }));
+    fireEvent.click(screen.getAllByText('Кухня на Ленина, 42')[0]);
+    const dialog = screen.getByRole('dialog');
+    const tabs = within(dialog).getByRole('navigation', { name: 'Разделы карточки' });
+    fireEvent.click(within(tabs).getByRole('button', { name: /Задачи/ }));
+
+    // добавляем две свои задачи (в демо уже есть похожие названия)
+    const mine = ['Проверить фурнитуру', 'Уточнить цвет фасадов'];
+    for (const title of mine) {
+      fireEvent.change(within(dialog).getByPlaceholderText(/Что сделать/u), { target: { value: title } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Добавить' }));
+    }
+    const boxes = within(dialog).getAllByRole('checkbox', { name: /Выполнить:/u }) as HTMLInputElement[];
+    expect(boxes.length).toBeGreaterThan(1);
+    fireEvent.click(within(dialog).getByRole('button', { name: /Выполнить все/ }));
+    // Повторяющиеся задачи создают следующую копию, поэтому проверяем именно наши две.
+    for (const title of mine) {
+      const box = within(dialog).getByRole('checkbox', { name: `Выполнить: ${title}` }) as HTMLInputElement;
+      expect(box.checked, `задача «${title}»`).toBe(true);
+    }
+  });
+
   it('правит задачу из общего списка', () => {
     renderApp();
     fireEvent.click(within(nav()).getByRole('button', { name: /Задачи/ }));

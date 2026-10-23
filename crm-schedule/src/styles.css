@@ -1843,3 +1843,9 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select:
 @media (max-width: 720px) {
   .task-reminder-row.two { grid-template-columns: 1fr; }
 }
+
+/* Телефоны: iOS иначе приближает страницу при фокусе в поле с мелким шрифтом. */
+@media (max-width: 720px) {
+  input, select, textarea { font-size: 16px; }
+  .task-row input[type="checkbox"] { width: 19px; height: 19px; }
+}

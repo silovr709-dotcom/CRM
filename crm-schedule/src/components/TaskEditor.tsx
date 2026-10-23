@@ -159,7 +159,6 @@ export default function TaskEditor({
         <label className="field span-2">Что сделать
           <input
             data-autofocus
-            autoFocus
             value={values.title}
             placeholder="позвонить, отправить документы, замерить"
             onChange={(event) => { setValues({ ...values, title: event.target.value }); setError(''); }}

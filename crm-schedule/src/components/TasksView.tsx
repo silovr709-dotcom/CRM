@@ -6,7 +6,7 @@ import { addTask, patchTask } from '../lib/crmTasks';
 import { useApp } from '../store';
 import { fmtDate, relativeDay, todayISO } from '../lib/dates';
 import {
-  allTasks, postponeTask, removeTask, REPEAT_LABELS, taskKindMeta, taskStats,
+  allTasks, postponeTask, postponeTasks, removeTask, REPEAT_LABELS, taskKindMeta, taskStats,
   toggleTask, TASK_KINDS, type TaskTone,
 } from '../lib/crmTasks';
 import { usePrefs } from '../lib/viewPrefs';
@@ -126,7 +126,16 @@ export default function TasksView(props: { onOpenDeal: (id: string) => void }) {
             className="btn small ghost"
             onClick={() => {
               const overdue = tasks.filter(({ tone, task }) => tone === 'overdue' && !task.done);
-              overdue.forEach(({ deal, task }) => updateDeal(postponeTask(deal, task.id, 1)));
+              // Одна сделка — одно обновление: иначе из нескольких задач переносится только последняя.
+              const byDeal = new Map<string, { deal: typeof deals[number]; ids: string[] }>();
+              for (const { deal, task } of overdue) {
+                const entry = byDeal.get(deal.id) ?? { deal, ids: [] };
+                entry.ids.push(task.id);
+                byDeal.set(deal.id, entry);
+              }
+              for (const { deal, ids } of byDeal.values()) {
+                updateDeal(postponeTasks(deal, ids, 1));
+              }
               notify(`Перенесено на завтра: ${overdue.length}`);
             }}
           >
