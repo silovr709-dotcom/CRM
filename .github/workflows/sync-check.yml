@@ -5,6 +5,9 @@ name: Проверка общей базы
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/sync-check.yml'
 
 jobs:
   check:
