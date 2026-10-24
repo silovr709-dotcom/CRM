@@ -16,7 +16,7 @@ import {
 import {
   buildEnvelope, clearSyncConfig, deviceName, emptyRemoved, envelopeSignature, isFreshData,
   loadSyncConfig, makeDeviceId, mergeRemoved, mergeSyncData, MIN_CODE_LENGTH, normalizeSyncCode,
-  pullSpace, pushSpace, saveSyncConfig, syncUiFromConfig,
+  hashEnvelope, pullSpace, pushSpace, saveSyncConfig, syncUiFromConfig,
   type Removed, type SyncConfig, type SyncUiState,
 } from './lib/sync';
 
@@ -209,7 +209,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     patchSyncUi({ status: 'syncing', error: '' });
     try {
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        const remote = await pullSpace(config.code);
+        const remote = await pullSpace(config.code, config.revision);
+
+        // Сервер ответил «та же версия»: документ не скачивали.
+        // Если и локальных правок нет — делать нечего.
+        if (remote.found && remote.unchanged) {
+          config.revision = remote.revision;
+          config.known = true;
+          config.serverAt = remote.updatedAt;
+          config.serverDevice = remote.device;
+          config.lastSyncAt = nowIso();
+          saveSyncConfig(config);
+
+          const localEnvelope = buildEnvelope(dataRef.current, config.removed, config.deviceName);
+          if (hashEnvelope(localEnvelope) === (config.serverHash ?? '')) break;
+
+          const pushed = await pushSpace(config.code, localEnvelope, config.revision);
+          if (pushed.ok) {
+            config.revision = pushed.revision;
+            config.lastSyncAt = nowIso();
+            config.serverAt = config.lastSyncAt;
+            config.serverDevice = config.deviceName;
+            config.serverHash = hashEnvelope(localEnvelope);
+            saveSyncConfig(config);
+            serverSig.current = envelopeSignature(localEnvelope);
+            break;
+          }
+          if (pushed.conflict) continue;
+          failure = pushed.error;
+          break;
+        }
 
         // Базы ещё нет: создаём её данными этого устройства.
         if (!remote.found) {
@@ -225,6 +254,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             config.lastSyncAt = nowIso();
             config.serverAt = config.lastSyncAt;
             config.serverDevice = config.deviceName;
+            config.serverHash = hashEnvelope(envelope);
             saveSyncConfig(config);
             serverSig.current = envelopeSignature(envelope);
             result.created = true;
@@ -268,6 +298,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         config.serverAt = remote.updatedAt;
         config.serverDevice = remote.device;
         config.lastSyncAt = nowIso();
+        config.serverHash = hashEnvelope({ data: remote.envelope.data, removed: remote.envelope.removed });
         saveSyncConfig(config);
         serverSig.current = remote.signature;
 
@@ -282,6 +313,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           config.lastSyncAt = nowIso();
           config.serverAt = config.lastSyncAt;
           config.serverDevice = config.deviceName;
+          config.serverHash = hashEnvelope(envelope);
           saveSyncConfig(config);
           serverSig.current = envelopeSignature(envelope);
           break;

@@ -1,7 +1,7 @@
 // Обзор: главное — «Сегодня». Дальше график, задачи, проверки и деньги.
 import { useMemo } from 'react';
 import {
-  ArrowRight, CalendarDays, CheckSquare, Clock, Phone, TrendingUp, TriangleAlert, Wallet,
+  ArrowRight, CalendarDays, CheckSquare, Clock, HandCoins, Phone, TrendingUp, TriangleAlert, Wallet,
 } from 'lucide-react';
 import { useApp } from '../store';
 import { fmtDate, fmtMoney, fmtMoneyCompact, fmtTimeRange, relativeDay, todayISO } from '../lib/dates';
@@ -9,6 +9,7 @@ import { statusMeta } from '../lib/crm';
 import { dealsForToday, longToday, overview, scheduleAhead } from '../lib/metrics';
 import { scheduleKindMeta, scheduleWarnings } from '../lib/schedule';
 import { allTasks, paymentState, taskStats, toggleTask } from '../lib/crmTasks';
+import { receivables } from '../lib/money';
 import EmptyState from './EmptyState';
 import { usePrefs } from '../lib/viewPrefs';
 
@@ -26,6 +27,7 @@ export default function Dashboard(props: {
   onOpenSchedule: () => void;
   onOpenCrm: () => void;
   onOpenTasks: () => void;
+  onOpenReports: () => void;
   onNewDeal: () => void;
 }) {
   const { deals, clientName, updateDeal, settings, clients } = useApp();
@@ -41,6 +43,8 @@ export default function Dashboard(props: {
     [deals, today],
   );
   const taskCounts = useMemo(() => taskStats(deals, today), [deals, today]);
+  const debts = useMemo(() => receivables(deals, today, clientName), [deals, today, clientName]);
+  const overdueDebts = debts.filter((item) => item.overdue > 0);
   const activeDeals = useMemo(() => deals.filter((deal) => deal.status !== 'delivered' && deal.status !== 'rejected'), [deals]);
   const empty = deals.length === 0 && clients.length === 0;
 
@@ -112,6 +116,15 @@ export default function Dashboard(props: {
             <span><Wallet size={15} /> Портфель <b>{fmtMoneyCompact(stats.pipeline)}</b></span>
             <span><TrendingUp size={15} /> Оплаты за месяц <b>{fmtMoneyCompact(stats.paidThisMonth)}</b></span>
             <span><CheckSquare size={15} /> Сделок в работе <b>{stats.activeDeals}</b></span>
+            <button
+              type="button"
+              className={`metric-link${overdueDebts.length > 0 ? ' warn' : ''}`}
+              onClick={props.onOpenReports}
+              title="Открыть отчёт «Кто должен»"
+            >
+              <HandCoins size={15} /> Ждём оплату <b>{fmtMoneyCompact(debts.reduce((sum, item) => sum + item.remainder, 0))}</b>
+              {overdueDebts.length > 0 && <em>· просрочено {overdueDebts.length}</em>}
+            </button>
             <span className={warnings.length > 0 ? 'warn' : ''}>
               <TriangleAlert size={15} /> Проверки графика <b>{warnings.length}</b>
             </span>

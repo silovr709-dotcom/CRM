@@ -82,6 +82,37 @@ export interface DealTask {
   createdAt: string;
 }
 
+/** Статья затрат по заказу — из чего складывается себестоимость. */
+export type ExpenseKind = 'materials' | 'factory' | 'install' | 'delivery' | 'other';
+
+/**
+ * Затрата по сделке. Сумма в рублях; отдельно от оплат клиента:
+ * оплаты — это деньги «в», затраты — деньги «из». Маржа = оплаты − затраты.
+ */
+export interface Expense {
+  id: string;
+  kind: ExpenseKind;
+  amount: number;
+  /** Дата YYYY-MM-DD. */
+  at: string;
+  comment?: string;
+  /** Кто внёс — для истории. */
+  addedBy?: string;
+}
+
+/** Платёж, который ещё не получен, но обещан: план оплат и дебиторка. */
+export interface PlannedPayment {
+  id: string;
+  /** Сколько должны получить; для возврата — отрицательная. */
+  amount: number;
+  /** Дата ожидания YYYY-MM-DD. */
+  at: string;
+  kind: PaymentKind;
+  comment?: string;
+  /** Отметка «получено»: id фактического платежа, если уже пришёл. */
+  paidId?: string;
+}
+
 export interface Payment {
   id: string;
   /** Сумма в рублях; возврат — отрицательный. */
@@ -139,6 +170,10 @@ export interface Deal {
   comment?: string;
   tasks: DealTask[];
   payments: Payment[];
+  /** Затраты по заказу: материалы, фабрика, монтаж, доставка. */
+  expenses?: Expense[];
+  /** План оплат: что и когда клиент должен заплатить. */
+  plan?: PlannedPayment[];
   /** Документы заказа: договор, эскизы, чеки, фото с монтажа. */
   attachments?: Attachment[];
   history: HistoryEntry[];

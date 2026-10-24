@@ -1,7 +1,7 @@
 // Единое приложение: CRM + график монтажей. Маршруты в адресе, ⌘K, тема, карточки.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CalendarDays, CheckSquare, Download, LayoutDashboard, Menu, Moon, Plus, Search,
+  CalendarDays, ChartColumn, CheckSquare, Download, LayoutDashboard, Menu, Moon, Plus, Search,
   Settings2, Smartphone, Sun, TriangleAlert, Users, WifiOff, X,
 } from 'lucide-react';
 import { useApp } from './store';
@@ -9,6 +9,7 @@ import Dashboard from './components/Dashboard';
 import CrmView from './components/CrmView';
 import ScheduleView from './components/ScheduleView';
 import TasksView from './components/TasksView';
+import ReportsView from './components/ReportsView';
 import DataView from './components/DataView';
 import DealDialog from './components/DealDialog';
 import ClientDialog from './components/ClientDialog';
@@ -38,6 +39,7 @@ const NAV: Array<{ id: ViewId; label: string; short: string; icon: typeof Layout
   { id: 'crm', label: 'CRM', short: 'CRM', icon: Users },
   { id: 'schedule', label: 'График монтажей', short: 'График', icon: CalendarDays },
   { id: 'tasks', label: 'Задачи', short: 'Задачи', icon: CheckSquare },
+  { id: 'reports', label: 'Отчёты', short: 'Отчёты', icon: ChartColumn },
   { id: 'data', label: 'Данные', short: 'Данные', icon: Settings2 },
 ];
 
@@ -419,6 +421,7 @@ export default function App() {
             onOpenSchedule={() => go('schedule')}
             onOpenCrm={() => go('crm')}
             onOpenTasks={() => go('tasks')}
+            onOpenReports={() => go('reports')}
             onNewDeal={() => setNewDealClient('')}
           />
         )}
@@ -442,6 +445,8 @@ export default function App() {
         )}
 
         {view === 'tasks' && <TasksView onOpenDeal={openDeal} />}
+
+        {view === 'reports' && <ReportsView onOpenDeal={openDeal} />}
 
         {view === 'data' && <DataView />}
       </main>

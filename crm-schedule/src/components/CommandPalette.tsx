@@ -21,7 +21,7 @@ export default function CommandPalette(props: {
   /** tab — сразу открыть нужную вкладку карточки, например «Файлы». */
   onOpenDeal: (id: string, tab?: string) => void;
   onOpenClient: (id: string) => void;
-  onView: (view: 'overview' | 'crm' | 'schedule' | 'tasks' | 'data') => void;
+  onView: (view: 'overview' | 'crm' | 'schedule' | 'tasks' | 'reports' | 'data') => void;
   onNewDeal: () => void;
   onNewClient: () => void;
   onNewInstall: () => void;
@@ -39,6 +39,7 @@ export default function CommandPalette(props: {
       { id: 'a-install', group: 'Действия', title: 'Поставить монтаж', run: props.onNewInstall },
       { id: 'a-tasks', group: 'Действия', title: 'Задачи на сегодня', run: () => props.onView('tasks') },
       { id: 'a-schedule', group: 'Перейти', title: 'График монтажей', run: () => props.onView('schedule') },
+      { id: 'a-reports', group: 'Перейти', title: 'Отчёты: деньги и конверсия', run: () => props.onView('reports') },
       { id: 'a-crm', group: 'Перейти', title: 'CRM: сделки', run: () => props.onView('crm') },
       { id: 'a-data', group: 'Перейти', title: 'Данные и настройки', run: () => props.onView('data') },
     ];

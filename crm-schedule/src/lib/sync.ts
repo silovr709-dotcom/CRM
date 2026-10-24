@@ -45,6 +45,9 @@ export interface SyncConfig {
   /** Когда документ менялся на сервере и с какого устройства. */
   serverAt: string;
   serverDevice: string;
+  /** Короткий отпечаток того, что лежит на сервере: без него не понять,
+   *  совпадает ли локальная копия с серверной, не скачивая документ. */
+  serverHash?: string;
   /** База точно существует (успели создать или прочитать). */
   known: boolean;
   removed: Removed;
@@ -100,6 +103,7 @@ export function loadSyncConfig(): SyncConfig | null {
       lastSyncAt: typeof parsed.lastSyncAt === 'string' ? parsed.lastSyncAt : '',
       serverAt: typeof parsed.serverAt === 'string' ? parsed.serverAt : '',
       serverDevice: typeof parsed.serverDevice === 'string' ? parsed.serverDevice : '',
+      serverHash: typeof parsed.serverHash === 'string' ? parsed.serverHash : '',
       known: parsed.known === true,
       removed: normalizeRemoved(parsed.removed),
     };
@@ -203,6 +207,19 @@ export function envelopeSignature(envelope: { data: AppData; removed: Removed })
     data: envelope.data,
     removed: { clients: sort(envelope.removed.clients), deals: sort(envelope.removed.deals) },
   });
+}
+
+/**
+ * Короткий отпечаток документа (djb2). Нужен, чтобы не сравнивать мегабайты
+ * JSON на каждом опросе: храним 8 символов вместо всей базы.
+ */
+export function hashEnvelope(envelope: { data: AppData; removed: Removed }): string {
+  const text = envelopeSignature(envelope);
+  let hash = 5381;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) + hash + text.charCodeAt(index)) | 0;
+  }
+  return `${(hash >>> 0).toString(36)}:${text.length.toString(36)}`;
 }
 
 /* ------------------------------- слияние ------------------------------- */
@@ -314,6 +331,8 @@ export function isFreshData(data: AppData): boolean {
 
 export interface PullResult {
   found: boolean;
+  /** На сервере та же версия: документ не скачивали, envelope === null. */
+  unchanged: boolean;
   revision: number;
   envelope: { data: AppData; removed: Removed } | null;
   signature: string;
@@ -349,20 +368,36 @@ async function callRpc(name: string, body: unknown): Promise<unknown> {
   return response.json();
 }
 
-export async function pullSpace(code: string): Promise<PullResult> {
-  const raw = (await callRpc('crm_sync_pull', { p_token: normalizeSyncCode(code) })) as Record<string, unknown> | null;
+/**
+ * Прочитать базу. Если известна версия, которая уже есть у клиента,
+ * сервер отвечает только метаданными (`unchanged`) и не гоняет весь документ.
+ */
+export async function pullSpace(code: string, knownRevision?: number): Promise<PullResult> {
+  const body: Record<string, unknown> = { p_token: normalizeSyncCode(code) };
+  if (Number.isFinite(knownRevision) && (knownRevision ?? 0) > 0) body.p_known_revision = knownRevision;
+
+  const raw = (await callRpc('crm_sync_pull', body)) as Record<string, unknown> | null;
   if (!raw || raw.found !== true) {
-    return { found: false, revision: 0, envelope: null, signature: '', updatedAt: '', device: '' };
+    return { found: false, unchanged: false, revision: 0, envelope: null, signature: '', updatedAt: '', device: '' };
   }
-  const envelope = parseEnvelope(raw.payload);
   const revision = Number(raw.revision) || 0;
+  const updatedAt = typeof raw.updated_at === 'string' ? raw.updated_at : '';
+  const device = typeof raw.device === 'string' ? raw.device : '';
+
+  // Сервер подтвердил: «у тебя та же версия» — платить за документ не нужно.
+  if (raw.unchanged === true) {
+    return { found: true, unchanged: true, revision, envelope: null, signature: '', updatedAt, device };
+  }
+
+  const envelope = parseEnvelope(raw.payload);
   return {
     found: true,
+    unchanged: false,
     revision,
     envelope,
     signature: envelope ? envelopeSignature(envelope) : '',
-    updatedAt: typeof raw.updated_at === 'string' ? raw.updated_at : '',
-    device: typeof raw.device === 'string' ? raw.device : '',
+    updatedAt,
+    device,
   };
 }
 

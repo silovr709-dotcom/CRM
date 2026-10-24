@@ -4,8 +4,8 @@ import type { AppData, Client } from '../types';
 import { emptyData } from './storage';
 import { daysAgoIso, makeDeal } from './testUtils';
 import {
-  buildEnvelope, emptyRemoved, envelopeSignature, formatSyncCode, makeSyncCode, mergeRemoved,
-  mergeSyncData, normalizeSyncCode, parseEnvelope, pullSpace, pushSpace, SYNC_ENDPOINT,
+  buildEnvelope, emptyRemoved, envelopeSignature, formatSyncCode, hashEnvelope, makeSyncCode,
+  mergeRemoved, mergeSyncData, normalizeSyncCode, parseEnvelope, pullSpace, pushSpace, SYNC_ENDPOINT,
 } from './sync';
 
 function makeClient(patch: Partial<Client> = {}): Client {
@@ -157,6 +157,20 @@ describe('документ общей базы', () => {
   });
 });
 
+describe('отпечаток документа', () => {
+  it('одинаков для одинаковых данных и разный для разных', () => {
+    const base = { data: makeData({ clients: [makeClient()] }), removed: emptyRemoved() };
+    expect(hashEnvelope(base)).toBe(hashEnvelope({ data: makeData({ clients: [makeClient()] }), removed: emptyRemoved() }));
+    expect(hashEnvelope(base)).not.toBe(hashEnvelope({ data: makeData({ clients: [] }), removed: emptyRemoved() }));
+  });
+
+  it('короткий — его можно хранить в настройках устройства', () => {
+    const hash = hashEnvelope({ data: makeData(), removed: emptyRemoved() });
+    expect(hash.length).toBeLessThan(40);
+    expect(hash).toMatch(/^[a-z0-9]+:[a-z0-9]+$/);
+  });
+});
+
 describe('обмен с сервером', () => {
   it('читает базу по коду и убирает дефисы из кода', async () => {
     const payload = buildEnvelope(makeData({ clients: [makeClient()] }), emptyRemoved(), 'компьютер');
@@ -175,6 +189,37 @@ describe('обмен с сервером', () => {
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${SYNC_ENDPOINT}/rest/v1/rpc/crm_sync_pull`);
+    expect(JSON.parse(String(init.body))).toEqual({ p_token: 'ABCDEFGH2345JKLMNPQR' });
+  });
+
+  it('не скачивает документ, если версия та же', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ found: true, unchanged: true, revision: 7, updated_at: '2026-03-01T10:00:00.000Z', device: 'телефон' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await pullSpace('ABCDEFGH2345JKLMNPQR', 7);
+    expect(result.unchanged).toBe(true);
+    expect(result.envelope).toBeNull();
+    expect(result.revision).toBe(7);
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ p_token: 'ABCDEFGH2345JKLMNPQR', p_known_revision: 7 });
+  });
+
+  it('первый запрос версии не присылает — сервер отдаст документ целиком', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 200, json: async () => ({ found: true, unchanged: false, payload: buildEnvelope(makeData(), emptyRemoved(), 'пк'), revision: 1 }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await pullSpace('ABCDEFGH2345JKLMNPQR');
+    expect(result.unchanged).toBe(false);
+    expect(result.envelope).not.toBeNull();
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toEqual({ p_token: 'ABCDEFGH2345JKLMNPQR' });
   });
 

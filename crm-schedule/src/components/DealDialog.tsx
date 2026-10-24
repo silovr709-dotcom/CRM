@@ -19,12 +19,15 @@ import { buildDealTimeline, TIMELINE_META } from '../lib/crmTimeline';
 import { enabledTemplates, renderTemplate, templateContext } from '../lib/templates';
 import { absoluteLink } from '../lib/router';
 import { amountFromInput } from '../lib/utils';
+import { dealMoney } from '../lib/money';
 import { encodeShare } from '../lib/share';
 import { printDealCard } from '../lib/print';
 import Modal from './Modal';
 import ScheduleFields from './ScheduleFields';
 import Attachments from './Attachments';
 import TaskEditor, { TaskBell } from './TaskEditor';
+import DealExpenses from './DealExpenses';
+import DealPlan from './DealPlan';
 
 const TABS = [
   { id: 'overview', label: 'Обзор' },
@@ -71,6 +74,8 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
   const today = todayISO();
 
   if (!deal || !pay) return null;
+
+  const money = dealMoney(deal);
 
   const next = nextTask(deal);
   const openCount = deal.tasks.filter((task) => !task.done).length;
@@ -492,6 +497,12 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
             <div><span>Сумма заказа</span><b>{deal.amount ? fmtMoney(deal.amount) : '—'}</b></div>
             <div><span>Получено</span><b className="ok">{fmtMoney(pay.paid)}</b></div>
             <div><span>Остаток</span><b className={pay.remainder > 0 ? 'warn' : 'ok'}>{fmtMoney(pay.remainder)}</b></div>
+            <div>
+              <span>Маржа</span>
+              <b className={money.loss ? 'warn' : 'ok'}>
+                {money.incomplete ? '—' : `${fmtMoney(money.margin)} · ${money.marginPercent}%`}
+              </b>
+            </div>
           </div>
           <div className={deal.amount ? 'pay-bar large' : 'pay-bar large empty'}><span style={{ width: `${pay.percent}%` }} /></div>
           {!deal.amount && (
@@ -569,6 +580,9 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
               ))}
             </ul>
           )}
+
+          <DealExpenses deal={deal} />
+          <DealPlan deal={deal} />
         </div>
       )}
 
