@@ -5,7 +5,8 @@ import { emptyData } from './storage';
 import { daysAgoIso, makeDeal } from './testUtils';
 import {
   buildEnvelope, emptyRemoved, envelopeSignature, formatSyncCode, hashEnvelope, makeSyncCode,
-  mergeRemoved, mergeSyncData, normalizeSyncCode, parseEnvelope, pullSpace, pushSpace, SYNC_ENDPOINT,
+  fetchVersion, listVersions, mergeRemoved, mergeSyncData, normalizeSyncCode, parseEnvelope,
+  pullSpace, pushSpace, SYNC_ENDPOINT,
 } from './sync';
 
 function makeClient(patch: Partial<Client> = {}): Client {
@@ -240,5 +241,53 @@ describe('обмен с сервером', () => {
   it('превращает сетевую ошибку в понятный текст', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fail'); }));
     await expect(pullSpace('ABCDEFGH2345JKLMNPQR')).rejects.toThrow('Нет связи с сервером синхронизации');
+  });
+});
+
+describe('прошлые версии базы', () => {
+  function stubRpc(answers: Record<string, unknown>) {
+    return vi.fn(async (url: string | URL) => {
+      const name = String(url).split('/rpc/')[1] ?? '';
+      return { ok: true, status: 200, json: async () => answers[name] };
+    });
+  }
+
+  it('читает список версий и отбрасывает пустые строки', async () => {
+    vi.stubGlobal('fetch', stubRpc({
+      crm_sync_versions: {
+        ok: true,
+        versions: [
+          { revision: 7, device: 'телефона', saved_at: '2026-05-02T10:00:00.000Z', deals: 4, clients: 3, bytes: 2048 },
+          { revision: 0, deals: 1 },
+          { revision: 6, device: 'компьютера', saved_at: '2026-05-01T10:00:00.000Z', deals: 3, clients: 2, bytes: 1900 },
+        ],
+      },
+    }));
+
+    const list = await listVersions('ABCD-EFGH-2345-JKLM-NPQR');
+    expect(list).toHaveLength(2);
+    expect(list[0]).toMatchObject({ revision: 7, deals: 4, clients: 3, bytes: 2048, device: 'телефона' });
+    expect(list[1].revision).toBe(6);
+  });
+
+  it('возвращает пустой список, если сервер не ответил', async () => {
+    vi.stubGlobal('fetch', stubRpc({ crm_sync_versions: null }));
+    expect(await listVersions('ABCD-EFGH-2345-JKLM-NPQR')).toEqual([]);
+  });
+
+  it('достаёт нужную версию и разбирает её как документ', async () => {
+    const data = makeData({ clients: [makeClient()], deals: [makeDeal({ id: 'deal-1' })] });
+    const envelope = buildEnvelope(data, emptyRemoved(), 'компьютера');
+    vi.stubGlobal('fetch', stubRpc({ crm_sync_version: { ok: true, payload: envelope, revision: 5 } }));
+
+    const version = await fetchVersion('ABCD-EFGH-2345-JKLM-NPQR', 5);
+    expect(version?.data.deals[0].id).toBe('deal-1');
+    expect(version?.data.clients[0].name).toBe('Анна Смирнова');
+    expect(version?.removed).toEqual(emptyRemoved());
+  });
+
+  it('понимает «такой версии нет»', async () => {
+    vi.stubGlobal('fetch', stubRpc({ crm_sync_version: { ok: false, error: 'not_found' } }));
+    expect(await fetchVersion('ABCD-EFGH-2345-JKLM-NPQR', 99)).toBeNull();
   });
 });

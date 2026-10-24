@@ -419,3 +419,49 @@ export async function pushSpace(code: string, envelope: SyncEnvelope, revision: 
       : 'Сервер синхронизации отклонил запись';
   return { ok: false, conflict: false, error };
 }
+
+/* ------------------------------- версии ------------------------------- */
+
+/** Одна сохранённая версия базы на сервере — для «вернуть, как было». */
+export interface SpaceVersion {
+  revision: number;
+  device: string;
+  savedAt: string;
+  deals: number;
+  clients: number;
+  bytes: number;
+}
+
+/** Список последних версий базы (сервер помнит 12). */
+export async function listVersions(code: string): Promise<SpaceVersion[]> {
+  const raw = (await callRpc('crm_sync_versions', { p_token: normalizeSyncCode(code) })) as
+    | { ok?: boolean; versions?: unknown[] }
+    | null;
+  if (!raw || raw.ok === false || !Array.isArray(raw.versions)) return [];
+  return raw.versions
+    .map((item) => {
+      const row = (item ?? {}) as Record<string, unknown>;
+      return {
+        revision: Number(row.revision) || 0,
+        device: typeof row.device === 'string' ? row.device : '',
+        savedAt: typeof row.saved_at === 'string' ? row.saved_at : '',
+        deals: Number(row.deals) || 0,
+        clients: Number(row.clients) || 0,
+        bytes: Number(row.bytes) || 0,
+      };
+    })
+    .filter((version) => version.revision > 0);
+}
+
+/** Содержимое конкретной версии. null — сервер её уже не помнит. */
+export async function fetchVersion(
+  code: string,
+  revision: number,
+): Promise<{ data: AppData; removed: Removed } | null> {
+  const raw = (await callRpc('crm_sync_version', {
+    p_token: normalizeSyncCode(code),
+    p_revision: revision,
+  })) as { ok?: boolean; payload?: unknown } | null;
+  if (!raw || raw.ok !== true) return null;
+  return parseEnvelope(raw.payload);
+}

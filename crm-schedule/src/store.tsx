@@ -16,8 +16,8 @@ import {
 import {
   buildEnvelope, clearSyncConfig, deviceName, emptyRemoved, envelopeSignature, isFreshData,
   loadSyncConfig, makeDeviceId, mergeRemoved, mergeSyncData, MIN_CODE_LENGTH, normalizeSyncCode,
-  hashEnvelope, pullSpace, pushSpace, saveSyncConfig, syncUiFromConfig,
-  type Removed, type SyncConfig, type SyncUiState,
+  fetchVersion, hashEnvelope, listVersions, pullSpace, pushSpace, saveSyncConfig, syncUiFromConfig,
+  type Removed, type SpaceVersion, type SyncConfig, type SyncUiState,
 } from './lib/sync';
 
 export interface ToastAction {
@@ -84,6 +84,10 @@ interface AppContextValue {
   disableSync: () => void;
   /** Проверить общую базу прямо сейчас. */
   syncNow: () => Promise<void>;
+  /** Последние версии базы на сервере — чтобы вернуть «как было». */
+  loadVersions: () => Promise<SpaceVersion[]>;
+  /** Откатить общую базу к одной из прошлых версий. */
+  restoreVersion: (revision: number) => Promise<boolean>;
 }
 
 interface SyncRoundOptions {
@@ -385,11 +389,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(pushTimer.current);
   }, [data]);
 
-  useEffect(() => {
-    const ok = saveData(data);
+  /**
+   * Сохранение в localStorage. Раньше писали на каждое изменение — на 500+
+   * сделках это заметно. Теперь ждём 400 мс после последней правки, но
+   * страхуемся: перед закрытием и сворачиванием вкладки пишем сразу.
+   */
+  const saveTimer = useRef(0);
+  const pendingData = useRef<AppData | null>(null);
+
+  const flushSave = useCallback(() => {
+    const pending = pendingData.current;
+    if (!pending) return;
+    pendingData.current = null;
+    window.clearTimeout(saveTimer.current);
+    const ok = saveData(pending);
     setStorageOk(ok);
     if (ok) setSavedAt(nowIso());
-  }, [data]);
+  }, []);
+
+  useEffect(() => {
+    pendingData.current = data;
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(flushSave, 400);
+    return () => window.clearTimeout(saveTimer.current);
+  }, [data, flushSave]);
+
+  // Не теряем последние правки: уход со страницы и скрытие вкладки.
+  useEffect(() => {
+    const flush = () => flushSave();
+    const onHidden = () => { if (document.visibilityState === 'hidden') flushSave(); };
+    window.addEventListener('beforeunload', flush);
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onHidden);
+    };
+  }, [flushSave]);
+
+  // Первая отрисовка: сразу подтверждаем, что данные уже сохранены.
+  useEffect(() => {
+    if (!savedAt) setSavedAt(nowIso());
+  }, []);
 
   // Тема: light / dark / как в системе.
   useEffect(() => {
@@ -488,6 +530,78 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const snapshot = dataRef.current;
     setUndoStack((stack) => [...stack, { label, data: snapshot }].slice(-MAX_UNDO));
   }, []);
+
+  const loadVersions = useCallback(async (): Promise<SpaceVersion[]> => {
+    const config = syncRef.current;
+    if (!config) return [];
+    try {
+      return await listVersions(config.code);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Не удалось получить версии', 'error');
+      return [];
+    }
+  }, [notify]);
+
+  /**
+   * Откат к прошлой версии. Здесь намеренно не сливаем данные: пользователь
+   * просит вернуть состояние — значит, всё, что было после, уходит. Поэтому
+   * читаем версию, ставим её локально и сразу пишем поверх сервера новой
+   * ревизией, чтобы откат доехал до остальных устройств.
+   */
+  const restoreVersion = useCallback(async (revision: number): Promise<boolean> => {
+    const config = syncRef.current;
+    if (!config) return false;
+    try {
+      const snapshot = await fetchVersion(config.code, revision);
+      if (!snapshot) {
+        notify('Этой версии уже нет на сервере — выберите другую', 'error');
+        return false;
+      }
+      writeAutoBackup(dataRef.current, `откат к версии ${revision}`);
+      pushUndo(`откат к версии ${revision}`);
+
+      const next: AppData = {
+        ...snapshot.data,
+        version: 2,
+        // Настройки этого устройства (тема, компания) не откатываем.
+        settings: { ...dataRef.current.settings, demo: false },
+        updatedAt: nowIso(),
+      };
+      config.removed = snapshot.removed;
+      config.serverHash = '';
+      saveSyncConfig(config);
+      serverSig.current = '';
+      setDataState(next);
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const remote = await pullSpace(config.code);
+        if (!remote.found) break;
+        const envelope = buildEnvelope(next, snapshot.removed, config.deviceName);
+        const pushed = await pushSpace(config.code, envelope, remote.revision);
+        if (pushed.ok) {
+          config.revision = pushed.revision;
+          config.lastSyncAt = nowIso();
+          config.serverAt = config.lastSyncAt;
+          config.serverDevice = config.deviceName;
+          config.serverHash = hashEnvelope(envelope);
+          saveSyncConfig(config);
+          serverSig.current = envelopeSignature(envelope);
+          setSync({ ...syncUiFromConfig(config), status: 'ok', error: '' });
+          notify(`Вернули базу на версию ${revision}`, 'ok');
+          return true;
+        }
+        if (!pushed.conflict) {
+          notify(`Откат сохранился здесь, но не на сервере: ${pushed.error}`, 'error');
+          return true;
+        }
+      }
+      notify('База возвращена на этом устройстве, но сервер занят другой правкой. Попробуйте «Синхронизировать сейчас»', 'info');
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Не удалось вернуть версию', 'error');
+      return false;
+    }
+  }, [notify, pushUndo]);
 
   const undo = useCallback(() => {
     setUndoStack((stack) => {
@@ -858,12 +972,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     enableSync,
     disableSync,
     syncNow,
+    loadVersions,
+    restoreVersion,
   }), [
     data, clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
     removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
     removeAttachment, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,
-    sync, enableSync, disableSync, syncNow,
+    sync, enableSync, disableSync, syncNow, loadVersions, restoreVersion,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

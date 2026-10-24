@@ -32,4 +32,20 @@ jobs:
             --data '{"p_token":"CHECKONLYTOKEN000000000000","p_known_revision":5}' | tee /tmp/pull2.json
           grep -q '"found": *false' /tmp/pull2.json
           echo
-          echo "ОК: сервер отвечает, оба варианта вызова принимаются."
+          echo
+          echo "Проверяем список прошлых версий (по неизвестному коду — пусто):"
+          curl -sS -f -X POST "https://iswkzclegjcbhxaatmbb.supabase.co/rest/v1/rpc/crm_sync_versions" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"p_token":"CHECKONLYTOKEN000000000000"}' | tee /tmp/versions.json
+          grep -q '"ok": *true' /tmp/versions.json
+          grep -q '"versions": *\[\]' /tmp/versions.json
+          echo
+          echo "Проверяем, что чужую версию по номеру не отдают:"
+          curl -sS -f -X POST "https://iswkzclegjcbhxaatmbb.supabase.co/rest/v1/rpc/crm_sync_version" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"p_token":"CHECKONLYTOKEN000000000000","p_revision":1}' | tee /tmp/version.json
+          grep -q '"error": *"not_found"' /tmp/version.json
+          echo
+          echo "ОК: сервер отвечает, все варианты вызова принимаются."
