@@ -25,4 +25,11 @@ jobs:
             --data '{"p_token":"CHECKONLYTOKEN000000000000"}' | tee /tmp/pull.json
           grep -q '"found": *false' /tmp/pull.json
           echo
-          echo "ОК: сервер отвечает, код принимается."
+          echo "Проверяем экономный ответ (версия уже известна):"
+          curl -sS -f -X POST "$URL" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"p_token":"CHECKONLYTOKEN000000000000","p_known_revision":5}' | tee /tmp/pull2.json
+          grep -q '"found": *false' /tmp/pull2.json
+          echo
+          echo "ОК: сервер отвечает, оба варианта вызова принимаются."

@@ -1,6 +1,7 @@
 // Печать: лист дня для бригады и карточка заказа.
 // Печатаем через скрытый iframe — без всплывающих окон и блокировщиков.
 import type { Client, Deal } from '../types';
+import type { Period, Slice, Totals, FunnelStage } from './reports';
 import { fmtDate, fmtMoney, fmtTimeRange, fmtWeekday, todayISO } from './dates';
 import { paidAmount, paymentKindLabel, taskKindMeta } from './crmTasks';
 import { statusMeta } from './crm';
@@ -24,6 +25,12 @@ const PRINT_CSS = `
   .footer { margin-top: 26px; display: flex; gap: 40px; color: #666; font-size: 12px; }
   .line { border-bottom: 1px solid #999; display: inline-block; min-width: 180px; }
   .total { font-size: 16px; font-weight: 700; }
+  table.grid th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #666; border-bottom: 1px solid #999; padding: 4px 0; }
+  table.grid td { padding: 4px 0; }
+  table.summary { border-collapse: separate; border-spacing: 8px; }
+  table.summary td { border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; width: 25%; }
+  table.summary span { display: block; font-size: 11px; }
+  table.summary b { font-size: 15px; }
   @page { margin: 14mm; }
 `;
 
@@ -169,4 +176,70 @@ export function printDealCard(
     </div>
     <div class="muted" style="margin-top:14px">Сегодня ${escapeHtml(fmtDate(todayISO(), { withYear: true }))}</div>
   `);
+}
+
+/** Отчёт за период: цифры, воронка, менеджеры, источники, причины отказа. */
+export function printReport(input: {
+  period: Period;
+  totals: Totals;
+  funnel: FunnelStage[];
+  managers: Slice[];
+  sources: Slice[];
+  losses: Slice[];
+  company?: string;
+}): void {
+  const money = (value: number) => fmtMoney(value);
+  const percent = (value: number) => `${value.toLocaleString('ru-RU')} %`;
+  const table = (title: string, head: string[], rows: string[][]) => {
+    if (rows.length === 0) return `<h2>${escapeHtml(title)}</h2><p class="muted">Нет данных за период.</p>`;
+    return `
+      <h2>${escapeHtml(title)}</h2>
+      <table class="grid">
+        <thead><tr>${head.map((cell) => `<th>${escapeHtml(cell)}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map((cells) => `<tr>${cells.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>`;
+  };
+
+  const body = `
+    <div class="head">
+      <div>
+        <h1>${escapeHtml(input.company || 'Отчёт')}</h1>
+        <div class="muted">${escapeHtml(input.period.label)} · ${escapeHtml(input.period.from)} — ${escapeHtml(input.period.to)}</div>
+      </div>
+      <div class="muted">Напечатано ${escapeHtml(new Date().toLocaleString('ru-RU'))}</div>
+    </div>
+
+    <h2>Главное</h2>
+    <table class="summary">
+      <tr>
+        <td><span class="muted">Новых сделок</span><b>${input.totals.bookedCount}</b></td>
+        <td><span class="muted">Сумма новых</span><b>${money(input.totals.booked)}</b></td>
+        <td><span class="muted">Получено</span><b>${money(input.totals.received)}</b></td>
+        <td><span class="muted">Затраты</span><b>${money(input.totals.spent)}</b></td>
+      </tr>
+      <tr>
+        <td><span class="muted">Деньги на руках</span><b>${money(input.totals.cash)}</b></td>
+        <td><span class="muted">Маржа</span><b>${money(input.totals.margin)}</b></td>
+        <td><span class="muted">Маржа, %</span><b>${percent(input.totals.marginPercent)}</b></td>
+        <td><span class="muted">Средний чек</span><b>${money(input.totals.averageDeal)}</b></td>
+      </tr>
+      <tr>
+        <td><span class="muted">В работе</span><b>${input.totals.activeDeals}</b></td>
+        <td><span class="muted">Портфель</span><b>${money(input.totals.pipeline)}</b></td>
+        <td><span class="muted">Ждём оплату</span><b>${money(input.totals.receivable)}</b></td>
+        <td><span class="muted">Отказов</span><b>${input.totals.closedLost}</b></td>
+      </tr>
+    </table>
+
+    ${table('Воронка', ['Этап', 'Сделок', 'Сумма'], input.funnel.map((stage) => [stage.label, String(stage.count), money(stage.amount)]))}
+    ${table('Менеджеры', ['Менеджер', 'Сделок', 'Сумма', 'Оплачено'], input.managers.map((slice) => [slice.label, String(slice.deals), money(slice.amount), money(slice.paid)]))}
+    ${table('Источники', ['Источник', 'Сделок', 'Сумма'], input.sources.map((slice) => [slice.label, String(slice.deals), money(slice.amount)]))}
+    ${table('Причины отказа', ['Причина', 'Сделок', 'Потеряно'], input.losses.map((slice) => [slice.label, String(slice.deals), money(slice.amount)]))}
+
+    <div class="footer">
+      <span>Подпись: <span class="line"></span></span>
+      <span>Дата: <span class="line"></span></span>
+    </div>
+  `;
+  printHtml(`Отчёт ${input.period.label}`, body);
 }

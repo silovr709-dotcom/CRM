@@ -523,7 +523,7 @@ label { font-size: 12.5px; color: var(--ink-2); }
 .tone-marker.tone-today { background: var(--amber) !important; }
 .tone-marker.tone-soon { background: var(--blue) !important; }
 
-.money-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.money-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
 .money-summary > div { background: var(--surface-2); border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px; display: flex; flex-direction: column; }
 .money-summary span { font-size: 11px; color: var(--muted); }
 .money-summary b { font-size: 17px; letter-spacing: -0.3px; }
@@ -533,6 +533,32 @@ label { font-size: 12.5px; color: var(--ink-2); }
 .pay-kind { width: 120px; flex: none; font-size: 12px; color: var(--muted); }
 .payment-list b { width: 110px; flex: none; }
 .payment-list .muted { flex: 1; }
+
+/* затраты и маржа */
+.deal-expenses, .deal-plan { margin-top: 20px; padding-top: 14px; border-top: 1px dashed var(--line); }
+.deal-expenses h3, .deal-plan h3 { font-size: 14px; }
+.margin-chip {
+  display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 3px 10px;
+  font-size: 11.5px; font-weight: 600; background: var(--green-soft); color: var(--green); border: 1px solid #a7f3d0;
+}
+.margin-chip.warn { background: #fffbeb; color: #b45309; border-color: #fed7aa; }
+.margin-chip.danger { background: var(--red-soft); color: var(--red); border-color: #fecaca; }
+
+.expense-slices { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0 4px; font-size: 11.5px; color: var(--ink-2); }
+.expense-slices span { display: inline-flex; align-items: center; gap: 6px; }
+.expense-slices i { display: inline-block; height: 8px; border-radius: 999px; background: var(--accent); min-width: 4px; }
+.expense-slices b { font-weight: 600; }
+
+.expense-list, .plan-list { display: flex; flex-direction: column; margin: 6px 0 10px; padding: 0; list-style: none; }
+.expense-list li, .plan-list li { display: flex; align-items: center; gap: 12px; padding: 8px 4px; border-top: 1px solid var(--line); }
+.expense-list li:first-child, .plan-list li:first-child { border-top: 0; }
+.expense-list b, .plan-list b { width: 100px; flex: none; }
+.expense-list .muted, .plan-list .muted { flex: 1; font-size: 12px; }
+.plan-list li.paid { opacity: 0.65; }
+.plan-list .danger { color: var(--red); font-size: 12px; flex: 1; }
+
+.expense-form, .plan-form { display: grid; grid-template-columns: 1fr 1fr 1fr 1.3fr auto auto; gap: 10px; align-items: end; }
+.plan-form { grid-template-columns: 1fr 1fr 1fr auto; }
 
 .timeline ul { display: flex; flex-direction: column; }
 .timeline-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 4px; border-top: 1px solid var(--line); }
@@ -778,7 +804,9 @@ label { font-size: 12.5px; color: var(--ink-2); }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .span-2 { grid-column: auto; }
   .info-grid { grid-template-columns: 1fr; }
-  .money-summary { grid-template-columns: 1fr; }
+  .money-summary { grid-template-columns: 1fr 1fr; }
+  .expense-form, .plan-form { grid-template-columns: 1fr 1fr; }
+  .expense-form .btn, .plan-form .btn { grid-column: span 2; }
   .calendar-cell { min-height: 74px; padding: 4px; }
   .event-pill span { display: none; }
   .event-pill { width: fit-content; }
@@ -915,6 +943,113 @@ label { font-size: 12.5px; color: var(--ink-2); }
 .sync-hint { background: linear-gradient(90deg, #eff6ff, #f5f3ff); border-color: #bfdbfe; color: #1e40af; }
 .sync-hint .link-btn { color: #1d4ed8; }
 
+/* пункт-метрика, который ведёт в отчёт */
+.metric-link { cursor: pointer; }
+.metric-link:hover { border-color: var(--accent); color: var(--accent-ink); }
+.metric-link em { font-style: normal; font-size: 11px; opacity: 0.85; }
+
+/* ---------- аварийный экран ---------- */
+
+.crash-screen {
+  min-height: 100vh; display: grid; place-items: center; padding: 24px;
+  background: var(--surface-2);
+}
+.crash-card {
+  max-width: 560px; width: 100%; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 18px; padding: 26px; box-shadow: var(--shadow-lg); display: flex; flex-direction: column; gap: 12px;
+}
+.crash-mark {
+  width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+  background: var(--red-soft); color: var(--red); font-weight: 700; font-size: 20px;
+}
+.crash-card h1 { font-size: 20px; }
+.crash-card p { color: var(--ink-2); font-size: 13.5px; }
+.crash-card pre {
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; font-size: 12px; overflow-x: auto; white-space: pre-wrap; color: var(--red);
+}
+.crash-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- отчёты ---------- */
+
+.reports-view { display: flex; flex-direction: column; gap: 16px; }
+.report-period {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
+}
+.report-period b { font-size: 15px; min-width: 150px; }
+.report-periods { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+.report-periods button {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 9px;
+  padding: 5px 10px; font-size: 12px; color: var(--ink-2); cursor: pointer;
+}
+.report-periods button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.report-periods button:hover:not(.active) { background: var(--surface-2); }
+.report-custom { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.report-custom .field { flex: 0 1 180px; }
+
+.report-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 10px; }
+.report-tile {
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface);
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 3px;
+}
+.report-tile span { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+.report-tile b { font-size: 21px; letter-spacing: -0.4px; }
+.report-tile small { font-size: 11.5px; color: var(--muted); }
+.report-tile.warn { border-color: #fed7aa; background: #fffbeb; }
+.report-tile.danger { border-color: #fecaca; background: var(--red-soft); }
+.report-tile.danger b { color: var(--red); }
+.report-tile .danger { color: var(--red); }
+
+.report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+
+.money-chart { display: flex; align-items: flex-end; gap: 4px; height: 150px; padding: 8px 0 22px; position: relative; overflow-x: auto; }
+.money-bar { flex: 1 0 18px; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
+.money-bar-cols { display: flex; align-items: flex-end; gap: 2px; height: 100%; width: 100%; justify-content: center; }
+.money-bar i { display: block; width: 42%; max-width: 10px; border-radius: 3px 3px 0 0; min-height: 2px; }
+.money-bar i.in, .money-chart-legend i.in { background: var(--accent); }
+.money-bar i.out, .money-chart-legend i.out { background: #f97316; }
+.money-bar span { font-size: 9.5px; color: var(--muted); }
+.money-chart-legend { position: absolute; top: 0; right: 0; display: flex; gap: 10px; font-size: 10.5px; color: var(--muted); }
+.money-chart-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.money-chart-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
+.debt-list { list-style: none; display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; }
+.debt-list li { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.debt-list li .link-btn { text-align: left; font-weight: 600; }
+.debt-list li .muted { font-size: 11.5px; }
+.debt-list li b { font-size: 13px; text-align: right; }
+.debt-list li .badge { grid-column: 2; justify-self: end; font-size: 10.5px; }
+
+.funnel-list { list-style: none; display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; }
+.funnel-list li { display: grid; grid-template-columns: minmax(90px, 1.2fr) 2fr auto auto; gap: 10px; align-items: center; font-size: 12.5px; }
+.funnel-label { color: var(--ink-2); }
+.funnel-bar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.funnel-bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.funnel-list b { font-variant-numeric: tabular-nums; }
+
+.slice-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.slice-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); font-weight: 600; padding: 0 0 6px; border-bottom: 1px solid var(--line); }
+.slice-table td { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.slice-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.slice-table th:nth-child(n + 2) { text-align: right; }
+.slice-table tr:last-child td { border-bottom: 0; }
+
+@media (max-width: 720px) {
+  .report-period b { min-width: 0; }
+  .report-periods { margin-left: 0; width: 100%; }
+  .report-periods button { flex: 1; text-align: center; }
+  .report-kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .report-tile b { font-size: 18px; }
+  .funnel-list li { grid-template-columns: 1fr auto; }
+  .funnel-bar { grid-column: 1 / -1; }
+}
+
+[data-theme='dark'] .report-tile.warn { background: #241d10; border-color: #4a3a1c; }
+[data-theme='dark'] .report-tile.danger { background: #2a1618; border-color: #4a2326; }
+
 /* ---------- обзор ---------- */
 
 .hero-card {
@@ -942,7 +1077,7 @@ label { font-size: 12.5px; color: var(--ink-2); }
 .metric-strip {
   display: flex; flex-wrap: wrap; gap: 8px;
 }
-.metric-strip > span, .metric-strip .metric {
+.metric-strip > span, .metric-strip .metric, .metric-strip > button {
   display: inline-flex; align-items: center; gap: 7px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
   padding: 6px 12px; font-size: 12px; color: var(--muted);

@@ -215,6 +215,26 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
         comment: payment.comment,
       }))
       : [],
+    expenses: Array.isArray(raw.expenses)
+      ? raw.expenses.map((entry) => ({
+        id: entry.id ?? uid('exp'),
+        kind: entry.kind ?? 'other',
+        amount: Math.round(Number(entry.amount) || 0),
+        at: (entry.at ?? isoDay(new Date())).slice(0, 10),
+        comment: entry.comment,
+        addedBy: entry.addedBy,
+      }))
+      : [],
+    plan: Array.isArray(raw.plan)
+      ? raw.plan.map((entry) => ({
+        id: entry.id ?? uid('plan'),
+        amount: Math.round(Number(entry.amount) || 0),
+        at: (entry.at ?? isoDay(new Date())).slice(0, 10),
+        kind: entry.kind ?? 'final',
+        comment: entry.comment,
+        paidId: entry.paidId,
+      }))
+      : [],
     history: Array.isArray(raw.history) ? raw.history : [],
     attachments: normalizeAttachments(raw.attachments),
     schedule: {

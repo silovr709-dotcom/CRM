@@ -1,7 +1,9 @@
 // Демо-база для первого запуска: показывает, как выглядит рабочий день.
 // Все даты считаются от сегодняшнего дня, чтобы календарь сразу был живым.
 
-import type { AppData, Client, Deal, DealSchedule, DealTask, Payment } from '../types';
+import type {
+  AppData, Client, Deal, DealSchedule, DealTask, Expense, Payment, PlannedPayment,
+} from '../types';
 import { addDays, todayISO } from './dates';
 import { nowIso } from './utils';
 import { defaultSettings } from './settings';
@@ -51,6 +53,21 @@ function task(id: string, title: string, kind: DealTask['kind'], dueIn: number |
 
 function payment(id: string, amount: number, daysAgo: number, kind: Payment['kind'], comment?: string): Payment {
   return { id, amount, at: day(-daysAgo), kind, comment };
+}
+
+function expense(id: string, kind: Expense['kind'], amount: number, daysAgo: number, comment?: string): Expense {
+  return { id, kind, amount, at: day(-daysAgo), comment };
+}
+
+/** План оплат: `paidDaysAgo` — уже получено, иначе ждём к дате. */
+function plan(id: string, amount: number, inDays: number, kind: PlannedPayment['kind'], paidDaysAgo?: number): PlannedPayment {
+  return {
+    id,
+    amount,
+    at: day(inDays),
+    kind,
+    paidId: paidDaysAgo === undefined ? undefined : `p_${id}`,
+  };
 }
 
 function schedule(patch: Partial<DealSchedule>): DealSchedule {
@@ -124,6 +141,16 @@ export function demoData(): AppData {
         payment('p_len_1', 100000, 24, 'prepay', 'Предоплата 35%'),
         payment('p_len_2', 90000, 9, 'final', 'Платёж после согласования'),
       ],
+      expenses: [
+        expense('e_len_1', 'materials', 86000, 22, 'Фасады, столешница, фурнитура'),
+        expense('e_len_2', 'factory', 64000, 18, 'Производство корпусов'),
+        expense('e_len_3', 'delivery', 6500, 8, 'Доставка и подъём'),
+      ],
+      plan: [
+        plan('pl_len_1', 100000, -24, 'prepay', 24),
+        plan('pl_len_2', 90000, 9, 'final', 9),
+        plan('pl_len_3', 95000, 16, 'final'),
+      ],
       history: [
         { id: 'h_len_1', createdAt: iso(-3), kind: 'status', title: 'Этап: В производстве', text: 'Пакет отправлен на фабрику' },
         { id: 'h_len_2', createdAt: iso(-24), kind: 'payment', title: 'Получена предоплата', text: '100 000 ₽' },
@@ -189,6 +216,11 @@ export function demoData(): AppData {
       nextContactAt: day(0),
       tasks: [task('t_ward_1', 'Отправить варианты цвета профиля', 'docs', 0, false, 'Олег')],
       payments: [payment('p_ward_1', 20000, 6, 'prepay', 'Задаток за замер')],
+      expenses: [expense('e_ward_1', 'materials', 38000, 5, 'ЛДСП, профиль, доводчики')],
+      plan: [
+        plan('pl_ward_1', 20000, -6, 'prepay', 6),
+        plan('pl_ward_2', 76000, 18, 'final'),
+      ],
       history: [{ id: 'h_ward_1', createdAt: iso(-6), kind: 'payment', title: 'Получен задаток', text: '20 000 ₽' }],
       schedule: schedule({
         measureAt: day(-7),
@@ -222,6 +254,11 @@ export function demoData(): AppData {
         task('t_oz_2', 'Передать проект технологу', 'docs', 1, false, 'Олег'),
       ],
       payments: [],
+      expenses: [expense('e_oz_1', 'materials', 210000, 1, 'Закупка под проект')],
+      plan: [
+        plan('pl_oz_1', 265000, 2, 'prepay'),
+        plan('pl_oz_2', 265000, 14, 'final'),
+      ],
       history: [{ id: 'h_oz_1', createdAt: iso(-2), kind: 'status', title: 'Этап: Согласовано', text: 'Клиент согласовал КП' }],
       schedule: schedule({
         measureAt: day(-18),
@@ -251,6 +288,14 @@ export function demoData(): AppData {
       nextContactAt: day(3),
       tasks: [task('t_pr_1', 'Получить подтверждение фабрики', 'call', 3, false, 'Олег')],
       payments: [payment('p_pr_1', 150000, 15, 'prepay', 'Предоплата 47%')],
+      expenses: [
+        expense('e_pr_1', 'materials', 98000, 12, 'Плёнка, фрезеровка'),
+        expense('e_pr_2', 'factory', 72000, 10, 'Производство'),
+      ],
+      plan: [
+        plan('pl_pr_1', 150000, -15, 'prepay', 15),
+        plan('pl_pr_2', 168000, 12, 'final'),
+      ],
       history: [{ id: 'h_pr_1', createdAt: iso(-5), kind: 'status', title: 'Этап: Передано на фабрику' }],
       schedule: schedule({
         measureAt: day(-20),
@@ -281,6 +326,8 @@ export function demoData(): AppData {
       comment: 'Адрес объекта не внесён — уточнить у дизайнера.',
       tasks: [task('t_fa_1', 'Уточнить адрес монтажа', 'call', 0, false, 'Олег')],
       payments: [payment('p_fa_1', 74000, 10, 'prepay', '50% предоплата')],
+      expenses: [expense('e_fa_1', 'install', 42000, 8, 'Работа бригады')],
+      plan: [plan('pl_fa_1', 74000, 2, 'final')],
       history: [{ id: 'h_fa_1', createdAt: iso(-3), kind: 'status', title: 'Этап: Готово' }],
       schedule: schedule({
         readyAt: day(3),
@@ -311,6 +358,11 @@ export function demoData(): AppData {
       payments: [
         payment('p_ga_1', 100000, 48, 'prepay', 'Предоплата'),
         payment('p_ga_2', 105000, 16, 'final', 'Оплата при выдаче'),
+      ],
+      expenses: [
+        expense('e_ga_1', 'materials', 64000, 40, 'Материалы'),
+        expense('e_ga_2', 'install', 28000, 16, 'Монтаж'),
+        expense('e_ga_3', 'delivery', 4000, 17, 'Доставка'),
       ],
       history: [{ id: 'h_ga_1', createdAt: iso(-15), kind: 'status', title: 'Этап: Выдано' }],
       schedule: schedule({
