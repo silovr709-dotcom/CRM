@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, normalizeRules, planAutomation, runAutomations } from './crmAutomation';
-import { daysAgoIso, makeDeal } from './testUtils';
+import { makeDeal } from './testUtils';
 
+// Даты считаем от того же «сейчас», с которым сравнивает правила, иначе тест
+// начинает зависеть от календаря: 3 дня назад от сегодня — ещё не 3 дня назад от 22 октября.
 const now = new Date('2026-10-22T12:00:00.000Z');
+const daysAgoIso = (days: number) => new Date(now.getTime() - days * 86400000).toISOString();
 
 describe('автоматические правила', () => {
   it('ставит звонок после отправки КП, когда прошло 2 дня', () => {

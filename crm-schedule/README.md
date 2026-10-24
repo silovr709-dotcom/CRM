@@ -339,4 +339,5 @@ crm-schedule/
     icons/                  — иконки 192/512/maskable/apple-touch
   scripts/make-icons.py     — сборка иконок без зависимостей
   docs/UX-AUDIT.md          — аудит и план, статусы по пунктам
+  docs/ANALYSIS.md          — чего не хватает и план усиления по волнам
 ```
