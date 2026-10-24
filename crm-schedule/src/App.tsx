@@ -50,10 +50,12 @@ const SYNC_HINT_KEY = 'crm-schedule.sync.hint.v1';
 export default function App() {
   const {
     data, deals, clients, settings, clientName, importSharedDeal, updateSettings,
-    replaceData, updateSchedule, notify, undo, sync,
+    replaceData, updateSchedule, notify, undo, sync, role,
   } = useApp();
   const route = useRoute();
   const view = route.view;
+  // Роль «Монтажник» не видит денег — значит, и отчёт ей не нужен.
+  const visibleNav = NAV.filter((item) => item.id !== 'reports' || role.canSeeMoney);
   const today = todayISO();
 
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -269,7 +271,7 @@ export default function App() {
         </button>
 
         <nav className="side-nav" aria-label="Разделы">
-          {NAV.map((item) => {
+          {visibleNav.map((item) => {
             const Icon = item.icon;
             return (
               <button
@@ -451,13 +453,23 @@ export default function App() {
 
         {view === 'tasks' && <TasksView onOpenDeal={openDeal} />}
 
-        {view === 'reports' && <ReportsView onOpenDeal={openDeal} />}
+        {view === 'reports' && (
+          role.canSeeMoney ? <ReportsView onOpenDeal={openDeal} /> : (
+            <section className="card empty-card">
+              <h2>Отчёты скрыты ролью</h2>
+              <p className="muted">
+                На этом устройстве выбрана роль «{role.label}»: суммы, маржа и отчёты не показываются.
+                Сменить роль можно в «Данных» — это делает руководитель.
+              </p>
+            </section>
+          )
+        )}
 
         {view === 'data' && <DataView />}
       </main>
 
       <nav className="mobile-nav" aria-label="Мобильная навигация">
-        {NAV.map((item) => {
+        {visibleNav.map((item) => {
           const Icon = item.icon;
           return (
             <button key={item.id} type="button" className={view === item.id ? 'active' : ''} onClick={() => go(item.id)}>

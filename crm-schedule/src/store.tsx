@@ -10,6 +10,7 @@ import type {
 import { demoData } from './lib/demoData';
 import { emptyData, loadData, saveData, writeAutoBackup } from './lib/storage';
 import { docKindMeta } from './lib/documentKinds';
+import { authorName, roleMeta, type RoleMeta } from './lib/roles';
 import { nextSequence, documentNumber } from './lib/documents';
 import { nowIso, uid } from './lib/utils';
 import { defaultNextAction, statusMeta } from './lib/crm';
@@ -71,6 +72,8 @@ interface AppContextValue {
   saveDealItems: (dealId: string, items: DealItem[]) => void;
   /** Выдать документ: номер запоминается и больше не меняется. */
   issueDocument: (dealId: string, kind: IssuedDocument['kind']) => IssuedDocument | null;
+  /** Отметить, что клиенту написали: событие попадёт в историю сделки. */
+  markClientReminder: (dealId: string, reminderId: string, channel?: string) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   replaceData: (next: AppData, options?: { backupReason?: string; undoLabel?: string }) => void;
   resetDemo: () => void;
@@ -83,6 +86,8 @@ interface AppContextValue {
   storageOk: boolean;
   /** Когда данные последний раз сохранены. */
   savedAt: string;
+  /** Роль на этом устройстве: что показывать и что разрешено. */
+  role: RoleMeta;
   /** Общая база: включена ли синхронизация и как она себя чувствует. */
   sync: SyncUiState;
   /** Включить общую базу. `create` — создать новую по новому коду. */
@@ -142,6 +147,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   dataRef.current = data;
 
   /* ------------------------- общая база устройств ------------------------- */
+
+  /** Имя для подписей в истории: «кто это сделал». */
+  const me = useCallback(() => authorName(dataRef.current.settings), []);
+  const role = roleMeta(data.settings.role);
 
   const syncRef = useRef<SyncConfig | null>(loadSyncConfig());
   const [sync, setSync] = useState<SyncUiState>(() => syncUiFromConfig(syncRef.current));
@@ -644,7 +653,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ...deal,
           ...patch,
           history: history
-            ? [...(deal.history ?? []), { ...history, id: uid('h'), createdAt: nowIso() }]
+            ? [...(deal.history ?? []), { ...history, id: uid('h'), createdAt: nowIso(), author: me() }]
             : deal.history,
           updatedAt: nowIso(),
         };
@@ -689,6 +698,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             kind: 'document' as const,
             title: `${docKindMeta(kind).title} ${meta.number}`,
             text: 'Документ сформирован в приложении',
+            author: me(),
           }],
           updatedAt: nowIso(),
         }
@@ -697,6 +707,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }));
     return meta;
   }, []);
+
+  const markClientReminder = useCallback((dealId: string, reminderId: string, channel = '') => {
+    setData((current) => ({
+      ...current,
+      deals: current.deals.map((deal) => (deal.id === dealId
+        ? {
+          ...deal,
+          history: [...(deal.history ?? []), {
+            id: uid('h'),
+            createdAt: nowIso(),
+            kind: 'contact' as const,
+            title: `Клиенту: ${reminderId}`,
+            text: channel ? `Напоминание отправлено: ${channel}` : 'Напоминание отправлено',
+            author: me(),
+          }],
+          updatedAt: nowIso(),
+        }
+        : deal)),
+      updatedAt: nowIso(),
+    }));
+  }, [me]);
 
   const changeStatus = useCallback((id: string, status: DealStatus) => {
     setData((current) => ({
@@ -714,6 +745,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             kind: 'status',
             title: 'Смена этапа',
             text: `${statusMeta(deal.status).label} → ${statusMeta(status).label}`,
+            author: me(),
           }],
           updatedAt: nowIso(),
         };
@@ -745,7 +777,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       nextAction: defaultNextAction(status),
       tasks: [],
       payments: [],
-      history: [{ id: uid('h'), createdAt: nowIso(), kind: 'project', title: 'Сделка создана' }],
+      history: [{ id: uid('h'), createdAt: nowIso(), kind: 'project', title: 'Сделка создана', author: me() }],
       schedule: { status: 'planned' },
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -1011,6 +1043,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     removeAttachment,
     saveDealItems,
     issueDocument,
+    markClientReminder,
     updateSettings,
     replaceData,
     resetDemo,
@@ -1022,6 +1055,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dismissToast,
     storageOk,
     savedAt,
+    role,
     sync,
     enableSync,
     disableSync,
@@ -1031,8 +1065,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }), [
     data, clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
     removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
-    removeAttachment, saveDealItems, issueDocument, updateSettings, replaceData,
+    removeAttachment, saveDealItems, issueDocument, markClientReminder, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,
+    role, me,
     sync, enableSync, disableSync, syncNow, loadVersions, restoreVersion,
   ]);
 

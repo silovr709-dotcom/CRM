@@ -121,6 +121,8 @@ export interface Payment {
   at: string;
   kind: PaymentKind;
   comment?: string;
+  /** Кто внёс платёж. */
+  author?: string;
 }
 
 export interface HistoryEntry {
@@ -129,6 +131,8 @@ export interface HistoryEntry {
   kind: HistoryKind;
   title: string;
   text?: string;
+  /** Кто сделал: имя из настроек на момент действия. */
+  author?: string;
 }
 
 /** Плановые даты заказа: замер, готовность на фабрике, доставка и монтаж. */
@@ -216,6 +220,9 @@ export interface Deal {
 /* ----------------------------- настройки ------------------------------ */
 
 export type ThemeMode = 'light' | 'dark' | 'system';
+
+/** Роль на устройстве: руководитель, менеджер или монтажник. */
+export type RoleId = 'owner' | 'manager' | 'installer';
 
 export interface MessageTemplate {
   id: string;
@@ -315,6 +322,8 @@ export interface Settings {
   companyName: string;
   /** Имя текущего пользователя: «мои сделки» и подписи. */
   myName: string;
+  /** Роль на этом устройстве: что показывать и что разрешено менять. */
+  role?: RoleId;
   managers: string[];
   teams: string[];
   hints: boolean;

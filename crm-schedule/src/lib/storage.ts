@@ -111,6 +111,7 @@ export function normalizeSettings(raw: Partial<Settings> | undefined): Settings 
   return {
     companyName: typeof raw.companyName === 'string' && raw.companyName ? raw.companyName : base.companyName,
     myName: typeof raw.myName === 'string' ? raw.myName : '',
+    role: raw.role === 'manager' || raw.role === 'installer' ? raw.role : 'owner',
     managers: Array.isArray(raw.managers) ? raw.managers.filter((item): item is string => typeof item === 'string') : [],
     teams: Array.isArray(raw.teams) ? raw.teams.filter((item): item is string => typeof item === 'string') : [],
     hints: raw.hints !== false,
@@ -236,6 +237,7 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
         at: (payment.at ?? isoDay(new Date())).slice(0, 10),
         kind: payment.kind ?? 'prepay',
         comment: payment.comment,
+        author: payment.author,
       }))
       : [],
     expenses: Array.isArray(raw.expenses)

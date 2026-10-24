@@ -57,6 +57,7 @@ export function buildDealTimeline(deal: Deal): TimelineEvent[] {
       kind: 'payment',
       title: `${paymentKindLabel(payment.kind)}: ${fmtMoney(payment.amount)}`,
       detail: payment.comment,
+      author: payment.author,
     });
   }
 
@@ -67,6 +68,7 @@ export function buildDealTimeline(deal: Deal): TimelineEvent[] {
       kind: entry.kind,
       title: entry.title,
       detail: entry.text,
+      author: entry.author,
     });
   }
 

@@ -1,9 +1,12 @@
 // Обзор: главное — «Сегодня». Дальше график, задачи, проверки и деньги.
 import { useMemo } from 'react';
 import {
-  ArrowRight, CalendarDays, CheckSquare, Clock, HandCoins, Phone, TrendingUp, TriangleAlert, Wallet,
+  ArrowRight, CalendarDays, CheckSquare, Clock, HandCoins, MessageCircle, Phone, TrendingUp,
+  TriangleAlert, Wallet,
 } from 'lucide-react';
 import { useApp } from '../store';
+import { clientReminders } from '../lib/clientReminders';
+import { whatsappLink } from '../lib/messaging';
 import { fmtDate, fmtMoney, fmtMoneyCompact, fmtTimeRange, relativeDay, todayISO } from '../lib/dates';
 import { statusMeta } from '../lib/crm';
 import { dealsForToday, longToday, overview, scheduleAhead } from '../lib/metrics';
@@ -45,6 +48,13 @@ export default function Dashboard(props: {
   const taskCounts = useMemo(() => taskStats(deals, today), [deals, today]);
   const debts = useMemo(() => receivables(deals, today, clientName), [deals, today, clientName]);
   const overdueDebts = debts.filter((item) => item.overdue > 0);
+  // Кому написать сегодня–завтра: замер, доставка, монтаж, оплата.
+  const clientNotes = useMemo(
+    () => clientReminders(deals, clients, settings, { today, horizonDays: 2 })
+      .filter((item) => !item.sentAt)
+      .slice(0, 3),
+    [deals, clients, settings, today],
+  );
   const activeDeals = useMemo(() => deals.filter((deal) => deal.status !== 'delivered' && deal.status !== 'rejected'), [deals]);
   const empty = deals.length === 0 && clients.length === 0;
 
@@ -212,6 +222,42 @@ export default function Dashboard(props: {
                       </li>
                     );
                   })}
+                </ul>
+              )}
+            </section>
+
+            <section className="card">
+              <div className="section-head">
+                <div>
+                  <h2>Написать клиентам</h2>
+                  <span className="muted">готовые сообщения к ближайшим датам</span>
+                </div>
+              </div>
+              {clientNotes.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon={<MessageCircle size={20} />}
+                  title="Писать пока некому"
+                  hint="Заполните даты замера, доставки и монтажа — сообщения появятся сами."
+                />
+              ) : (
+                <ul className="client-note-list">
+                  {clientNotes.map((note) => (
+                    <li key={note.id} className="client-note-row">
+                      <button type="button" className="client-note-main" onClick={() => props.onOpenDeal(note.dealId)}>
+                        <b>{note.clientName}</b>
+                        <span className="muted">{note.title} · {fmtDate(note.dueAt)}</span>
+                      </button>
+                      <a
+                        className="btn small ghost"
+                        href={whatsappLink(note.clientPhone, note.text)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <MessageCircle size={13} /> WhatsApp
+                      </a>
+                    </li>
+                  ))}
                 </ul>
               )}
             </section>
