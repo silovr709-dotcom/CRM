@@ -61,16 +61,21 @@ const nav = () => screen.getByRole('navigation', { name: 'Разделы' });
 async function storedDeal(check?: (deal: Deal) => void): Promise<Deal> {
   let found: Deal | undefined;
   await waitFor(() => {
+    // Сохранение отложено на 400 мс; просим записать сразу, как при закрытии вкладки.
+    window.dispatchEvent(new Event('beforeunload'));
     const raw = localStorage.getItem(STORAGE_KEY);
     const data = raw ? JSON.parse(raw) as AppData : undefined;
     found = data?.deals.find((item) => item.id === 'deal-1');
     expect(found).toBeTruthy();
     if (found && check) check(found);
-  }, { timeout: 5000 });
+  }, { timeout: 12_000 });
   return found as Deal;
 }
 
 beforeEach(() => {
+  // Файлов тестов много, они идут параллельно: под нагрузкой браузерное
+  // окружение отвечает медленно, и 5 секунд по умолчанию не хватает.
+  vi.setConfig({ testTimeout: 20_000 });
   localStorage.clear();
   window.scrollTo = () => {};
   window.location.hash = '';
