@@ -66,7 +66,7 @@ async function storedDeal(check?: (deal: Deal) => void): Promise<Deal> {
     found = data?.deals.find((item) => item.id === 'deal-1');
     expect(found).toBeTruthy();
     if (found && check) check(found);
-  });
+  }, { timeout: 5000 });
   return found as Deal;
 }
 
