@@ -151,6 +151,33 @@ export interface DealSchedule {
   reminders?: number[];
 }
 
+/**
+ * Позиция сметы заказа. Сумма заказа (`amount`) остаётся главной цифрой для
+ * клиента; позиции объясняют, из чего она складывается.
+ */
+export interface DealItem {
+  id: string;
+  title: string;
+  qty: number;
+  /** шт., компл., м. п. — как в смете. */
+  unit: string;
+  /** Цена за единицу, ₽. */
+  price: number;
+  note?: string;
+}
+
+/** Выданный документ заказа: номер запоминаем, чтобы он не менялся. */
+export interface IssuedDocument {
+  id: string;
+  kind: 'offer' | 'estimate' | 'contract' | 'work' | 'act';
+  /** КП-2026-001. */
+  number: string;
+  /** Дата выдачи YYYY-MM-DD. */
+  issuedAt: string;
+  /** Кто выдал — для истории синхронизации между менеджерами. */
+  issuedBy?: string;
+}
+
 export interface Deal {
   id: string;
   /** Название заказа, например «Кухня на Ленина». */
@@ -168,6 +195,10 @@ export interface Deal {
   /** Причина отказа. */
   lostReason?: string;
   comment?: string;
+  /** Позиции сметы: КП и смета печатаются из них. */
+  items?: DealItem[];
+  /** Выданные документы: номера не переиспользуются. */
+  documents?: IssuedDocument[];
   tasks: DealTask[];
   payments: Payment[];
   /** Затраты по заказу: материалы, фабрика, монтаж, доставка. */

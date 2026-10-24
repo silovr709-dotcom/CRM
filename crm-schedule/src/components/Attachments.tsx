@@ -8,7 +8,7 @@ import {
 import type { Attachment, AttachmentKind } from '../types';
 import { useApp } from '../store';
 import {
-  attachmentsSupported, fmtBytes, getFile, isImage, MAX_FILE_BYTES,
+  attachmentsSupported, fmtBytes, getFile, isImage, localFileIds, MAX_FILE_BYTES,
 } from '../lib/attachments';
 import { downloadFile } from '../lib/storage';
 import { buildFilesZip } from '../lib/backupZip';
@@ -42,11 +42,30 @@ export default function Attachments({ ownerType, ownerId, attachments = [] }: {
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<Attachment | null>(null);
+  // Какие файлы реально есть в этом браузере: остальные пришли из общей базы
+  // с другого устройства — их видно в списке, но открыть здесь нельзя.
+  const [localFiles, setLocalFiles] = useState<Set<string> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const supported = attachmentsSupported();
 
   const totalSize = useMemo(() => attachments.reduce((sum, item) => sum + item.size, 0), [attachments]);
+  const idKey = attachments.map((item) => item.id).join(',');
+  const remoteCount = localFiles
+    ? attachments.filter((item) => !localFiles.has(item.id)).length
+    : 0;
+
+  useEffect(() => {
+    let active = true;
+    if (!supported) {
+      setLocalFiles(null);
+      return undefined;
+    }
+    localFileIds()
+      .then((ids) => { if (active) setLocalFiles(ids); })
+      .catch(() => { if (active) setLocalFiles(new Set()); });
+    return () => { active = false; };
+  }, [idKey, supported, ownerId]);
 
   const upload = async (files: File[]) => {
     if (files.length === 0) return;
@@ -83,7 +102,10 @@ export default function Attachments({ ownerType, ownerId, attachments = [] }: {
 
   const openInNewTab = async (attachment: Attachment) => {
     const blob = await getFile(attachment.id);
-    if (!blob) { notify('Файл не найден в этом браузере', 'error'); return; }
+    if (!blob) {
+      notify('Этот файл добавлен на другом устройстве — откройте карточку там или перенесите файлы архивом .zip', 'info');
+      return;
+    }
     const url = URL.createObjectURL(blob);
     window.open(url, '_blank', 'noopener');
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -91,14 +113,20 @@ export default function Attachments({ ownerType, ownerId, attachments = [] }: {
 
   const save = async (attachment: Attachment) => {
     const blob = await getFile(attachment.id);
-    if (!blob) { notify('Файл не найден в этом браузере', 'error'); return; }
+    if (!blob) {
+      notify('Этот файл добавлен на другом устройстве — скачать его можно там', 'info');
+      return;
+    }
     downloadFile(attachment.name, blob, attachment.mime);
   };
 
   const saveAll = async () => {
     if (attachments.length === 0) return;
     const { blob, files, missing } = await buildFilesZip(attachments);
-    if (files === 0) { notify('Файлы не найдены в этом браузере', 'error'); return; }
+    if (files === 0) {
+      notify('Эти файлы добавлены на другом устройстве — здесь их нет', 'info');
+      return;
+    }
     const client = ownerType === 'deal' ? 'сделка' : 'клиент';
     downloadFile(`файлы-${client}-${new Date().toISOString().slice(0, 10)}.zip`, blob, 'application/zip');
     notify(missing > 0 ? `Скачано файлов: ${files}, не найдено: ${missing}` : `Скачано файлов: ${files}`);
@@ -188,6 +216,7 @@ export default function Attachments({ ownerType, ownerId, attachments = [] }: {
               <AttachmentRow
                 key={attachment.id}
                 attachment={attachment}
+                remote={Boolean(localFiles && !localFiles.has(attachment.id))}
                 onOpen={() => openInNewTab(attachment)}
                 onPreview={() => setPreview(attachment)}
                 onSave={() => save(attachment)}
@@ -196,6 +225,14 @@ export default function Attachments({ ownerType, ownerId, attachments = [] }: {
             ))}
           </ul>
         </>
+      )}
+
+      {remoteCount > 0 && (
+        <div className="inline-note attachment-remote">
+          <Paperclip size={13} /> Файлов с других устройств: {remoteCount}. Они есть в списке
+          (пришли через общую базу), но сами файлы лежат там, где их добавили.
+          Перенести — архивом в «Данных» или добавить заново здесь.
+        </div>
       )}
 
       <p className="field-hint">
@@ -209,8 +246,10 @@ export default function Attachments({ ownerType, ownerId, attachments = [] }: {
   );
 }
 
-function AttachmentRow({ attachment, onOpen, onPreview, onSave, onRemove }: {
+function AttachmentRow({ attachment, remote, onOpen, onPreview, onSave, onRemove }: {
   attachment: Attachment;
+  /** Файл пришёл с другого устройства: открыть и скачать здесь нельзя. */
+  remote: boolean;
   onOpen: () => void;
   onPreview: () => void;
   onSave: () => void;
@@ -245,10 +284,21 @@ function AttachmentRow({ attachment, onOpen, onPreview, onSave, onRemove }: {
         <span>
           {meta.label} · {fmtBytes(attachment.size)} · {fmtWhen(attachment.createdAt)}
           {attachment.addedBy ? ` · ${attachment.addedBy}` : ''}
+          {remote && <i className="attachment-remote-chip" title="Файл лежит на устройстве, где его добавили"> · на другом устройстве</i>}
         </span>
       </span>
       <span className="attachment-actions">
-        {isImage(attachment) ? (
+        {remote ? (
+          <button
+            type="button"
+            className="icon-btn"
+            disabled
+            title="Файл на другом устройстве"
+            aria-label={`${attachment.name}: файл на другом устройстве`}
+          >
+            <Eye size={15} />
+          </button>
+        ) : isImage(attachment) ? (
           <button type="button" className="icon-btn" title="Посмотреть" aria-label={`Посмотреть ${attachment.name}`} onClick={onPreview}>
             <Eye size={15} />
           </button>
@@ -257,7 +307,14 @@ function AttachmentRow({ attachment, onOpen, onPreview, onSave, onRemove }: {
             <Eye size={15} />
           </button>
         )}
-        <button type="button" className="icon-btn" title="Скачать" aria-label={`Скачать ${attachment.name}`} onClick={onSave}>
+        <button
+          type="button"
+          className="icon-btn"
+          title={remote ? 'Файл на другом устройстве' : 'Скачать'}
+          aria-label={`Скачать ${attachment.name}`}
+          disabled={remote}
+          onClick={onSave}
+        >
           <Download size={15} />
         </button>
         <button type="button" className="icon-btn danger" title="Удалить" aria-label={`Удалить ${attachment.name}`} onClick={onRemove}>

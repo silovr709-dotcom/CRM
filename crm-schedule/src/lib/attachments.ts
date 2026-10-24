@@ -90,6 +90,26 @@ export async function hasFile(id: string): Promise<boolean> {
   return (await getFile(id)) !== null;
 }
 
+/**
+ * Какие файлы реально лежат в этом браузере. Читаем только ключи — сами блобы
+ * не трогаем, поэтому проверка дешёвая даже при сотне вложений.
+ * Нужна, чтобы честно показать «файл на другом устройстве», а не «не найден».
+ */
+export async function localFileIds(): Promise<Set<string>> {
+  try {
+    const keys = await run<IDBValidKey[]>('readonly', (store) => store.getAllKeys());
+    return new Set((keys ?? []).map((key) => String(key)));
+  } catch {
+    return new Set();
+  }
+}
+
+/** Сколько файлов из списка реально доступно здесь. */
+export async function countLocalFiles(ids: string[]): Promise<number> {
+  const local = await localFileIds();
+  return ids.filter((id) => local.has(id)).length;
+}
+
 export async function removeFile(id: string): Promise<void> {
   try {
     await run('readwrite', (store) => store.delete(id));

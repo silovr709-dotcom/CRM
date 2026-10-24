@@ -28,11 +28,13 @@ import Attachments from './Attachments';
 import TaskEditor, { TaskBell } from './TaskEditor';
 import DealExpenses from './DealExpenses';
 import DealPlan from './DealPlan';
+import DealDocuments from './DealDocuments';
 
 const TABS = [
   { id: 'overview', label: 'Обзор' },
   { id: 'tasks', label: 'Задачи' },
   { id: 'money', label: 'Оплата' },
+  { id: 'docs', label: 'Документы' },
   { id: 'schedule', label: 'График' },
   { id: 'files', label: 'Файлы' },
   { id: 'history', label: 'История' },
@@ -223,6 +225,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
             {item.id === 'schedule' && (deal.schedule.installAt
               ? <b>{fmtDate(deal.schedule.installAt)}</b>
               : <b className="warn">нет</b>)}
+            {item.id === 'docs' && (deal.documents?.length ?? 0) > 0 && <b>{deal.documents?.length}</b>}
             {item.id === 'files' && (deal.attachments?.length ?? 0) > 0 && <b>{deal.attachments?.length}</b>}
           </button>
         ))}
@@ -585,6 +588,8 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
           <DealPlan deal={deal} />
         </div>
       )}
+
+      {tab === 'docs' && <DealDocuments deal={deal} />}
 
       {tab === 'schedule' && (
         <div>

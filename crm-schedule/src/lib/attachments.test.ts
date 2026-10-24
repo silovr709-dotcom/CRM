@@ -7,7 +7,8 @@ import {
 } from './backupZip';
 import { createZip, readZip, crc32, safeEntryName } from './zip';
 import {
-  detectKind, fmtBytes, getFile, listFiles, pruneFiles, removeFile, saveFile, storageInfo,
+  countLocalFiles, detectKind, fmtBytes, getFile, listFiles, localFileIds, pruneFiles,
+  removeFile, saveFile, storageInfo,
 } from './attachments';
 import { blobToBytes, blobToText } from './blob';
 import { demoData } from './demoData';
@@ -180,5 +181,24 @@ describe('вложения в данных сделки', () => {
     const data = validateData({ version: 2, clients: [], deals: [deal], settings: {} });
     expect(data?.deals[0].attachments).toHaveLength(1);
     expect(data?.deals[0].attachments?.[0].id).toBe('keep-me');
+  });
+});
+
+describe('какие файлы есть на этом устройстве', () => {
+  it('возвращает только то, что реально лежит в этом браузере', async () => {
+    const local = makeAttachment({ name: 'фото-замера.jpg', kind: 'photo' });
+    await saveFile(local, 'deal', 'deal-local', new Blob([encoder.encode('фото')]));
+
+    const ids = await localFileIds();
+    expect(ids.has(local.id)).toBe(true);
+    expect(ids.has('file-с-другого-устройства')).toBe(false);
+
+    expect(await countLocalFiles([local.id, 'file-с-другого-устройства'])).toBe(1);
+  });
+
+  it('не падает, если файлов нет вообще', async () => {
+    await removeFile('file-которого-нет');
+    const ids = await localFileIds();
+    expect(ids instanceof Set).toBe(true);
   });
 });

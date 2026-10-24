@@ -6,6 +6,32 @@ import { fmtDate, fmtMoney, fmtTimeRange, fmtWeekday, todayISO } from './dates';
 import { paidAmount, paymentKindLabel, taskKindMeta } from './crmTasks';
 import { statusMeta } from './crm';
 import { collectEvents, eventsOfDay, scheduleKindMeta, scheduleStatusMeta } from './schedule';
+import { documentHtml, type DocumentModel } from './documents';
+
+const DOCS_CSS = `
+  .docs-head { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 12px; margin-bottom: 16px; }
+  .docs-company { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #666; }
+  .docs-head h1 { font-size: 20px; margin: 4px 0 2px; }
+  .docs-subject { text-align: right; font-size: 12px; }
+  .docs-subject b { font-size: 14px; display: block; margin: 2px 0; }
+  table.docs-details { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  table.docs-details td { padding: 3px 0; border-bottom: 1px solid #eee; vertical-align: top; font-size: 12.5px; }
+  table.docs-details td:first-child { width: 40%; color: #666; }
+  table.docs-grid { width: 100%; border-collapse: collapse; }
+  table.docs-grid th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #666; border-bottom: 1px solid #999; padding: 4px 0; }
+  table.docs-grid td { padding: 4px 0; border-bottom: 1px solid #eee; vertical-align: top; font-size: 12.5px; }
+  table.docs-grid .num, .docs-money td:last-child { text-align: right; white-space: nowrap; }
+  table.docs-money { margin: 12px 0 0 auto; border-collapse: collapse; min-width: 260px; }
+  table.docs-money td { padding: 4px 0; border-bottom: 1px solid #eee; font-size: 13px; }
+  table.docs-money tr.strong td { font-weight: 700; border-bottom: 0; }
+  .docs-notes { margin: 4px 0 0 18px; padding: 0; font-size: 12px; color: #444; }
+  .docs-notes li { margin-bottom: 3px; }
+  .docs-sign { display: flex; gap: 40px; margin-top: 40px; font-size: 12px; color: #444; page-break-inside: avoid; }
+  .docs-sign div { flex: 1; }
+  .docs-sign span { display: block; margin-bottom: 26px; }
+  .docs-sign i { display: block; border-top: 1px solid #999; }
+  @media print { body { padding: 0; } }
+`;
 
 const PRINT_CSS = `
   * { box-sizing: border-box; }
@@ -59,7 +85,7 @@ export function printHtml(title: string, body: string): void {
     return;
   }
   doc.open();
-  doc.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${PRINT_CSS}</style></head><body>${body}</body></html>`);
+  doc.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${PRINT_CSS}${DOCS_CSS}</style></head><body>${body}</body></html>`);
   doc.close();
 
   const run = () => {
@@ -242,4 +268,23 @@ export function printReport(input: {
     </div>
   `;
   printHtml(`Отчёт ${input.period.label}`, body);
+}
+
+/** Документ заказа: печать или «Сохранить как PDF» из диалога печати. */
+export function printDocument(model: DocumentModel): void {
+  printHtml(`${model.title} ${model.number}`, documentHtml(model));
+}
+
+/** Скачать документ файлом HTML: открывается в Word и в браузере. */
+export function downloadDocument(model: DocumentModel, fileName: string): void {
+  const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${escapeHtml(`${model.title} ${model.number}`)}</title><style>${PRINT_CSS}${DOCS_CSS}</style></head><body>${documentHtml(model)}</body></html>`;
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 4000);
 }

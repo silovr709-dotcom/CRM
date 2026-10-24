@@ -19,6 +19,7 @@ import Toasts from './components/Toasts';
 import SavedBadge from './components/SavedBadge';
 import SyncBadge from './components/SyncBadge';
 import Modal from './components/Modal';
+import StatusPage from './components/StatusPage';
 import { fmtDate, fmtMoney, todayISO } from './lib/dates';
 import { contactTone, isClosedStatus } from './lib/crm';
 import { taskStats } from './lib/crmTasks';
@@ -27,7 +28,7 @@ import { normalizeRules, runAutomations } from './lib/crmAutomation';
 import { setTitleBadge } from './lib/notify';
 import { useReminders } from './lib/useReminders';
 import NotificationCenter from './components/NotificationCenter';
-import { decodeShare } from './lib/share';
+import { decodeShare, decodeStatus } from './lib/share';
 import {
   applyUpdate, onInstallAvailability, promptInstall, registerServiceWorker, watchOnline,
   isStandalone,
@@ -213,6 +214,7 @@ export default function App() {
   const clientForRoute = route.clientId ? clients.find((client) => client.id === route.clientId) : undefined;
 
   const shared = sharePreview ? decodeShare(sharePreview) : null;
+  const statusPayload = route.status ? decodeStatus(route.status) : null;
   const queueDeal = queue && queue.length > 0 ? deals.find((deal) => deal.id === queue[0]) : undefined;
 
   const startQueue = (ids: string[]) => {
@@ -233,6 +235,9 @@ export default function App() {
     setQueue(rest);
     openDeal(rest[0]);
   };
+
+  // Страница для клиента живёт вне CRM: без меню, без правок, без общей базы.
+  if (route.status) return <StatusPage payload={statusPayload} />;
 
   return (
     <div className="app-shell">
@@ -469,7 +474,7 @@ export default function App() {
         <DealDialog
           key={dealForRoute.id}
           dealId={dealForRoute.id}
-          initialTab={(['schedule', 'tasks', 'money', 'history', 'files'] as const).find((tab) => tab === route.tab)}
+          initialTab={(['schedule', 'tasks', 'money', 'docs', 'history', 'files'] as const).find((tab) => tab === route.tab)}
           onClose={closeOverlays}
           onOpenClient={(id) => openClient(id)}
           onOpenSchedule={() => go('schedule')}
