@@ -118,7 +118,8 @@ describe('роль определяет, что видно', () => {
 
     await waitFor(() => expect(within(nav()).queryByRole('button', { name: /Отчёты/ })).toBeNull());
     expect(within(group).getByRole('radio', { name: /Монтажник/ }).getAttribute('aria-checked')).toBe('true');
-    expect(screen.getByText(/В роли «Монтажник»/)).toBeTruthy();
+    // Пока учётных записей нет, роль — просто режим экрана, и об этом сказано.
+    expect(screen.getByText(/Роль пока переключается свободно/)).toBeTruthy();
   });
 });
 

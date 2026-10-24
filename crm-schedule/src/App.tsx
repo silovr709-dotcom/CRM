@@ -1,8 +1,8 @@
 // Единое приложение: CRM + график монтажей. Маршруты в адресе, ⌘K, тема, карточки.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CalendarDays, ChartColumn, CheckSquare, Download, LayoutDashboard, Menu, Moon, Plus, Search,
-  Settings2, Smartphone, Sun, TriangleAlert, Users, WifiOff, X,
+  CalendarDays, ChartColumn, CheckSquare, Download, LayoutDashboard, LogOut, Menu, Moon, Plus,
+  Search, Settings2, Smartphone, Sun, TriangleAlert, Users, WifiOff, X,
 } from 'lucide-react';
 import { useApp } from './store';
 import Dashboard from './components/Dashboard';
@@ -20,6 +20,7 @@ import SavedBadge from './components/SavedBadge';
 import SyncBadge from './components/SyncBadge';
 import Modal from './components/Modal';
 import StatusPage from './components/StatusPage';
+import LoginScreen from './components/LoginScreen';
 import { fmtDate, fmtMoney, todayISO } from './lib/dates';
 import { contactTone, isClosedStatus } from './lib/crm';
 import { taskStats } from './lib/crmTasks';
@@ -50,7 +51,7 @@ const SYNC_HINT_KEY = 'crm-schedule.sync.hint.v1';
 export default function App() {
   const {
     data, deals, clients, settings, clientName, importSharedDeal, updateSettings,
-    replaceData, updateSchedule, notify, undo, sync, role,
+    replaceData, updateSchedule, notify, undo, sync, role, currentAccount, needsLogin, logout,
   } = useApp();
   const route = useRoute();
   const view = route.view;
@@ -241,6 +242,9 @@ export default function App() {
   // Страница для клиента живёт вне CRM: без меню, без правок, без общей базы.
   if (route.status) return <StatusPage payload={statusPayload} />;
 
+  // Учётные записи заведены — без пароля внутрь не пускаем.
+  if (needsLogin) return <LoginScreen />;
+
   return (
     <div className="app-shell">
       <NotificationCenter
@@ -296,6 +300,18 @@ export default function App() {
           onOpenDeal={(id) => openDeal(id)}
           onOpenSettings={() => go('data')}
         />
+
+        {currentAccount && (
+          <div className="side-user">
+            <span className="side-user-main">
+              <b>{currentAccount.name}</b>
+              <small>{role.label}</small>
+            </span>
+            <button type="button" className="icon-btn small" title="Выйти" aria-label="Выйти" onClick={logout}>
+              <LogOut size={14} />
+            </button>
+          </div>
+        )}
 
         <button type="button" className="side-new" onClick={() => setNewDealClient('')}>
           <Plus size={16} /> Новая сделка

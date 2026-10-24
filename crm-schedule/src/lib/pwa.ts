@@ -132,3 +132,39 @@ export async function applyUpdate(): Promise<void> {
   const registration = await navigator.serviceWorker.getRegistration();
   registration?.waiting?.postMessage({ type: 'SKIP_WAITING' });
 }
+
+/**
+ * Принудительное обновление: проверяем новую версию, активируем её и чистим
+ * кэш. Нужно, когда приложение открыто со старой сборкой (частый случай на
+ * телефоне: «изменений не видно»).
+ */
+export async function forceUpdate(): Promise<void> {
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration();
+    if (registration) {
+      await registration.update();
+      registration.waiting?.postMessage({ type: 'SKIP_WAITING' });
+      const installing = registration.installing;
+      if (installing) {
+        await new Promise<void>((resolve) => {
+          installing.addEventListener('statechange', () => {
+            if (installing.state === 'activated' || installing.state === 'redundant') resolve();
+          });
+        });
+      }
+    }
+    if (typeof caches !== 'undefined') {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  } catch {
+    /* сервис-воркер мог быть не зарегистрирован — просто перезагрузим */
+  }
+  window.location.reload();
+}
+
+/** Дата сборки, вшитая при сборке (dev — текущий момент). */
+export function buildDate(): string {
+  const stamp = typeof __BUILD_DATE__ === 'string' ? __BUILD_DATE__ : '';
+  return stamp || new Date().toISOString();
+}

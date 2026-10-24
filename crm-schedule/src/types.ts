@@ -224,6 +224,22 @@ export type ThemeMode = 'light' | 'dark' | 'system';
 /** Роль на устройстве: руководитель, менеджер или монтажник. */
 export type RoleId = 'owner' | 'manager' | 'installer';
 
+/**
+ * Учётная запись сотрудника. Пароль хранится только отпечатком (PBKDF2),
+ * сама учётная запись синхронизируется вместе с базой.
+ */
+export interface Account {
+  id: string;
+  name: string;
+  role: RoleId;
+  /** pbkdf2:<base64> — или weak:<хэш> на устройстве без WebCrypto. */
+  hash: string;
+  salt: string;
+  createdAt: string;
+  /** Когда последний раз входил — для списка в «Данных». */
+  lastLoginAt?: string;
+}
+
 export interface MessageTemplate {
   id: string;
   title: string;
@@ -322,8 +338,11 @@ export interface Settings {
   companyName: string;
   /** Имя текущего пользователя: «мои сделки» и подписи. */
   myName: string;
-  /** Роль на этом устройстве: что показывать и что разрешено менять. */
+  /** Роль на этом устройстве: что показывать и что разрешено менять.
+   *  Действует, пока не заведены учётные записи с паролями. */
   role?: RoleId;
+  /** Сотрудники с паролями. Пусто — доступ без входа, как раньше. */
+  accounts?: Account[];
   managers: string[];
   teams: string[];
   hints: boolean;
