@@ -300,11 +300,18 @@ export function mergeSyncData(
   const remoteUpdated = remote.updatedAt || '';
   const remoteWins = remoteUpdated > localUpdated;
   const baseSettings = remoteWins ? remote.settings : local.settings;
+  // Учётные записи не теряем при слиянии: пароли отпечатками, поэтому
+  // объединение по id безопасно и не даёт «потерять сотрудника» на телефоне.
+  const baseAccounts = baseSettings.accounts ?? [];
+  const otherAccounts = (remoteWins ? local.settings.accounts : remote.settings.accounts) ?? [];
+  const seenAccounts = new Set(baseAccounts.map((account) => account.id));
+  const accounts = [...baseAccounts, ...otherAccounts.filter((account) => !seenAccounts.has(account.id))];
   const settings = {
     ...baseSettings,
     theme: local.settings.theme,
     notifications: local.settings.notifications,
     demo: local.settings.demo && remote.settings.demo,
+    accounts,
   };
 
   const createdAt = [local.createdAt, remote.createdAt].filter(Boolean).sort()[0] ?? nowIso();

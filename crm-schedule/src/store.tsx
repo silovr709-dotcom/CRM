@@ -4,13 +4,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
-  AppData, Attachment, Client, Deal, DealItem, DealSchedule, DealStatus, HistoryEntry,
-  IssuedDocument, Settings,
+  Account, AppData, Attachment, Client, Deal, DealItem, DealSchedule, DealStatus, HistoryEntry,
+  IssuedDocument, RoleId, Settings,
 } from './types';
 import { demoData } from './lib/demoData';
 import { emptyData, loadData, saveData, writeAutoBackup } from './lib/storage';
 import { docKindMeta } from './lib/documentKinds';
 import { authorName, roleMeta, type RoleMeta } from './lib/roles';
+import { createAccount, hashPassword, nameTaken, passwordProblem, verifyPassword } from './lib/accounts';
 import { nextSequence, documentNumber } from './lib/documents';
 import { nowIso, uid } from './lib/utils';
 import { defaultNextAction, statusMeta } from './lib/crm';
@@ -50,6 +51,20 @@ interface AppContextValue {
   data: AppData;
   deals: Deal[];
   clients: Client[];
+  /** Сотрудники с паролями (синхронизируются вместе с базой). */
+  accounts: Account[];
+  /** Кто вошёл на этом устройстве. null — вход не требуется или не выполнен. */
+  currentAccount: Account | null;
+  /** Нужен вход: учётные записи есть, а человек не вошёл. */
+  needsLogin: boolean;
+  /** Вход по паролю. Возвращает текст ошибки или пустую строку. */
+  login: (accountId: string, password: string) => Promise<string>;
+  logout: () => void;
+  /** Добавить сотрудника: '' — получилось, иначе текст ошибки. */
+  addAccount: (input: { name: string; role: RoleId; password: string }) => Promise<string>;
+  /** Изменить имя, роль или пароль. */
+  updateAccount: (id: string, patch: { name?: string; role?: RoleId; password?: string }) => Promise<string>;
+  removeAccount: (id: string) => void;
   settings: Settings;
   clientName: (deal: Deal) => string;
   clientFor: (deal: Deal) => Client | undefined;
@@ -118,6 +133,25 @@ const SYNC_NOT_FOUND = 'not_found';
 const AppContext = createContext<AppContextValue | null>(null);
 
 const MAX_UNDO = 6;
+/** Кто вошёл на этом устройстве: только id, сам пароль не запоминаем. */
+const SESSION_KEY = 'crm-schedule.session.v1';
+
+function loadSession(): string {
+  try {
+    return localStorage.getItem(SESSION_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function saveSession(accountId: string): void {
+  try {
+    if (accountId) localStorage.setItem(SESSION_KEY, accountId);
+    else localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* приватный режим: вход не запомнится, но сессия проживёт до перезагрузки */
+  }
+}
 
 function ensureData(): AppData {
   return loadData() ?? (() => {
@@ -148,9 +182,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   /* ------------------------- общая база устройств ------------------------- */
 
+  const accounts = data.settings.accounts ?? [];
+  const [sessionId, setSessionId] = useState<string>(() => loadSession());
+  const currentAccount = accounts.find((account) => account.id === sessionId) ?? null;
+  const needsLogin = accounts.length > 0 && !currentAccount;
+  /** Роль: из учётной записи, а без них — просто режим экрана. */
+  const role = roleMeta(currentAccount ? currentAccount.role : data.settings.role);
+
   /** Имя для подписей в истории: «кто это сделал». */
-  const me = useCallback(() => authorName(dataRef.current.settings), []);
-  const role = roleMeta(data.settings.role);
+  const me = useCallback(
+    () => currentAccount?.name || authorName(dataRef.current.settings),
+    [currentAccount],
+  );
 
   const syncRef = useRef<SyncConfig | null>(loadSyncConfig());
   const [sync, setSync] = useState<SyncUiState>(() => syncUiFromConfig(syncRef.current));
@@ -1022,10 +1065,117 @@ export function AppProvider({ children }: { children: ReactNode }) {
     notify('Все данные удалены. Копию можно вернуть кнопкой ниже', 'info', { label: 'Вернуть', run: undo });
   }, [notify, pushUndo, undo]);
 
+  /* --------------------------- учётные записи --------------------------- */
+
+  const login = useCallback(async (accountId: string, password: string): Promise<string> => {
+    const account = (dataRef.current.settings.accounts ?? []).find((item) => item.id === accountId);
+    if (!account) return 'Такого сотрудника нет — обновите страницу';
+    if (!(await verifyPassword(password, account))) return 'Неверный пароль';
+    setSessionId(account.id);
+    saveSession(account.id);
+    const now = nowIso();
+    setData((current) => ({
+      ...current,
+      settings: {
+        ...current.settings,
+        accounts: (current.settings.accounts ?? []).map((item) => (
+          item.id === account.id ? { ...item, lastLoginAt: now } : item
+        )),
+      },
+    }));
+    return '';
+  }, []);
+
+  const logout = useCallback(() => {
+    setSessionId('');
+    saveSession('');
+    notify('Вы вышли. Данные остались на месте', 'info');
+  }, [notify]);
+
+  const addAccount = useCallback(async (
+    input: { name: string; role: RoleId; password: string },
+  ): Promise<string> => {
+    const clean = input.name.trim();
+    if (!clean) return 'Введите имя сотрудника';
+    const problem = passwordProblem(input.password);
+    if (problem) return problem;
+    const existing = dataRef.current.settings.accounts ?? [];
+    if (nameTaken(existing, clean)) return 'Сотрудник с таким именем уже есть';
+    const account = await createAccount({ name: clean, role: input.role, password: input.password });
+    setData((current) => ({
+      ...current,
+      settings: { ...current.settings, accounts: [...(current.settings.accounts ?? []), account] },
+    }));
+    // Первую учётную запись заводит тот, кто сейчас за приложением:
+    // оставляем его внутри, чтобы он не выкинул сам себя на экран входа.
+    if (existing.length === 0) {
+      setSessionId(account.id);
+      saveSession(account.id);
+    }
+    return '';
+  }, []);
+
+  const updateAccount = useCallback(async (
+    id: string,
+    patch: { name?: string; role?: RoleId; password?: string },
+  ): Promise<string> => {
+    const accountsNow = dataRef.current.settings.accounts ?? [];
+    const existing = accountsNow.find((item) => item.id === id);
+    if (!existing) return 'Такого сотрудника нет';
+    const name = patch.name?.trim() ?? existing.name;
+    if (!name) return 'Введите имя сотрудника';
+    if (nameTaken(accountsNow, name, id)) return 'Сотрудник с таким именем уже есть';
+
+    let hash = existing.hash;
+    let salt = existing.salt;
+    if (patch.password) {
+      const problem = passwordProblem(patch.password);
+      if (problem) return problem;
+      const next = await hashPassword(patch.password);
+      hash = next.hash;
+      salt = next.salt;
+    }
+
+    setData((current) => ({
+      ...current,
+      settings: {
+        ...current.settings,
+        accounts: (current.settings.accounts ?? []).map((item) => (
+          item.id === id
+            ? { ...item, name, role: patch.role ?? item.role, hash, salt }
+            : item
+        )),
+      },
+    }));
+    return '';
+  }, []);
+
+  const removeAccount = useCallback((id: string) => {
+    setData((current) => ({
+      ...current,
+      settings: {
+        ...current.settings,
+        accounts: (current.settings.accounts ?? []).filter((item) => item.id !== id),
+      },
+    }));
+    if (sessionId === id) {
+      setSessionId('');
+      saveSession('');
+    }
+  }, [sessionId]);
+
   const value = useMemo<AppContextValue>(() => ({
     data,
     deals: data.deals,
     clients: data.clients,
+    accounts,
+    currentAccount,
+    needsLogin,
+    login,
+    logout,
+    addAccount,
+    updateAccount,
+    removeAccount,
     settings: data.settings,
     clientName,
     clientFor,
@@ -1063,7 +1213,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     loadVersions,
     restoreVersion,
   }), [
-    data, clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
+    data, accounts, currentAccount, needsLogin, login, logout, addAccount, updateAccount, removeAccount,
+    clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
     removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
     removeAttachment, saveDealItems, issueDocument, markClientReminder, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,

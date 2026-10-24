@@ -8,7 +8,6 @@ import type { Deal } from '../types';
 import { useApp } from '../store';
 import { fmtDate, fmtDateTime, fmtMoney, todayISO } from '../lib/dates';
 import { fmtBytes } from '../lib/attachments';
-import { ROLES, roleMeta } from '../lib/roles';
 import {
   autoBackupInfo, downloadFile, exportBackup, exportIcs, findDuplicateClients, mergeImport,
   previewImport, readAutoBackup, writeAutoBackup, type AutoBackupInfo, type ImportPreview,
@@ -23,6 +22,7 @@ import { pruneFiles, storageInfo, type StorageInfo } from '../lib/attachments';
 import Modal from './Modal';
 import ReminderSettings from './ReminderSettings';
 import SyncCard from './SyncCard';
+import AccessCard from './AccessCard';
 
 function emptyPreviewDeal(): Deal {
   const stamp = new Date().toISOString();
@@ -196,6 +196,8 @@ export default function DataView() {
         <div><span>Сохранено</span><b>{savedAt ? fmtDateTime(savedAt) : '—'}</b></div>
       </section>
 
+      <AccessCard />
+
       <ReminderSettings />
 
       <div className="data-grid">
@@ -224,44 +226,6 @@ export default function DataView() {
               <input value={draft.teams} placeholder="Бригада 1 — Сергей, Бригада 2 — Олег" onChange={(event) => setDraft({ ...draft, teams: event.target.value })} />
             </label>
           </div>
-
-          <div className="section-head sub">
-            <h3>Роль на этом устройстве</h3>
-            <span className="muted small">что показывать и что разрешено менять</span>
-          </div>
-          <div className="role-grid" role="radiogroup" aria-label="Роль на этом устройстве">
-            {ROLES.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                role="radio"
-                aria-checked={roleMeta(settings.role).id === item.id}
-                className={`role-card${roleMeta(settings.role).id === item.id ? ' active' : ''}`}
-                onClick={() => {
-                  updateSettings({ role: item.id });
-                  notify(`Роль: ${item.label}`);
-                }}
-              >
-                <b>{item.label}</b>
-                <span className="muted small">{item.hint}</span>
-                <ul>
-                  {item.sees.map((line) => <li key={line}>{line}</li>)}
-                </ul>
-              </button>
-            ))}
-          </div>
-          <p className="inline-note">
-            Это режим экрана, а не пароль: роли помогают не показывать лишнее и не удалять
-            нужное случайно. Настоящей защиты в браузере не бывает — кому нужен полный доступ,
-            тот открывает приложение на своём устройстве.
-          </p>
-
-          {!role.canEditSettings && (
-            <p className="inline-note warn-note">
-              В роли «{role.label}» нельзя сохранять реквизиты, шаблоны и подключать общую базу —
-              вернуть полный доступ можно здесь же, выбрав «Руководитель».
-            </p>
-          )}
 
           <div className="section-head sub">
             <h3>Тема и подсказки</h3>

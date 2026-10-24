@@ -126,6 +126,24 @@ describe('слияние двух устройств', () => {
     expect(merged.data.settings.notifications).toBe(true);
   });
 
+  it('не теряет учётные записи при слиянии', () => {
+    const account = (id: string, name: string) => ({
+      id, name, role: 'manager' as const, hash: 'pbkdf2:abc', salt: 's', createdAt: '2026-01-01T09:00:00.000Z',
+    });
+    const local = makeData({
+      updatedAt: '2026-02-01T10:00:00.000Z',
+      settings: { ...makeData().settings, accounts: [account('acc-1', 'Ирина')] },
+    });
+    const remote = makeData({
+      updatedAt: '2026-03-01T10:00:00.000Z',
+      settings: { ...makeData().settings, accounts: [account('acc-2', 'Сергей')] },
+    });
+
+    const merged = mergeSyncData(local, remote, emptyRemoved());
+    expect(merged.data.settings.accounts?.map((item) => item.name).sort()).toEqual(['Ирина', 'Сергей']);
+    expect(merged.data.settings.accounts).toHaveLength(2);
+  });
+
   it('объединяет «надгробия» по самому свежему времени', () => {
     const merged = mergeRemoved(
       { clients: { a: '2026-01-01T00:00:00.000Z' }, deals: { x: '2026-01-05T00:00:00.000Z' } },

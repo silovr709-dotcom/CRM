@@ -4,7 +4,7 @@
 import type {
   Attachment, AttachmentKind,
   AppData, AutomationRule, Client, Deal, DealSchedule, DealStatus, DealTask, HistoryEntry,
-  MessageTemplate, RuleId, ScheduleStatus, Settings, TaskKind, TaskRepeat, ThemeMode,
+  MessageTemplate, RoleId, RuleId, ScheduleStatus, Settings, TaskKind, TaskRepeat, ThemeMode,
 } from '../types';
 import { demoData } from './demoData';
 import { SCHEDULE_KINDS, scheduleStatusMeta, type ScheduleKind } from './schedule';
@@ -112,6 +112,22 @@ export function normalizeSettings(raw: Partial<Settings> | undefined): Settings 
     companyName: typeof raw.companyName === 'string' && raw.companyName ? raw.companyName : base.companyName,
     myName: typeof raw.myName === 'string' ? raw.myName : '',
     role: raw.role === 'manager' || raw.role === 'installer' ? raw.role : 'owner',
+    accounts: Array.isArray(raw.accounts)
+      ? raw.accounts
+        .filter((account) => account && typeof account.id === 'string' && typeof account.name === 'string')
+        .map((account) => ({
+          id: account.id,
+          name: account.name,
+          role: (account.role === 'manager' || account.role === 'installer' ? account.role : 'owner') as RoleId,
+          hash: typeof account.hash === 'string' ? account.hash : '',
+          salt: typeof account.salt === 'string' ? account.salt : '',
+          createdAt: typeof account.createdAt === 'string' ? account.createdAt : nowIso(),
+          lastLoginAt: typeof account.lastLoginAt === 'string' ? account.lastLoginAt : undefined,
+        }))
+        // Учётная запись без отпечатка пароля бесполезна — не пускаем такую в список.
+        .filter((account) => account.hash && account.salt)
+      : [],
+
     managers: Array.isArray(raw.managers) ? raw.managers.filter((item): item is string => typeof item === 'string') : [],
     teams: Array.isArray(raw.teams) ? raw.teams.filter((item): item is string => typeof item === 'string') : [],
     hints: raw.hints !== false,
