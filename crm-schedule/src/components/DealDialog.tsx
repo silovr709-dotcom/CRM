@@ -22,6 +22,7 @@ import { amountFromInput } from '../lib/utils';
 import { dealMoney } from '../lib/money';
 import { encodeShare } from '../lib/share';
 import { printDealCard } from '../lib/print';
+import { ContactActions, ContactLog } from './ContactActions';
 import Modal from './Modal';
 import ScheduleFields from './ScheduleFields';
 import Attachments from './Attachments';
@@ -56,7 +57,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
   onQueueNext?: () => void;
 }) {
   const {
-    deals, clients, patchDeal, updateDeal, removeDeal, settings, notify, role,
+    deals, clients, patchDeal, updateDeal, removeDeal, settings, notify, role, snoozeContact,
   } = useApp();
   const deal = deals.find((item) => item.id === dealId);
   const visibleTabs = TABS.filter((item) => role.canSeeMoney || (item.id !== 'money' && item.id !== 'docs'));
@@ -342,6 +343,16 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
                   {client && <button type="button" className="btn small ghost" onClick={() => onOpenClient(client.id)}>Карточка клиента</button>}
                 </div>
                 <div className="muted small">Адрес: {client?.address || deal.schedule.address || 'не указан'}</div>
+              </div>
+
+              <div className="info-card">
+                <h3>Связь с клиентом</h3>
+                <ContactActions deal={deal} />
+                <div className="quick-row">
+                  <button type="button" className="quick" onClick={() => snoozeContact(deal.id, 1)}>+1 день</button>
+                  <button type="button" className="quick" onClick={() => snoozeContact(deal.id, 7)}>+1 неделя</button>
+                </div>
+                <ContactLog deal={deal} limit={4} />
               </div>
 
               <div className="info-card">

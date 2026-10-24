@@ -182,6 +182,29 @@ export interface IssuedDocument {
   issuedBy?: string;
 }
 
+/** Как связались с клиентом: звонок, мессенджер, почта, встреча. */
+export type ContactChannel = 'call' | 'whatsapp' | 'telegram' | 'sms' | 'email' | 'meeting';
+
+/** Чем закончилось касание. */
+export type ContactOutcome = 'reached' | 'noAnswer' | 'messaged' | 'scheduled' | 'declined';
+
+/**
+ * Одно касание клиента. Журнал нужен, чтобы отвечать на вопросы «кто звонил»,
+ * «сколько дней тишина» и «почему просрочен контакт» — по факту, а не по дате.
+ */
+export interface ContactEntry {
+  id: string;
+  /** Когда связались, ISO. */
+  at: string;
+  channel: ContactChannel;
+  outcome: ContactOutcome;
+  /** Кто из сотрудников — имя на момент действия. */
+  author?: string;
+  note?: string;
+  /** О чём договорились: срок следующего контакта YYYY-MM-DD. */
+  nextAt?: string;
+}
+
 export interface Deal {
   id: string;
   /** Название заказа, например «Кухня на Ленина». */
@@ -196,6 +219,8 @@ export interface Deal {
   nextAction?: string;
   /** Когда связаться с клиентом, YYYY-MM-DD. */
   nextContactAt?: string;
+  /** Журнал общения: звонки, сообщения, встречи. Новые — в конце. */
+  contacts?: ContactEntry[];
   /** Причина отказа. */
   lostReason?: string;
   comment?: string;

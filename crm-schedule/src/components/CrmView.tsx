@@ -16,6 +16,7 @@ import { nextTask, openTasks, paymentState, taskStats } from '../lib/crmTasks';
 import { findDuplicateClients } from '../lib/storage';
 import { usePrefs } from '../lib/viewPrefs';
 import { useDragDrop } from '../lib/dnd';
+import { ContactActions, ContactLine } from './ContactActions';
 import EmptyState from './EmptyState';
 import Modal from './Modal';
 
@@ -351,6 +352,13 @@ export default function CrmView(props: {
                             )}
                           </div>
                           {row.deal.manager && <small className="board-manager">{row.deal.manager}</small>}
+                          <div
+                            className="board-card-actions"
+                            onClick={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
+                          >
+                            <ContactActions deal={row.deal} compact />
+                          </div>
                         </article>
                       ))}
                       {items.length === 0 && <div className="board-empty">Перетащите сюда сделку</div>}
@@ -529,6 +537,7 @@ function DealListRow({ row, client, today, selected, onSelect, onOpen, onCopyPho
             {deal.nextAction?.trim() || (task?.title ?? 'Следующий шаг не назначен')}
           </span>
           <span className="deal-meta">
+            {(deal.contacts?.length ?? 0) > 0 && <ContactLine deal={deal} />}
             {tasks > 0 && <span>{tasks} задач</span>}
             {pay.paid > 0 && <span>{pay.label}</span>}
             {tone !== 'none' && !row.closed && <span className={`tone-${tone}`}>{relativeDay(deal.nextContactAt, today)}</span>}
@@ -545,16 +554,19 @@ function DealListRow({ row, client, today, selected, onSelect, onOpen, onCopyPho
         </span>
         <span className="deal-arrow"><ArrowRight size={16} /></span>
       </button>
-      {phone && (
-        <span className="deal-quick-actions">
+      <span className="deal-quick-actions">
+        <ContactActions deal={deal} compact />
+        {phone && (
+          <>
           <a className="icon-btn" href={`tel:+${phone.replace(/\D/g, '')}`} title="Позвонить" aria-label={`Позвонить ${client}`}>
             <Phone size={15} />
           </a>
           <button type="button" className="icon-btn" onClick={() => onCopyPhone(phone)} title="Скопировать телефон" aria-label="Скопировать телефон">
             <Copy size={15} />
           </button>
-        </span>
-      )}
+          </>
+        )}
+      </span>
     </li>
   );
 }
