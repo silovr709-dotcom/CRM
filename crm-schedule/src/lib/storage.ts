@@ -205,6 +205,29 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
     nextContactAt: raw.nextContactAt?.slice(0, 10),
     lostReason: raw.lostReason,
     comment: raw.comment,
+    // Позиции сметы и выданные документы: без нормализации они терялись
+    // при загрузке и при слиянии с общей базой.
+    items: Array.isArray(raw.items)
+      ? raw.items.map((entry) => ({
+        id: entry.id ?? uid('item'),
+        title: typeof entry.title === 'string' ? entry.title : '',
+        qty: Number(entry.qty) || 0,
+        unit: typeof entry.unit === 'string' && entry.unit ? entry.unit : 'шт.',
+        price: Number(entry.price) || 0,
+        note: entry.note,
+      }))
+      : [],
+    documents: Array.isArray(raw.documents)
+      ? raw.documents
+        .filter((doc) => ['offer', 'estimate', 'contract', 'work', 'act'].includes(String(doc.kind)))
+        .map((doc) => ({
+          id: doc.id ?? uid('doc'),
+          kind: doc.kind,
+          number: typeof doc.number === 'string' ? doc.number : '',
+          issuedAt: (doc.issuedAt ?? isoDay(new Date())).slice(0, 10),
+          issuedBy: doc.issuedBy,
+        }))
+      : [],
     tasks: Array.isArray(raw.tasks) ? raw.tasks.map(normalizeTask) : [],
     payments: Array.isArray(raw.payments)
       ? raw.payments.map((payment) => ({

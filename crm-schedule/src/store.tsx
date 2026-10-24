@@ -4,10 +4,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
-  AppData, Attachment, Client, Deal, DealSchedule, DealStatus, HistoryEntry, Settings,
+  AppData, Attachment, Client, Deal, DealItem, DealSchedule, DealStatus, HistoryEntry,
+  IssuedDocument, Settings,
 } from './types';
 import { demoData } from './lib/demoData';
 import { emptyData, loadData, saveData, writeAutoBackup } from './lib/storage';
+import { docKindMeta } from './lib/documentKinds';
+import { nextSequence, documentNumber } from './lib/documents';
 import { nowIso, uid } from './lib/utils';
 import { defaultNextAction, statusMeta } from './lib/crm';
 import {
@@ -64,6 +67,10 @@ interface AppContextValue {
   addAttachments: (ownerType: OwnerType, ownerId: string, files: File[]) => Promise<AttachmentResult>;
   /** Удалить вложение: и запись, и файл. */
   removeAttachment: (ownerType: OwnerType, ownerId: string, attachmentId: string) => void;
+  /** Позиции сметы заказа: КП, смета и акт печатаются из них. */
+  saveDealItems: (dealId: string, items: DealItem[]) => void;
+  /** Выдать документ: номер запоминается и больше не меняется. */
+  issueDocument: (dealId: string, kind: IssuedDocument['kind']) => IssuedDocument | null;
   updateSettings: (patch: Partial<Settings>) => void;
   replaceData: (next: AppData, options?: { backupReason?: string; undoLabel?: string }) => void;
   resetDemo: () => void;
@@ -646,6 +653,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
+  const saveDealItems = useCallback((dealId: string, items: DealItem[]) => {
+    setData((current) => ({
+      ...current,
+      deals: current.deals.map((deal) => (deal.id === dealId
+        ? { ...deal, items, updatedAt: nowIso() }
+        : deal)),
+      updatedAt: nowIso(),
+    }));
+  }, []);
+
+  const issueDocument = useCallback((dealId: string, kind: IssuedDocument['kind']): IssuedDocument | null => {
+    const deal = dataRef.current.deals.find((item) => item.id === dealId);
+    if (!deal) return null;
+    const issued = dataRef.current.deals.flatMap((item) => item.documents ?? []);
+    const today = new Date();
+    const year = today.getFullYear();
+    const sequence = nextSequence(kind, year, issued);
+    const meta: IssuedDocument = {
+      id: uid('doc'),
+      kind,
+      number: documentNumber(kind, year, sequence),
+      issuedAt: today.toISOString().slice(0, 10),
+      issuedBy: dataRef.current.settings.myName || undefined,
+    };
+    setData((current) => ({
+      ...current,
+      deals: current.deals.map((item) => (item.id === dealId
+        ? {
+          ...item,
+          documents: [...(item.documents ?? []), meta],
+          history: [...(item.history ?? []), {
+            id: uid('h'),
+            createdAt: nowIso(),
+            kind: 'document' as const,
+            title: `${docKindMeta(kind).title} ${meta.number}`,
+            text: 'Документ сформирован в приложении',
+          }],
+          updatedAt: nowIso(),
+        }
+        : item)),
+      updatedAt: nowIso(),
+    }));
+    return meta;
+  }, []);
+
   const changeStatus = useCallback((id: string, status: DealStatus) => {
     setData((current) => ({
       ...current,
@@ -957,6 +1009,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     importSharedDeal,
     addAttachments,
     removeAttachment,
+    saveDealItems,
+    issueDocument,
     updateSettings,
     replaceData,
     resetDemo,
@@ -977,7 +1031,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }), [
     data, clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
     removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
-    removeAttachment, updateSettings, replaceData,
+    removeAttachment, saveDealItems, issueDocument, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,
     sync, enableSync, disableSync, syncNow, loadVersions, restoreVersion,
   ]);
