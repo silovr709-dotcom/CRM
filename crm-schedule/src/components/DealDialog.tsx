@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import {
   Calendar, Check, CheckCheck, Clock, Copy, Link2, MessageSquare, Pencil, Phone, Plus,
-  Printer, Share2, Trash2, Wallet, X,
+  Printer, Send, Share2, Trash2, Wallet, X,
 } from 'lucide-react';
 import type { DealStatus, DealTask, PaymentKind, TaskKind, TaskRepeat } from '../types';
 import { useApp } from '../store';
@@ -29,6 +29,8 @@ import TaskEditor, { TaskBell } from './TaskEditor';
 import DealExpenses from './DealExpenses';
 import DealPlan from './DealPlan';
 import DealDocuments from './DealDocuments';
+import ClientReminders from './ClientReminders';
+import { telegramLink, whatsappLink } from '../lib/messaging';
 
 const TABS = [
   { id: 'overview', label: 'Обзор' },
@@ -54,10 +56,15 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
   onQueueNext?: () => void;
 }) {
   const {
-    deals, clients, patchDeal, updateDeal, removeDeal, settings, notify,
+    deals, clients, patchDeal, updateDeal, removeDeal, settings, notify, role,
   } = useApp();
   const deal = deals.find((item) => item.id === dealId);
-  const [tab, setTab] = useState<TabId>(initialTab ?? 'overview');
+  const visibleTabs = TABS.filter((item) => role.canSeeMoney || (item.id !== 'money' && item.id !== 'docs'));
+  const [tab, setTab] = useState<TabId>(() => {
+    const wanted = initialTab ?? 'overview';
+    const hidden = !role.canSeeMoney && (wanted === 'money' || wanted === 'docs');
+    return hidden ? 'overview' : wanted;
+  });
   const [taskDraft, setTaskDraft] = useState<{ title: string; kind: TaskKind; dueAt: string; assignee: string; repeat: '' | TaskRepeat }>({
     title: '', kind: 'call', dueAt: '', assignee: '', repeat: '',
   });
@@ -122,6 +129,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
       at: payDraft.at || today,
       kind: payDraft.kind,
       comment: payDraft.comment.trim() || undefined,
+      author: settings.myName.trim() || undefined,
     };
     if (payEditId) {
       updateDeal(patchPayment(deal, payEditId, patch));
@@ -179,13 +187,22 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
           {phone && (
             <a
               className="btn small ghost"
-              href={`https://wa.me/${digitsOnly(phone)}?text=${encodeURIComponent(message)}`}
+              href={whatsappLink(phone, message)}
               target="_blank"
               rel="noreferrer"
             >
               <MessageSquare size={15} /> WhatsApp
             </a>
           )}
+          <a
+            className="btn small ghost"
+            href={telegramLink(message, shareLink())}
+            target="_blank"
+            rel="noreferrer"
+            title="Отправить в Telegram"
+          >
+            <Send size={15} /> Telegram
+          </a>
           <button type="button" className="icon-btn" title="Скопировать ссылку на сделку" onClick={() => copy(shareLink(), 'Ссылка на сделку скопирована')}>
             <Link2 size={16} />
           </button>
@@ -196,13 +213,15 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
       )}
       footer={(
         <>
-          <button type="button" className="btn danger-ghost" onClick={() => {
-            if (!confirm(`Удалить сделку «${deal.title}»?`)) return;
-            removeDeal(deal.id);
-            onClose();
-          }}>
-            <Trash2 size={14} /> Удалить
-          </button>
+          {role.canDelete && (
+            <button type="button" className="btn danger-ghost" onClick={() => {
+              if (!confirm(`Удалить сделку «${deal.title}»?`)) return;
+              removeDeal(deal.id);
+              onClose();
+            }}>
+              <Trash2 size={14} /> Удалить
+            </button>
+          )}
           <span className="foot-spacer" />
           {client && <button type="button" className="btn ghost" onClick={() => onOpenClient(client.id)}>Клиент</button>}
           <button type="button" className="btn ghost" onClick={onOpenSchedule}>График</button>
@@ -217,7 +236,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
       )}
     >
       <nav className="tabs" aria-label="Разделы карточки">
-        {TABS.map((item) => (
+        {visibleTabs.map((item) => (
           <button key={item.id} type="button" className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>
             {item.label}
             {item.id === 'tasks' && openCount > 0 && <b>{openCount}</b>}
@@ -254,12 +273,16 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
               </div>
             </div>
             <label className="field">Сумма заказа, ₽
-              <input
-                inputMode="numeric"
-                value={deal.amount || ''}
-                placeholder="0"
-                onChange={(event) => patchDeal(deal.id, { amount: amountFromInput(event.target.value) })}
-              />
+              {role.canSeeMoney ? (
+                <input
+                  inputMode="numeric"
+                  value={deal.amount || ''}
+                  placeholder="0"
+                  onChange={(event) => patchDeal(deal.id, { amount: amountFromInput(event.target.value) })}
+                />
+              ) : (
+                <input value="скрыто ролью «Монтажник»" readOnly aria-label="Сумма заказа скрыта" />
+              )}
             </label>
             <label className="field">Ответственный
               <input list="managers-list" value={deal.manager ?? ''} placeholder="менеджер" onChange={(event) => patchDeal(deal.id, { manager: event.target.value || undefined })} />
@@ -584,7 +607,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
             </ul>
           )}
 
-          <DealExpenses deal={deal} />
+          {role.canSeeExpenses && <DealExpenses deal={deal} />}
           <DealPlan deal={deal} />
         </div>
       )}
@@ -594,6 +617,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
       {tab === 'schedule' && (
         <div>
           <ScheduleFields deal={deal} />
+          <ClientReminders deal={deal} />
           <div className="form-note">
             Даты сразу попадают в «График монтажей». Перетащите событие в календаре или сдвиньте кнопками — сделка обновится.
           </div>
@@ -661,7 +685,10 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
                         <b>{event.title}</b>
                         {event.detail && <span>{event.detail}</span>}
                       </span>
-                      <span className="timeline-date">{fmtDateTime(event.at)}</span>
+                      <span className="timeline-date">
+                        {event.author && <b className="timeline-author">{event.author}</b>}
+                        {fmtDateTime(event.at)}
+                      </span>
                     </li>
                   );
                 })}

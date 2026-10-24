@@ -8,6 +8,7 @@ export function defaultSettings(): Settings {
   return {
     companyName: 'Моя студия',
     myName: '',
+    role: 'owner',
     managers: [],
     teams: [],
     hints: true,
