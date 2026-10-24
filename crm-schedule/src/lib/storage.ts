@@ -6,6 +6,7 @@ import type {
   AppData, AutomationRule, Client, Deal, DealSchedule, DealStatus, DealTask, HistoryEntry,
   MessageTemplate, RoleId, RuleId, ScheduleStatus, Settings, TaskKind, TaskRepeat, ThemeMode,
 } from '../types';
+import { CONTACT_CHANNELS, CONTACT_OUTCOMES } from './contacts';
 import { demoData } from './demoData';
 import { SCHEDULE_KINDS, scheduleStatusMeta, type ScheduleKind } from './schedule';
 import { isoDay, parseDay } from './dates';
@@ -220,6 +221,20 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
     status,
     nextAction: raw.nextAction,
     nextContactAt: raw.nextContactAt?.slice(0, 10),
+    // Журнал общения: без этого он терялся бы при загрузке и слиянии баз.
+    contacts: Array.isArray(raw.contacts)
+      ? raw.contacts
+        .filter((entry) => CONTACT_CHANNELS.includes(entry.channel) && CONTACT_OUTCOMES.includes(entry.outcome))
+        .map((entry) => ({
+          id: entry.id ?? uid('contact'),
+          at: entry.at ?? new Date().toISOString(),
+          channel: entry.channel,
+          outcome: entry.outcome,
+          author: entry.author,
+          note: entry.note,
+          nextAt: entry.nextAt?.slice(0, 10),
+        }))
+      : [],
     lostReason: raw.lostReason,
     comment: raw.comment,
     // Позиции сметы и выданные документы: без нормализации они терялись

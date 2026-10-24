@@ -13,6 +13,7 @@ import { dealsForToday, longToday, overview, scheduleAhead } from '../lib/metric
 import { scheduleKindMeta, scheduleWarnings } from '../lib/schedule';
 import { allTasks, paymentState, taskStats, toggleTask } from '../lib/crmTasks';
 import { receivables } from '../lib/money';
+import { ContactActions, ContactLine } from './ContactActions';
 import EmptyState from './EmptyState';
 import { usePrefs } from '../lib/viewPrefs';
 
@@ -172,6 +173,7 @@ export default function Dashboard(props: {
                             <b>{client}</b>
                             <span>{deal.title}</span>
                             <em>{deal.nextAction || statusMeta(deal.status).label}</em>
+                            {(deal.contacts?.length ?? 0) > 0 && <ContactLine deal={deal} />}
                           </span>
                           <span className="mini-side">
                             <i className={`badge badge-${statusMeta(deal.status).tone}`}>{statusMeta(deal.status).label}</i>
@@ -179,6 +181,9 @@ export default function Dashboard(props: {
                             <small className="money">{deal.amount ? fmtMoney(deal.amount) : 'сумма не заполнена'}</small>
                           </span>
                         </button>
+                        <div className="mini-contact">
+                          <ContactActions deal={deal} compact />
+                        </div>
                       </li>
                     );
                   })}

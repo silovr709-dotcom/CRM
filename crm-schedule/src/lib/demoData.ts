@@ -182,6 +182,11 @@ export function demoData(): AppData {
       nextAction: 'Уточнить решение по КП и срокам',
       nextContactAt: day(-1),
       comment: 'Отправляли КП 12 дней назад, клиент просил паузу до зарплаты.',
+      contacts: [
+        { id: 'ct_sc_1', at: iso(-12), channel: 'whatsapp', outcome: 'messaged', author: 'Ирина', note: 'Отправила КП и смету', nextAt: day(-4) },
+        { id: 'ct_sc_2', at: iso(-4), channel: 'call', outcome: 'reached', author: 'Ирина', note: 'Просил перезвонить после зарплаты', nextAt: day(-1) },
+        { id: 'ct_sc_3', at: iso(-1), channel: 'call', outcome: 'noAnswer', author: 'Ирина', nextAt: day(0) },
+      ],
       tasks: [
         task('t_sc_1', 'Позвонить: узнать решение по КП', 'call', -1, false, 'Ирина'),
         task('t_sc_2', 'Проверить комплектацию с дизайнером', 'meet', 3, false, 'Ирина'),
@@ -214,6 +219,10 @@ export function demoData(): AppData {
       status: 'clientThinking',
       nextAction: 'Согласовать цвет профиля и заполнение',
       nextContactAt: day(0),
+      contacts: [
+        { id: 'ct_ward_1', at: iso(-6), channel: 'call', outcome: 'reached', author: 'Олег', note: 'Договорились о замере', nextAt: day(-2) },
+        { id: 'ct_ward_2', at: iso(-2), channel: 'whatsapp', outcome: 'messaged', author: 'Олег', note: 'Отправил варианты профиля', nextAt: day(0) },
+      ],
       tasks: [task('t_ward_1', 'Отправить варианты цвета профиля', 'docs', 0, false, 'Олег')],
       payments: [payment('p_ward_1', 20000, 6, 'prepay', 'Задаток за замер')],
       expenses: [expense('e_ward_1', 'materials', 38000, 5, 'ЛДСП, профиль, доводчики')],

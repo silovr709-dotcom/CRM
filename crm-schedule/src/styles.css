@@ -2280,3 +2280,37 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select:
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); flex-wrap: wrap;
 }
+
+/* --- Касания клиента: быстрые кнопки и журнал общения --- */
+.touch-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.touch-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 9px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--text); font-size: 12px; line-height: 1.2;
+  cursor: pointer; white-space: nowrap;
+}
+.touch-btn:hover { border-color: var(--accent); color: var(--accent); }
+.touch-btn.primary { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.touch-btn.ghost { background: transparent; color: var(--muted); }
+.touch-actions.compact .touch-btn { padding: 4px 7px; font-size: 11.5px; }
+.touch-line { display: block; color: var(--muted); font-size: 12px; }
+.touch-line.quiet { color: var(--danger, #b4443c); }
+.touch-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.touch-log li { display: flex; gap: 8px; align-items: flex-start; }
+.touch-dot {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; background: var(--surface-2, rgba(0,0,0,.05)); color: var(--muted);
+}
+.touch-dot.outcome-reached { background: color-mix(in srgb, #2e9e5b 20%, transparent); color: #2e9e5b; }
+.touch-dot.outcome-noAnswer { background: color-mix(in srgb, #c96442 18%, transparent); color: #c96442; }
+.touch-dot.outcome-messaged { background: color-mix(in srgb, #3d7bd6 18%, transparent); color: #3d7bd6; }
+.touch-dot.outcome-scheduled { background: color-mix(in srgb, #8a6cd6 18%, transparent); color: #8a6cd6; }
+.touch-log-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.touch-note { font-size: 12.5px; color: var(--text); }
+
+.board-card-actions { margin-top: 8px; }
+.mini-contact { padding: 0 0 8px 24px; }
+.mini-list li .touch-actions { margin-top: 2px; }
+.deal-meta .touch-line { flex-basis: 100%; }
+.mini-deal-list li { display: grid; gap: 4px; }
+.mini-deal-list .mini-contact { padding: 0 0 6px; }

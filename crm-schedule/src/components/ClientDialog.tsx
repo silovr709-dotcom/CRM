@@ -17,6 +17,7 @@ import {
 } from '../lib/crmTasks';
 import { findDuplicateClients } from '../lib/storage';
 import { absoluteLink } from '../lib/router';
+import { ContactActions, ContactLine } from './ContactActions';
 import Modal from './Modal';
 import Attachments from './Attachments';
 import EmptyState from './EmptyState';
@@ -290,10 +291,14 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
                           <button type="button" className="mini-deal" onClick={() => onOpenDeal(deal.id)}>
                             <span>
                               <b>{deal.title}</b>
-                              <small>{meta.label}</small>
+                              <small>{meta.label}{deal.nextContactAt ? ` · ${relativeDay(deal.nextContactAt, today)}` : ''}</small>
+                              {(deal.contacts?.length ?? 0) > 0 && <ContactLine deal={deal} />}
                             </span>
                             <span className="mini-deal-sum">{deal.amount ? fmtMoneyCompact(deal.amount) : '—'}</span>
                           </button>
+                          <div className="mini-contact">
+                            <ContactActions deal={deal} compact />
+                          </div>
                         </li>
                       );
                     })}

@@ -14,6 +14,8 @@ import { authorName, roleMeta, type RoleMeta } from './lib/roles';
 import { createAccount, hashPassword, nameTaken, passwordProblem, verifyPassword } from './lib/accounts';
 import { nextSequence, documentNumber } from './lib/documents';
 import { nowIso, uid } from './lib/utils';
+import { buildContact, snoozeContact as snoozeDate, type ContactInput } from './lib/contacts';
+import { todayISO } from './lib/dates';
 import { defaultNextAction, statusMeta } from './lib/crm';
 import {
   MAX_FILE_BYTES, compressImage, detectKind, removeFile, saveFile, type OwnerType,
@@ -36,6 +38,9 @@ export interface ToastMessage {
   text: string;
   action?: ToastAction;
 }
+
+/** Касание клиента без автора: автор = вошедший сотрудник. */
+export type ContactActionInput = Omit<ContactInput, 'author'>;
 
 export interface AttachmentResult {
   added: number;
@@ -89,6 +94,10 @@ interface AppContextValue {
   issueDocument: (dealId: string, kind: IssuedDocument['kind']) => IssuedDocument | null;
   /** Отметить, что клиенту написали: событие попадёт в историю сделки. */
   markClientReminder: (dealId: string, reminderId: string, channel?: string) => void;
+  /** Касание клиента: звонок, сообщение, встреча. Обновляет журнал и срок. */
+  logContact: (dealId: string, input: ContactActionInput) => void;
+  /** Отложить контакт на N дней, не засоряя журнал «позвонил». */
+  snoozeContact: (dealId: string, days: number) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   replaceData: (next: AppData, options?: { backupReason?: string; undoLabel?: string }) => void;
   resetDemo: () => void;
@@ -1038,6 +1047,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return nextDeal.id;
   }, [pushUndo]);
 
+  const logContact = useCallback((dealId: string, input: Omit<ContactInput, 'author'>) => {
+    const today = input.today ?? todayISO();
+    const result = buildContact({ ...input, author: me(), today });
+    setData((current) => ({
+      ...current,
+      deals: current.deals.map((deal) => (deal.id === dealId
+        ? {
+          ...deal,
+          contacts: [...(deal.contacts ?? []), result.entry],
+          nextContactAt: result.nextContactAt,
+          history: [...(deal.history ?? []), { ...result.history, id: uid('h'), createdAt: nowIso(), author: me() }],
+          updatedAt: nowIso(),
+        }
+        : deal)),
+      updatedAt: nowIso(),
+    }));
+  }, [me]);
+
+  const snoozeDealContact = useCallback((dealId: string, days: number) => {
+    const next = snoozeDate(todayISO(), days);
+    patchDeal(dealId, { nextContactAt: next }, {
+      kind: 'contact',
+      title: 'Контакт отложен',
+      text: `вернуться ${next}`,
+    });
+  }, [patchDeal]);
+
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     setData((current) => ({ ...current, settings: { ...current.settings, ...patch }, updatedAt: nowIso() }));
   }, []);
@@ -1194,6 +1230,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     saveDealItems,
     issueDocument,
     markClientReminder,
+    logContact,
+    snoozeContact: snoozeDealContact,
     updateSettings,
     replaceData,
     resetDemo,
@@ -1215,6 +1253,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }), [
     data, accounts, currentAccount, needsLogin, login, logout, addAccount, updateAccount, removeAccount,
     clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
+    logContact, snoozeDealContact,
     removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
     removeAttachment, saveDealItems, issueDocument, markClientReminder, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,
