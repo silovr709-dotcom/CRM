@@ -32,13 +32,19 @@ describe('сохранение с задержкой', () => {
     expect(JSON.parse(localStorage.getItem(STORAGE_KEY) as string).deals.length).toBeGreaterThan(0);
   });
 
-  it('правка темы доходит до хранилища', async () => {
+  // Автоматика срабатывает через секунду после открытия. Раньше правка,
+  // сделанная в эту секунду, затиралась снимком данных при старте.
+  it('правка темы доходит до хранилища и не теряется', async () => {
     renderApp();
+    // Ждём первую запись базы: иначе сравнение ловит ещё старое значение темы.
+    await waitFor(() => expect(localStorage.getItem(STORAGE_KEY)).toBeTruthy(), { timeout: 5000 });
     fireEvent.click(screen.getByRole('button', { name: 'Переключить тему' }));
 
-    await waitFor(() => expect(storedTheme()).toBeTruthy(), { timeout: 2000 });
     const theme = document.documentElement.dataset.theme;
-    expect(storedTheme()).toBe(theme === 'dark' ? 'dark' : 'light');
+    await waitFor(
+      () => expect(storedTheme()).toBe(theme === 'dark' ? 'dark' : 'light'),
+      { timeout: 5000 },
+    );
   });
 
   it('пишет сразу при закрытии страницы, не дожидаясь паузы', async () => {

@@ -101,6 +101,8 @@ interface AppContextValue {
   logContact: (dealId: string, input: ContactActionInput) => void;
   /** Отложить контакт на N дней, не засоряя журнал «позвонил». */
   snoozeContact: (dealId: string, days: number) => void;
+  /** Результат автоматики: задачи в сделках, без затирания чужих правок. */
+  applyAutomationResult: (deals: Deal[], label?: string) => void;
   /** Поступления на склад: отгрузочные ведомости с фабрики. */
   receipts: WarehouseReceipt[];
   /** Записать приход. Возвращает текст ошибки или пустую строку. */
@@ -1059,6 +1061,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return nextDeal.id;
   }, [pushUndo]);
 
+  /**
+   * Автоматика срабатывает через секунду после открытия. Раньше она подставляла
+   * снимок данных, сделанный при старте, и затирала всё, что человек успел
+   * изменить в эту секунду (например, тему). Теперь меняем только сделки —
+   * поверх текущего состояния.
+   */
+  const applyAutomationResult = useCallback((nextDeals: Deal[], label = 'автоматика') => {
+    pushUndo(label);
+    setData((current) => ({ ...current, deals: nextDeals, updatedAt: nowIso() }));
+  }, [pushUndo]);
+
   const logContact = useCallback((dealId: string, input: Omit<ContactInput, 'author'>) => {
     const today = input.today ?? todayISO();
     const result = buildContact({ ...input, author: me(), today });
@@ -1322,6 +1335,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     markClientReminder,
     logContact,
     snoozeContact: snoozeDealContact,
+    applyAutomationResult,
     receipts,
     addReceipt,
     updateReceipt,
@@ -1348,7 +1362,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }), [
     data, accounts, currentAccount, needsLogin, login, logout, addAccount, updateAccount, removeAccount,
     clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
-    logContact, snoozeDealContact, receipts, addReceipt, updateReceipt, attachReceiptFile, removeReceipt,
+    logContact, snoozeDealContact, applyAutomationResult, receipts, addReceipt, updateReceipt, attachReceiptFile, removeReceipt,
     removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
     removeAttachment, saveDealItems, issueDocument, markClientReminder, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,

@@ -52,8 +52,9 @@ const SYNC_HINT_KEY = 'crm-schedule.sync.hint.v1';
 
 export default function App() {
   const {
-    data, deals, clients, settings, clientName, importSharedDeal, updateSettings,
-    replaceData, updateSchedule, notify, undo, sync, role, currentAccount, needsLogin, logout,
+    deals, clients, settings, clientName, importSharedDeal, updateSettings,
+    updateSchedule, notify, undo, sync, role, currentAccount, needsLogin, logout,
+    applyAutomationResult,
   } = useApp();
   const route = useRoute();
   const view = route.view;
@@ -195,7 +196,7 @@ export default function App() {
       const result = runAutomations(deals, rules);
       localStorage.setItem(AUTOMATION_KEY, today);
       if (result.applied.length > 0) {
-        replaceData({ ...data, deals: result.deals, updatedAt: new Date().toISOString() }, { undoLabel: 'автоматика' });
+        applyAutomationResult(result.deals);
         notify(`Автоматика добавила задач: ${result.applied.length}`, 'info');
       }
     }, 800);
