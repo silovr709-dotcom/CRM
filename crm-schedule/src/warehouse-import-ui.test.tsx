@@ -29,8 +29,29 @@ vi.mock('./lib/pdfText', async (importOriginal) => {
   return {
     ...actual,
     isPdfFile: actual.isPdfFile,
-    readPdf: vi.fn(async () => ({ pages: layout, text: actual.layoutText(layout) })),
+    readPdf: vi.fn(async (file: Blob & { name?: string }) => (file?.name?.includes('scan')
+      ? { pages: [], text: '' }
+      : { pages: layout, text: actual.layoutText(layout) })),
     extractPdfLayout: vi.fn(async () => layout),
+  };
+});
+
+// OCR в тестах не гоняем по-настоящему: отдаём ему готовые слова скана.
+vi.mock('./lib/ocr', async () => {
+  const warehouse = await import('./lib/warehouse');
+  const span = (str: string, x: number, y: number, width = 40) => ({ str, x, y, width });
+  const spans = [
+    span('91_53d4', 200, 700, 50),
+    span('Каркас', 20, 650, 60), span('2', 220, 650, 10),
+    span('Фурнитура', 20, 620, 70), span('1', 220, 620, 10),
+    span('Итого (кол-во упаковок)', 20, 590, 170), span('3', 220, 590, 10),
+  ];
+  return {
+    recognizeManifest: vi.fn(async () => ({
+      parsed: warehouse.parseManifestItems([spans]),
+      text: '91_53d4 Каркас 2 Фурнитура 1 Итого 3',
+      pages: 1,
+    })),
   };
 });
 
@@ -184,6 +205,31 @@ describe('загрузка ведомости целиком', () => {
       ['91_77aa', 2],
       ['91_88bb', 5],
     ]);
+  });
+
+  it('скан без текстового слоя распознаётся через OCR', async () => {
+    renderWarehouse();
+
+    fireEvent.click(screen.getByRole('button', { name: /Ведомость PDF/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Файл ведомости'), {
+      target: { files: [new File(['%PDF-1.4'], 'scan.pdf', { type: 'application/pdf' })] },
+    });
+
+    expect(await within(dialog).findByText(/это скан/i)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: /Распознать скан/ }));
+
+    expect(await within(dialog).findByText(/Нашёл заказов: 1/)).toBeTruthy();
+    expect((within(dialog).getByLabelText('Номер заказа 1') as HTMLInputElement).value).toBe('91_53d4');
+    expect((within(dialog).getByLabelText('Упаковок у заказа 91_53d4') as HTMLInputElement).value).toBe('3');
+    fireEvent.click(within(dialog).getByRole('button', { name: /Записать приходы: 1/ }));
+
+    const receipts = await storedReceipts();
+    expect(receipts[0]).toMatchObject({
+      orderNo: '91_53d4',
+      packages: 3,
+      items: [{ name: 'Каркас', qty: 2 }, { name: 'Фурнитура', qty: 1 }],
+    });
   });
 
   it('не записывает заказ без номера и объясняет почему', async () => {
