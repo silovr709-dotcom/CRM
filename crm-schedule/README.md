@@ -343,7 +343,7 @@ npm run dev        # http://localhost:5173
 
 ```bash
 npm run build      # tsc + vite build → dist/
-npm test           # 355 тестов логики и интерфейса (vitest)
+npm test           # 360 тестов логики и интерфейса (vitest)
 ```
 
 ## Сайт на GitHub Pages
