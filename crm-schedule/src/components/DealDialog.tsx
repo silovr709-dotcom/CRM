@@ -17,12 +17,13 @@ import {
 } from '../lib/crmTasks';
 import { buildDealTimeline, TIMELINE_META } from '../lib/crmTimeline';
 import { enabledTemplates, renderTemplate, templateContext } from '../lib/templates';
-import { absoluteLink } from '../lib/router';
+import { absoluteLink, navigate } from '../lib/router';
 import { amountFromInput } from '../lib/utils';
 import { dealMoney } from '../lib/money';
 import { encodeShare } from '../lib/share';
 import { printDealCard } from '../lib/print';
 import { ContactActions, ContactLog } from './ContactActions';
+import { cleanOrderNo, dealReceiptsLine, itemsLine, receivedLabel } from '../lib/warehouse';
 import Modal from './Modal';
 import ScheduleFields from './ScheduleFields';
 import Attachments from './Attachments';
@@ -57,7 +58,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
   onQueueNext?: () => void;
 }) {
   const {
-    deals, clients, patchDeal, updateDeal, removeDeal, settings, notify, role, snoozeContact,
+    deals, clients, patchDeal, updateDeal, removeDeal, settings, notify, role, snoozeContact, receipts,
   } = useApp();
   const deal = deals.find((item) => item.id === dealId);
   const visibleTabs = TABS.filter((item) => role.canSeeMoney || (item.id !== 'money' && item.id !== 'docs'));
@@ -291,6 +292,14 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
                 {settings.managers.map((name) => <option key={name} value={name} />)}
               </datalist>
             </label>
+            <label className="field">Номер заказа на фабрике
+              <input
+                value={deal.orderNo ?? ''}
+                placeholder="91_53d4"
+                onChange={(event) => patchDeal(deal.id, { orderNo: cleanOrderNo(event.target.value) || undefined })}
+              />
+              <small className="field-hint">По этому номеру ищут поступление на складе</small>
+            </label>
             <label className="field">Клиент
               <select value={deal.clientId} onChange={(event) => patchDeal(deal.id, { clientId: event.target.value })}>
                 <option value="">— без клиента —</option>
@@ -343,6 +352,45 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
                   {client && <button type="button" className="btn small ghost" onClick={() => onOpenClient(client.id)}>Карточка клиента</button>}
                 </div>
                 <div className="muted small">Адрес: {client?.address || deal.schedule.address || 'не указан'}</div>
+              </div>
+
+              <div className="info-card">
+                <h3>Склад</h3>
+                {(() => {
+                  const dealReceipts = receipts
+                    .filter((receipt) => receipt.dealId === deal.id
+                      || (deal.orderNo && cleanOrderNo(receipt.orderNo) === cleanOrderNo(deal.orderNo)))
+                    .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt));
+                  if (dealReceipts.length === 0) {
+                    return (
+                      <>
+                        <span className="muted">
+                          {deal.orderNo ? `По заказу ${deal.orderNo} ничего не приходило` : 'Номер заказа не заполнен'}
+                        </span>
+                        <button type="button" className="link-btn" onClick={() => navigate({ view: 'warehouse' })}>
+                          открыть склад →
+                        </button>
+                      </>
+                    );
+                  }
+                  return (
+                    <>
+                      <b>{dealReceiptsLine(dealReceipts)}</b>
+                      <span className="muted small">{receivedLabel(dealReceipts[0], today)}</span>
+                      <ul className="deal-receipt-list">
+                        {dealReceipts.slice(0, 3).map((receipt) => (
+                          <li key={receipt.id}>
+                            <b>{receipt.orderNo}</b>
+                            <span className="muted small">{receipt.packages} уп. · {itemsLine(receipt.items, 3)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      <button type="button" className="link-btn" onClick={() => navigate({ view: 'warehouse' })}>
+                        весь склад →
+                      </button>
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="info-card">

@@ -6,7 +6,7 @@ const DB_NAME = 'crm-schedule.files';
 const DB_VERSION = 1;
 const STORE = 'files';
 
-export type OwnerType = 'deal' | 'client';
+export type OwnerType = 'deal' | 'client' | 'receipt';
 
 interface StoredFile {
   id: string;

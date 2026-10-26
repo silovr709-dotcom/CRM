@@ -7,6 +7,7 @@ const baseData = {
   version: 2 as const,
   clients: [],
   deals: [makeDeal({ amount: 100000 })],
+  receipts: [],
   settings: { ...defaultSettings(), companyName: 'Студия' },
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',

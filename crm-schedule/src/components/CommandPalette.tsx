@@ -21,12 +21,12 @@ export default function CommandPalette(props: {
   /** tab — сразу открыть нужную вкладку карточки, например «Файлы». */
   onOpenDeal: (id: string, tab?: string) => void;
   onOpenClient: (id: string) => void;
-  onView: (view: 'overview' | 'crm' | 'schedule' | 'tasks' | 'reports' | 'data') => void;
+  onView: (view: 'overview' | 'crm' | 'warehouse' | 'schedule' | 'tasks' | 'reports' | 'data') => void;
   onNewDeal: () => void;
   onNewClient: () => void;
   onNewInstall: () => void;
 }) {
-  const { deals, clients, clientName } = useApp();
+  const { deals, clients, clientName, receipts } = useApp();
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -38,6 +38,7 @@ export default function CommandPalette(props: {
       { id: 'a-client', group: 'Действия', title: 'Новый клиент', run: props.onNewClient },
       { id: 'a-install', group: 'Действия', title: 'Поставить монтаж', run: props.onNewInstall },
       { id: 'a-tasks', group: 'Действия', title: 'Задачи на сегодня', run: () => props.onView('tasks') },
+      { id: 'a-warehouse', group: 'Перейти', title: 'Склад: поступления с фабрики', run: () => props.onView('warehouse') },
       { id: 'a-schedule', group: 'Перейти', title: 'График монтажей', run: () => props.onView('schedule') },
       { id: 'a-reports', group: 'Перейти', title: 'Отчёты: деньги и конверсия', run: () => props.onView('reports') },
       { id: 'a-crm', group: 'Перейти', title: 'CRM: сделки', run: () => props.onView('crm') },
@@ -78,8 +79,17 @@ export default function CommandPalette(props: {
       }))),
     ];
 
-    return [...actions, ...dealItems, ...clientItems, ...fileItems];
-  }, [deals, clients, clientName, props]);
+    // Склад: по номеру заказа коллега сразу видит приход.
+    const receiptItems: Item[] = receipts.map((receipt) => ({
+      id: `w-${receipt.id}`,
+      group: 'Склад',
+      title: receipt.orderNo ? `Заказ ${receipt.orderNo}` : 'Приход без номера',
+      subtitle: `${receipt.packages} уп. · ${receipt.receivedAt}${receipt.driver ? ` · ${receipt.driver}` : ''}`,
+      run: () => props.onView('warehouse'),
+    }));
+
+    return [...actions, ...receiptItems, ...dealItems, ...clientItems, ...fileItems];
+  }, [deals, clients, clientName, receipts, props]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('ru-RU');

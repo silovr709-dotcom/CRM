@@ -2,7 +2,7 @@
 // Все даты считаются от сегодняшнего дня, чтобы календарь сразу был живым.
 
 import type {
-  AppData, Client, Deal, DealSchedule, DealTask, Expense, Payment, PlannedPayment,
+  AppData, Client, Deal, DealSchedule, DealTask, Expense, Payment, PlannedPayment, WarehouseReceipt,
 } from '../types';
 import { addDays, todayISO } from './dates';
 import { nowIso } from './utils';
@@ -175,6 +175,7 @@ export function demoData(): AppData {
     {
       id: 'deal_scandi',
       title: 'Кухня «Скандинавия»',
+      orderNo: '91_53d4',
       clientId: 'cli_dmitry',
       amount: 412000,
       manager: 'Ирина',
@@ -213,6 +214,7 @@ export function demoData(): AppData {
     {
       id: 'deal_wardrobe',
       title: 'Шкаф-купе в прихожую',
+      orderNo: '91_61d2',
       clientId: 'cli_maria',
       amount: 96000,
       manager: 'Олег',
@@ -442,10 +444,52 @@ export function demoData(): AppData {
     },
   ];
 
+  // Склад: два поступления по демо-заказам — видно, как это выглядит в жизни.
+  const receipts: WarehouseReceipt[] = [
+    {
+      id: 'rcpt_demo_1',
+      orderNo: '91_61d2',
+      shippedAt: day(-9),
+      receivedAt: day(-8),
+      packages: 4,
+      items: [
+        { name: 'Каркас', qty: 1 },
+        { name: 'Фасады', qty: 1 },
+        { name: 'Цоколь ПВХ', qty: 1 },
+        { name: 'Фурнитура', qty: 1 },
+      ],
+      driver: 'Сергей Кузьмин',
+      shippedBy: 'Ольга',
+      note: 'Одна упаковка с царапиной на цоколе — сфотографировал, претензию не писали.',
+      dealId: 'deal_wardrobe',
+      author: 'Ирина',
+      createdAt: iso(-8),
+      updatedAt: iso(-8),
+    },
+    {
+      id: 'rcpt_demo_2',
+      orderNo: '91_53d4',
+      shippedAt: day(-2),
+      receivedAt: day(-1),
+      packages: 3,
+      items: [
+        { name: 'Каркас', qty: 2 },
+        { name: 'Фурнитура', qty: 1 },
+      ],
+      driver: 'Сергей Кузьмин',
+      shippedBy: 'Ольга',
+      dealId: 'deal_scandi',
+      author: 'Ирина',
+      createdAt: iso(-1),
+      updatedAt: iso(-1),
+    },
+  ];
+
   return {
     version: 2,
     clients,
     deals,
+    receipts,
     settings: {
       ...defaultSettings(),
       companyName: 'Студия кухни',
