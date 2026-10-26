@@ -2387,6 +2387,33 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select:
 .receipt-item-list li { display: grid; grid-template-columns: 1fr 84px auto; gap: 6px; align-items: center; }
 .receipt-item-list input { padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 13px; }
 .receipt-item-list input[type='number'] { text-align: center; }
+
+/* Загрузка ведомости целиком: карточки найденных заказов. */
+.manifest-shared { grid-template-columns: repeat(4, 1fr); margin-top: 14px; }
+.manifest-head { margin-top: 16px; }
+.manifest-orders { display: grid; gap: 10px; }
+.manifest-order {
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px;
+  display: grid; gap: 8px; background: var(--surface);
+}
+.manifest-order.off { opacity: 0.55; }
+.manifest-order-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.manifest-check { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.manifest-check input { width: 18px; height: 18px; }
+.manifest-order-no {
+  flex: 1; min-width: 130px; padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 14px; font-weight: 600;
+}
+.manifest-packages { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.manifest-packages input {
+  width: 76px; padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); color: var(--ink); font-size: 13px; text-align: center;
+}
+.manifest-order-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.manifest-order-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 720px) {
+  .manifest-shared { grid-template-columns: 1fr 1fr; }
+}
 @media (max-width: 720px) {
   .receipt-grid { grid-template-columns: 1fr; }
   .receipt-row { grid-template-columns: 1fr; }

@@ -3,6 +3,7 @@ import {
   buildReceipt, cleanOrderNo, dealOptions, dealReceiptsLine, findDealByOrderNo, isOnStock,
   itemsLine, itemsMismatch, looksLikeOrderNo, orderKey, packagesFromItems, parseManifestText,
   receiptMatches, receiptProblem, receivedLabel, summarizeWarehouse, SHIPMENT_ROWS,
+  parseManifestItems, type ManifestTextItem,
 } from './warehouse';
 import { makeDeal } from './testUtils';
 import type { WarehouseReceipt } from '../types';
@@ -100,6 +101,95 @@ describe('разбор ведомости', () => {
     expect(SHIPMENT_ROWS.length).toBeGreaterThan(20);
     expect(SHIPMENT_ROWS).toContain('Каркас');
     expect(SHIPMENT_ROWS).toContain('Фурнитура');
+  });
+});
+
+describe('ведомости на несколько заказов', () => {
+  it('текст: разносит «Итого» и полные строки по заказам, пустые ячейки не выдумывает', () => {
+    const parsed = parseManifestText([
+      '91_53d4 91_61d2 91_15dr',
+      'Каркас 2 1 2',
+      'Фасады 1 5',
+      'Итого (кол-во упаковок) 3 4 7',
+    ].join('\n'));
+
+    expect(parsed.orders.map((order) => order.orderNo)).toEqual(['91_53d4', '91_61d2', '91_15dr']);
+    expect(parsed.orders.map((order) => order.packages)).toEqual([3, 4, 7]);
+    expect(parsed.orders[0].items).toEqual([{ name: 'Каркас', qty: 2 }]);
+    expect(parsed.orders[2].items).toEqual([{ name: 'Каркас', qty: 2 }]);
+    // «Фасады 1 5» при трёх заказах неоднозначны (у первого пустая ячейка) —
+    // без координат количество не присваиваем.
+    expect(parsed.orders.every((order) => !order.items.some((item) => item.name === 'Фасады'))).toBe(true);
+    expect(parsed.tableByColumns).toBe(false);
+  });
+
+  it('один заказ в тексте получает и позиции, и упаковки', () => {
+    const parsed = parseManifestText('91_53d4\nКаркас 2\nФурнитура 1\nИтого (кол-во упаковок) 3');
+    expect(parsed.orders).toEqual([{
+      orderNo: '91_53d4',
+      packages: 3,
+      items: [{ name: 'Каркас', qty: 2 }, { name: 'Фурнитура', qty: 1 }],
+    }]);
+  });
+
+  // Бланк Visma: колонки — заказы, строки — позиции, есть пустые ячейки.
+  const span = (str: string, x: number, y: number, width = 40): ManifestTextItem => ({ str, x, y, width });
+  const orderSpan = (str: string, center: number, y: number) => span(str, center - 25, y, 50);
+  const qtySpan = (qty: number, center: number, y: number) => span(String(qty), center - 5, y, 10);
+  const c1 = 225;
+  const c2 = 325;
+  const c3 = 425;
+
+  it('PDF по координатам: каждый заказ получает свои упаковки и позиции', () => {
+    const parsed = parseManifestItems([[
+      span('Дата отгрузки: 11.06.2026', 20, 760, 180),
+      span('№ заказа', 20, 700, 60),
+      orderSpan('91_53d4', c1, 700), orderSpan('91_61d2', c2, 700), orderSpan('91_15dr', c3, 700),
+      span('Каркас', 20, 650, 60),
+      qtySpan(2, c1, 650), qtySpan(1, c2, 650), qtySpan(2, c3, 650),
+      span('Фасады', 20, 620, 60),
+      qtySpan(1, c2, 620), qtySpan(5, c3, 620),
+      span('Цоколь ПВХ', 20, 590, 90),
+      qtySpan(1, c2, 590),
+      span('Фурнитура', 20, 560, 70),
+      qtySpan(1, c1, 560), qtySpan(1, c2, 560),
+      span('Итого (кол-во упаковок)', 20, 530, 170),
+      qtySpan(3, c1, 530), qtySpan(4, c2, 530), qtySpan(7, c3, 530),
+      span('ФИО водителя: Сергей Кузьмин', 20, 480, 220),
+      span('Отгрузил(а): Ольга', 20, 450, 140),
+    ]]);
+
+    expect(parsed.tableByColumns).toBe(true);
+    expect(parsed.shippedAt).toBe('2026-06-11');
+    expect(parsed.driver).toContain('Сергей');
+    expect(parsed.orders).toEqual([
+      {
+        orderNo: '91_53d4',
+        packages: 3,
+        items: [{ name: 'Каркас', qty: 2 }, { name: 'Фурнитура', qty: 1 }],
+      },
+      {
+        orderNo: '91_61d2',
+        packages: 4,
+        items: [
+          { name: 'Каркас', qty: 1 },
+          { name: 'Фасады', qty: 1 },
+          { name: 'Цоколь ПВХ', qty: 1 },
+          { name: 'Фурнитура', qty: 1 },
+        ],
+      },
+      {
+        orderNo: '91_15dr',
+        packages: 7,
+        items: [{ name: 'Каркас', qty: 2 }, { name: 'Фасады', qty: 5 }],
+      },
+    ]);
+  });
+
+  it('PDF без колонок заказов не выдумывает заказы', () => {
+    const parsed = parseManifestItems([[span('Просто текст без таблицы', 20, 700, 180)]]);
+    expect(parsed.orders).toEqual([]);
+    expect(parsed.tableByColumns).toBe(false);
   });
 });
 

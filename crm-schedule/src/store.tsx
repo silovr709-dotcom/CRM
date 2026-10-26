@@ -17,7 +17,7 @@ import { nowIso, uid } from './lib/utils';
 import { buildContact, snoozeContact as snoozeDate, type ContactInput } from './lib/contacts';
 import { todayISO } from './lib/dates';
 import {
-  buildReceipt, findDealByOrderNo, receiptProblem, type ReceiptInput,
+  buildReceipt, cleanOrderNo, findDealByOrderNo, receiptProblem, type ReceiptInput,
 } from './lib/warehouse';
 import { defaultNextAction, statusMeta } from './lib/crm';
 import {
@@ -107,6 +107,8 @@ interface AppContextValue {
   receipts: WarehouseReceipt[];
   /** Записать приход. Возвращает текст ошибки или пустую строку. */
   addReceipt: (input: ReceiptInput, file?: File | null) => Promise<string>;
+  /** Записать несколько приходов одной ведомостью: файл сохраняется один раз. */
+  addReceipts: (inputs: ReceiptInput[], file?: File | null) => Promise<string>;
   /** Изменить поступление (в том числе привязать сделку или выдать со склада). */
   updateReceipt: (id: string, patch: Partial<WarehouseReceipt>) => void;
   /** Приложить ведомость к уже созданной записи. */
@@ -1101,10 +1103,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const receipts = data.receipts ?? [];
 
-  const addReceipt = useCallback(async (input: ReceiptInput, file?: File | null): Promise<string> => {
-    const problem = receiptProblem(input);
-    if (problem) return problem;
-    const id = uid('rcpt');
+  const addReceipts = useCallback(async (inputs: ReceiptInput[], file?: File | null): Promise<string> => {
+    if (inputs.length === 0) return 'Не выбрано ни одного заказа из ведомости';
+    for (const input of inputs) {
+      const problem = receiptProblem(input);
+      if (problem) return inputs.length > 1 ? `${cleanOrderNo(input.orderNo) || 'Заказ'}: ${problem}` : problem;
+    }
+    const ids = inputs.map(() => uid('rcpt'));
     let attachment: Attachment | undefined;
     if (file) {
       if (file.size > MAX_FILE_BYTES) return `Файл больше ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} МБ`;
@@ -1118,19 +1123,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
         addedBy: me(),
       };
       try {
-        await saveFile(attachment, 'receipt', id, file);
+        // Одна ведомость на несколько заказов: сам файл хранится один раз,
+        // а записи делят одну ссылку на него.
+        await saveFile(attachment, 'receipt', ids[0], file);
       } catch {
         return 'Не удалось сохранить файл в этом браузере';
       }
     }
-    const deal = findDealByOrderNo(dataRef.current.deals, input.orderNo ?? '');
-    const receipt = buildReceipt(
-      { ...input, file: attachment, dealId: input.dealId || deal?.id, author: me() },
-      id,
-    );
-    setData((current) => ({ ...current, receipts: [...(current.receipts ?? []), receipt], updatedAt: nowIso() }));
+    const receipts = inputs.map((input, index) => {
+      const deal = findDealByOrderNo(dataRef.current.deals, input.orderNo ?? '');
+      return buildReceipt(
+        { ...input, file: attachment, dealId: input.dealId || deal?.id, author: me() },
+        ids[index],
+      );
+    });
+    setData((current) => ({ ...current, receipts: [...(current.receipts ?? []), ...receipts], updatedAt: nowIso() }));
     return '';
   }, [me]);
+
+  const addReceipt = useCallback(
+    (input: ReceiptInput, file?: File | null): Promise<string> => addReceipts([input], file),
+    [addReceipts],
+  );
 
   const updateReceipt = useCallback((id: string, patch: Partial<WarehouseReceipt>) => {
     setData((current) => ({
@@ -1338,6 +1352,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     applyAutomationResult,
     receipts,
     addReceipt,
+    addReceipts,
     updateReceipt,
     attachReceiptFile,
     removeReceipt,
@@ -1362,7 +1377,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }), [
     data, accounts, currentAccount, needsLogin, login, logout, addAccount, updateAccount, removeAccount,
     clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
-    logContact, snoozeDealContact, applyAutomationResult, receipts, addReceipt, updateReceipt, attachReceiptFile, removeReceipt,
+    logContact, snoozeDealContact, applyAutomationResult, receipts, addReceipt, addReceipts, updateReceipt, attachReceiptFile, removeReceipt,
     removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
     removeAttachment, saveDealItems, issueDocument, markClientReminder, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,
