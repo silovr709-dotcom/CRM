@@ -3,7 +3,7 @@
 
 import { useMemo, useState } from 'react';
 import {
-  ArrowRight, Boxes, CalendarDays, FileText, PackageCheck, Plus, Search, Trash2, Truck, X,
+  ArrowRight, Boxes, CalendarDays, FileText, PackageCheck, Plus, Search, Trash2, Truck, Upload, X,
 } from 'lucide-react';
 import type { WarehouseReceipt } from '../types';
 import { useApp } from '../store';
@@ -15,6 +15,7 @@ import { downloadFile } from '../lib/storage';
 import { getFile } from '../lib/attachments';
 import EmptyState from './EmptyState';
 import ReceiptDialog from './ReceiptDialog';
+import ManifestImportDialog from './ManifestImportDialog';
 
 type Filter = 'all' | 'stock' | 'issued' | 'unlinked';
 
@@ -31,6 +32,7 @@ export default function WarehouseView({ onOpenDeal }: { onOpenDeal: (id: string)
   const [filter, setFilter] = useState<Filter>('all');
   const [editing, setEditing] = useState<WarehouseReceipt | null>(null);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const today = todayISO();
 
   const summary = useMemo(() => summarizeWarehouse(receipts, today), [receipts, today]);
@@ -71,7 +73,10 @@ export default function WarehouseView({ onOpenDeal }: { onOpenDeal: (id: string)
           </p>
         </div>
         <div className="actions wrap">
-          <button type="button" className="btn primary" onClick={() => setCreating(true)}>
+          <button type="button" className="btn primary" onClick={() => setImporting(true)}>
+            <Upload size={16} /> Ведомость PDF
+          </button>
+          <button type="button" className="btn ghost" onClick={() => setCreating(true)}>
             <Plus size={16} /> Приход
           </button>
         </div>
@@ -145,7 +150,7 @@ export default function WarehouseView({ onOpenDeal }: { onOpenDeal: (id: string)
             hint={query
               ? 'Проверьте номер заказа — он есть в ведомости, например 91_53d4.'
               : 'Когда водитель привезёт мебель, нажмите «Приход»: номер заказа, количество упаковок и файл ведомости.'}
-            action={<button type="button" className="btn small primary" onClick={() => setCreating(true)}>+ Приход</button>}
+            action={<button type="button" className="btn small primary" onClick={() => setImporting(true)}>Загрузить ведомость</button>}
           />
         </section>
       ) : (
@@ -215,6 +220,7 @@ export default function WarehouseView({ onOpenDeal }: { onOpenDeal: (id: string)
         </ul>
       )}
 
+      {importing && <ManifestImportDialog onClose={() => setImporting(false)} />}
       {creating && <ReceiptDialog onClose={() => setCreating(false)} />}
       {editing && <ReceiptDialog receipt={editing} onClose={() => setEditing(null)} />}
     </div>

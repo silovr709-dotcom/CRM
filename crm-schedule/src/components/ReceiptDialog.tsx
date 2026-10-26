@@ -8,10 +8,10 @@ import { useApp } from '../store';
 import { fmtDate, fmtDateTime, todayISO } from '../lib/dates';
 import { fmtBytes, getFile } from '../lib/attachments';
 import { downloadFile } from '../lib/storage';
-import { canExtractPdfText, extractPdfText } from '../lib/pdfText';
+import { canExtractPdfText, extractPdfLayout, layoutText } from '../lib/pdfText';
 import {
   cleanOrderNo, dealOptions, findDealByOrderNo, itemsMismatch, looksLikeOrderNo,
-  packagesFromItems, parseManifestText, receiptProblem, receivedLabel, SHIPMENT_ROWS,
+  packagesFromItems, parseManifestItems, receiptProblem, receivedLabel, SHIPMENT_ROWS,
 } from '../lib/warehouse';
 import Modal from './Modal';
 
@@ -85,29 +85,34 @@ export default function ReceiptDialog({ receipt, onClose, onSaved }: {
     setParseNote('');
     if (!canExtractPdfText(picked)) return;
     setParsing(true);
-    const text = await extractPdfText(picked);
+    const layout = await extractPdfLayout(picked);
+    const text = layoutText(layout);
     setParsing(false);
     if (!text) {
       setParseNote('В этом PDF нет текстового слоя (скан или фото) — заполните номер и количество руками.');
       return;
     }
     setParsedText(text);
-    const parsed = parseManifestText(text);
+    const parsed = parseManifestItems(layout);
+    const firstOrder = parsed.orders[0];
     setDraft((current) => ({
       ...current,
-      orderNo: current.orderNo || parsed.orderNos[0] || '',
+      orderNo: current.orderNo || firstOrder?.orderNo || parsed.orderNos[0] || '',
       shippedAt: current.shippedAt || parsed.shippedAt || '',
-      packages: current.packages || (parsed.packages ? String(parsed.packages) : ''),
-      items: current.items.length > 0 ? current.items : parsed.items,
+      packages: current.packages || (firstOrder?.packages || parsed.packages ? String(firstOrder?.packages || parsed.packages) : ''),
+      items: current.items.length > 0 ? current.items : (firstOrder?.items.length ? firstOrder.items : parsed.items),
       driver: current.driver || parsed.driver || '',
       shippedBy: current.shippedBy || parsed.shippedBy || '',
     }));
     const found = [
       parsed.orderNos.length ? `номер заказа: ${parsed.orderNos.slice(0, 3).join(', ')}` : 'номер заказа не нашёл',
       parsed.shippedAt ? `дата отгрузки: ${fmtDate(parsed.shippedAt)}` : '',
-      parsed.packages ? `упаковок: ${parsed.packages}` : '',
+      firstOrder?.packages || parsed.packages ? `упаковок: ${firstOrder?.packages || parsed.packages}` : '',
+      firstOrder?.items.length ? `позиций с количеством: ${firstOrder.items.length}` : '',
     ].filter(Boolean).join(' · ');
-    setParseNote(`${found}. Проверьте цифры перед сохранением.`);
+    setParseNote(`${found}. Проверьте цифры перед сохранением.${parsed.orders.length > 1
+      ? ` В ведомости ещё ${parsed.orders.length - 1} заказ(а): все сразу записываются через «Ведомость PDF» на складе.`
+      : ''}`);
   };
 
   const setItem = (index: number, patchItem: Partial<WarehouseItem>) => {

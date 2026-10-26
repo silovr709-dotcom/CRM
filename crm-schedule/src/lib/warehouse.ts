@@ -61,12 +61,25 @@ export function looksLikeOrderNo(value: string): boolean {
 
 /* --------------------------- распознавание ведомости --------------------------- */
 
+/** Один заказ, найденный в ведомости: номер, упаковки и что именно внутри. */
+export interface ParsedManifestOrder {
+  orderNo: string;
+  /** «Итого (кол-во упаковок)» именно по этому заказу. */
+  packages?: number;
+  /** Позиции с количествами именно по этому заказу. */
+  items: WarehouseItem[];
+}
+
 export interface ParsedManifest {
   /** Номера заказов, найденные в тексте: обычно один-три на лист. */
   orderNos: string[];
+  /** Заказы по отдельности — когда ведомость удалось разложить по колонкам. */
+  orders: ParsedManifestOrder[];
+  /** True, если количества разнесены по координатам колонок PDF (надёжно). */
+  tableByColumns: boolean;
   /** Дата отгрузки из ведомости, YYYY-MM-DD. */
   shippedAt?: string;
-  /** «Итого (кол-во упаковок)». */
+  /** «Итого (кол-во упаковок)» первого заказа — для одиночного прихода. */
   packages?: number;
   /** Позиции, которые удалось узнать по названиям строк. */
   items: WarehouseItem[];
@@ -97,11 +110,76 @@ function valueAfter(text: string, label: RegExp): string | undefined {
   return value ? value.slice(0, 80) : undefined;
 }
 
+/** Строка для сравнения названий позиций: без регистра, знаков и лишних пробелов. */
+function normLabel(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^0-9a-zа-я]+/gi, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+const NORMALIZED_ROWS = SHIPMENT_ROWS.map((row) => ({ row, norm: normLabel(row) }));
+
+/** Какая стандартная позиция ведомости начинается в этой строке, если есть. */
+function rowAtLine(line: string): string | undefined {
+  const norm = normLabel(line);
+  let best: { row: string; norm: string } | undefined;
+  for (const candidate of NORMALIZED_ROWS) {
+    if (norm === candidate.norm || norm.startsWith(`${candidate.norm} `)) {
+      if (!best || candidate.norm.length > best.norm.length) best = candidate;
+    }
+  }
+  return best?.row;
+}
+
+/** Целые числа после названия позиции в строке. */
+function numbersAfterRow(line: string, row: string): number[] {
+  const norm = normLabel(line);
+  const rowNorm = normLabel(row);
+  const rest = norm.startsWith(rowNorm) ? norm.slice(rowNorm.length) : norm;
+  return (rest.match(/\d{1,4}/g) ?? []).map(Number);
+}
+
+/** Числа из строки «Итого (кол-во упаковок) 3 4 7». */
+function totalNumbers(line: string): number[] {
+  const norm = normLabel(line);
+  if (!norm.includes('итого')) return [];
+  const after = norm.includes('упаковок') ? norm.slice(norm.indexOf('упаковок') + 'упаковок'.length) : norm.replace('итого', '');
+  return (after.match(/\d{1,4}/g) ?? []).map(Number);
+}
+
+/**
+ * Раскладывает заказы по строкам текста. В обычном тексте пустые ячейки таблицы
+ * пропадают, поэтому количества разносим только когда чисел в строке ровно
+ * столько, сколько заказов: иначе это была бы выдумка, а не распознавание.
+ */
+function ordersFromLines(lines: string[], orderNos: string[]): ParsedManifestOrder[] {
+  const orders: ParsedManifestOrder[] = orderNos.map((orderNo) => ({ orderNo, items: [] }));
+  if (orders.length === 0) return orders;
+  for (const line of lines) {
+    const totals = totalNumbers(line);
+    if (totals.length === orderNos.length && totals.length > 0) {
+      totals.forEach((value, index) => { if (value > 0) orders[index].packages = value; });
+      continue;
+    }
+    const row = rowAtLine(line);
+    if (!row) continue;
+    const numbers = numbersAfterRow(line, row);
+    if (numbers.length !== orderNos.length) continue;
+    numbers.forEach((value, index) => {
+      if (value > 0) orders[index].items.push({ name: row, qty: value });
+    });
+  }
+  return orders;
+}
+
 /**
  * Разбор текста ведомости. Работает, если у PDF есть текстовый слой
  * (скан или фото текста не дают — тогда поля заполняются руками).
- * Количества по строкам в таблице с колонками надёжно не разделить, поэтому
- * позиции возвращаем как подсказку, а числа человек проверяет сам.
+ * Заказы по отдельности возвращает `orders`: для одиночного прихода поля
+ * `packages`/`items` ниже оставлены как раньше — подсказка без выдуманных чисел.
  */
 export function parseManifestText(text: string): ParsedManifest {
   const flat = text.replace(/\u00a0/g, ' ');
@@ -127,13 +205,171 @@ export function parseManifestText(text: string): ParsedManifest {
     .filter((row) => lower.includes(row.toLowerCase().replace(/\.$/, '')))
     .map((row) => ({ name: row, qty: 0 }));
 
+  const limited = orderNos.slice(0, 12);
   return {
-    orderNos: orderNos.slice(0, 12),
+    orderNos: limited,
+    orders: ordersFromLines(flat.split(/\r?\n/), limited),
+    tableByColumns: false,
     shippedAt,
     packages,
     items,
     driver: valueAfter(flat, /ФИО\s+водителя/i),
     shippedBy: valueAfter(flat, /Отгрузил\(?а?\)?/i),
+  };
+}
+
+/* --------------------- разбор таблицы по координатам PDF --------------------- */
+
+/** Кусок текста PDF со своим местом на странице: x/y — левый нижний угол, в пунктах. */
+export interface ManifestTextItem {
+  str: string;
+  x: number;
+  y: number;
+  width?: number;
+  page?: number;
+}
+
+interface ManifestToken extends ManifestTextItem {
+  center: number;
+}
+
+interface ManifestLine {
+  y: number;
+  tokens: ManifestToken[];
+  text: string;
+}
+
+/** Разбивает кусок текста на слова, сохраняя примерную координату каждого. */
+function tokensOf(item: ManifestTextItem): ManifestToken[] {
+  const width = item.width ?? 0;
+  const parts = item.str.split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) {
+    return [{ ...item, str: item.str.trim(), center: item.x + width / 2 }].filter((token) => token.str);
+  }
+  const tokens: ManifestToken[] = [];
+  let offset = 0;
+  for (const part of parts) {
+    const index = item.str.indexOf(part, offset);
+    const at = index >= 0 ? index : offset;
+    const share = item.str.length ? at / item.str.length : 0;
+    tokens.push({
+      ...item,
+      str: part,
+      x: item.x + width * share,
+      center: item.x + width * share + (width * part.length) / Math.max(1, item.str.length) / 2,
+    });
+    offset = at + part.length;
+  }
+  return tokens;
+}
+
+/** Собирает строки страницы из кусочков текста: сверху вниз, внутри — слева направо. */
+function linesOf(items: ManifestTextItem[]): ManifestLine[] {
+  const tokens = items.flatMap(tokensOf).sort((a, b) => b.y - a.y || a.x - b.x);
+  const lines: ManifestLine[] = [];
+  for (const token of tokens) {
+    const line = lines.find((candidate) => Math.abs(candidate.y - token.y) <= 3);
+    if (line) line.tokens.push(token);
+    else lines.push({ y: token.y, tokens: [token], text: token.str });
+  }
+  return lines
+    .map((line) => {
+      const sorted = [...line.tokens].sort((a, b) => a.x - b.x);
+      return { ...line, tokens: sorted, text: sorted.map((token) => token.str).join(' ') };
+    })
+    .sort((a, b) => b.y - a.y);
+}
+
+/** Колонки заказов на странице: номера из шапки таблицы и их центры по x. */
+function columnsOf(lines: ManifestLine[]): Array<{ orderNo: string; key: string; center: number }> {
+  const columns: Array<{ orderNo: string; key: string; center: number }> = [];
+  for (const line of lines) {
+    for (const token of line.tokens) {
+      const text = token.str.trim();
+      if (!looksLikeOrderNo(text)) continue;
+      const key = orderKey(text);
+      if (columns.some((column) => column.key === key)) continue;
+      columns.push({ orderNo: cleanOrderNo(text), key, center: token.center });
+    }
+  }
+  return columns.sort((a, b) => a.center - b.center);
+}
+
+/**
+ * Разбор ведомости по геометрии PDF — главный путь для настоящего бланка.
+ * Колонки таблицы — заказы, строки — позиции; число относится к той колонке,
+ * под которой стоит на странице. Так количество попадает именно в свой заказ,
+ * даже если у соседних заказов эта позиция пустая.
+ */
+export function parseManifestItems(pages: ManifestTextItem[][]): ParsedManifest {
+  const pageLines = pages.map(linesOf);
+  const text = pageLines.flat().map((line) => line.text).join('\n');
+  const base = parseManifestText(text);
+
+  const merged = new Map<string, ParsedManifestOrder & { key: string }>();
+  const columnOrder: string[] = [];
+  let byColumns = false;
+
+  pages.forEach((_items, pageIndex) => {
+    const lines = pageLines[pageIndex];
+    const columns = columnsOf(lines);
+    if (columns.length === 0) return;
+    byColumns = true;
+
+    for (const column of columns) {
+      if (!merged.has(column.key)) {
+        merged.set(column.key, { key: column.key, orderNo: column.orderNo, items: [] });
+        columnOrder.push(column.key);
+      }
+    }
+
+    const gaps = columns.slice(1).map((column, index) => column.center - columns[index].center).filter((gap) => gap > 0);
+    const maxDistance = gaps.length ? Math.max(36, Math.min(...gaps) * 0.62) : Number.POSITIVE_INFINITY;
+    const nearest = (center: number) => {
+      let best: (typeof columns)[number] | undefined;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (const column of columns) {
+        const distance = Math.abs(column.center - center);
+        if (distance < bestDistance) { best = column; bestDistance = distance; }
+      }
+      return best && bestDistance <= maxDistance ? best : undefined;
+    };
+
+    for (const line of lines) {
+      const isTotal = normLabel(line.text).includes('итого');
+      const row = isTotal ? undefined : rowAtLine(line.text);
+      if (!isTotal && !row) continue;
+      for (const token of line.tokens) {
+        if (!/^\d{1,4}$/.test(token.str.trim())) continue;
+        const column = nearest(token.center);
+        if (!column) continue;
+        const order = merged.get(column.key);
+        if (!order) continue;
+        const qty = Number(token.str);
+        if (qty <= 0) continue;
+        if (isTotal) {
+          order.packages = qty;
+        } else if (row) {
+          const existing = order.items.find((item) => item.name === row);
+          if (existing) existing.qty += qty;
+          else order.items.push({ name: row, qty });
+        }
+      }
+    }
+  });
+
+  if (!byColumns) return base;
+  const orders = columnOrder
+    .map((key) => merged.get(key))
+    .filter((order): order is ParsedManifestOrder & { key: string } => Boolean(order))
+    .map(({ key: _key, ...order }) => order);
+  return {
+    ...base,
+    orderNos: orders.map((order) => order.orderNo),
+    orders,
+    tableByColumns: orders.some((order) => order.items.length > 0 || order.packages),
+    packages: orders[0]?.packages ?? base.packages,
+    items: orders[0]?.items.length ? orders[0].items : base.items,
   };
 }
 
