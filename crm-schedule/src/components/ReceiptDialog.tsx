@@ -8,7 +8,7 @@ import { useApp } from '../store';
 import { fmtDate, fmtDateTime, todayISO } from '../lib/dates';
 import { fmtBytes, getFile } from '../lib/attachments';
 import { downloadFile } from '../lib/storage';
-import { canExtractPdfText, extractPdfLayout, layoutText } from '../lib/pdfText';
+import { isPdfFile, readPdf } from '../lib/pdfText';
 import {
   cleanOrderNo, dealOptions, findDealByOrderNo, itemsMismatch, looksLikeOrderNo,
   packagesFromItems, parseManifestItems, receiptProblem, receivedLabel, SHIPMENT_ROWS,
@@ -83,13 +83,18 @@ export default function ReceiptDialog({ receipt, onClose, onSaved }: {
   const readFile = async (picked: File) => {
     setFile(picked);
     setParseNote('');
-    if (!canExtractPdfText(picked)) return;
+    if (!(await isPdfFile(picked))) return;
     setParsing(true);
-    const layout = await extractPdfLayout(picked);
-    const text = layoutText(layout);
+    const read = await readPdf(picked);
+    const layout = read.pages;
+    const text = read.text;
     setParsing(false);
+    if (read.error) {
+      setParseNote(`Файл — настоящий PDF, но прочитать его не получилось: ${read.error}. Заполните номер и количество руками — файл всё равно приложится.`);
+      return;
+    }
     if (!text) {
-      setParseNote('В этом PDF нет текстового слоя (скан или фото) — заполните номер и количество руками.');
+      setParseNote('PDF открылся, но текста в нём приложение не нашло (похоже на скан) — заполните номер и количество руками.');
       return;
     }
     setParsedText(text);

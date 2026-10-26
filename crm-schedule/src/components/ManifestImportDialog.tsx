@@ -8,7 +8,7 @@ import type { WarehouseItem } from '../types';
 import { useApp } from '../store';
 import { fmtBytes } from '../lib/attachments';
 import { fmtDate, todayISO } from '../lib/dates';
-import { canExtractPdfText, extractPdfLayout, layoutText } from '../lib/pdfText';
+import { isPdfFile, readPdf } from '../lib/pdfText';
 import {
   cleanOrderNo, findDealByOrderNo, itemsMismatch, orderKey, packagesFromItems,
   parseManifestItems, type ParsedManifestOrder,
@@ -71,17 +71,22 @@ export default function ManifestImportDialog({ onClose }: { onClose: () => void 
     setFile(picked);
     setError('');
     setByColumns(false);
-    if (!canExtractPdfText(picked)) {
+    if (!(await isPdfFile(picked))) {
       setParseNote('Это фото или скан: текста в файле нет. Добавьте заказы вручную ниже — файл приложится к каждому приходу.');
       return;
     }
     setParsing(true);
     setParseNote('Читаю ведомость…');
-    const layout = await extractPdfLayout(picked);
-    const text = layoutText(layout);
+    const read = await readPdf(picked);
+    const layout = read.pages;
+    const text = read.text;
     setParsing(false);
+    if (read.error) {
+      setParseNote(`Файл — настоящий PDF, но прочитать его не получилось: ${read.error}. Попробуйте открыть его и сохранить заново (или переслать файлом, а не фото). Заказы можно добавить вручную ниже — файл приложится к каждому приходу.`);
+      return;
+    }
     if (!text) {
-      setParseNote('В этом PDF нет текстового слоя (похоже на скан). Добавьте заказы вручную ниже — файл приложится к каждому приходу.');
+      setParseNote('PDF открылся, но текста в нём приложение не нашло — бывает у сканов и у файлов, где текст набран картинкой. Добавьте заказы вручную ниже — файл приложится к каждому приходу.');
       return;
     }
     setParsedText(text.slice(0, 12_000));
