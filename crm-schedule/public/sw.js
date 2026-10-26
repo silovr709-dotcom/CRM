@@ -1,8 +1,13 @@
 /* Офлайн-режим: оболочка приложения из кэша, данные и так лежат в браузере.
  * Стратегия: навигация — сначала сеть (чтобы обновления приходили сразу),
- * ассеты с хэшем в имени — из кэша, остальное — «кэш + фоновое обновление». */
+ * ассеты с хэшем в имени — из кэша, остальное — «кэш + фоновое обновление».
+ *
+ * v4: навигация раньше брала index из кэша, а свежую копию клала под другим
+ * ключом ('./index.html' вместо './'), поэтому установленное приложение
+ * навсегда оставалось на старой версии — новых разделов было не видно. */
 
-const VERSION = 'crm-v3';
+// При смене стратегии кэширования поднимайте версию: старые кэши сотрутся.
+const VERSION = 'crm-v4';
 const CORE = `crm-core-${VERSION}`;
 const RUNTIME = `crm-runtime-${VERSION}`;
 
@@ -28,6 +33,9 @@ self.addEventListener('install', (event) => {
         /* пропускаем: возможно, файла нет в этой сборке */
       }
     }));
+    // Новая версия не ждёт, пока закроют все вкладки: активируется сразу,
+    // а страница сама перезагрузится по событию controllerchange.
+    await self.skipWaiting();
   })());
 });
 
@@ -43,19 +51,25 @@ self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
-async function fromCacheOrNetwork(request) {
+async function navigationFromNetwork(request) {
   const cache = await caches.open(CORE);
-  const cached = await cache.match(request, { ignoreSearch: true });
-  const network = fetch(request)
-    .then(async (response) => {
-      if (response && response.ok) {
-        const copy = response.clone();
-        cache.put('./index.html', copy);
-      }
-      return response;
-    })
-    .catch(() => cached);
-  return cached || network;
+  try {
+    const response = await fetch(request);
+    if (response && response.ok) {
+      // Кладём свежую оболочку под тем же ключом, под которым её запросили,
+      // и под './index.html' — чтобы офлайн-запуск находил её по любому пути.
+      await cache.put(request, response.clone());
+      await cache.put('./index.html', response.clone());
+    }
+    return response;
+  } catch {
+    // Нет сети — отдаём последнюю загруженную оболочку.
+    const cached = (await cache.match(request, { ignoreSearch: true }))
+      || (await cache.match('./index.html'))
+      || (await cache.match('./'));
+    if (cached) return cached;
+    throw new Error('Нет сети и нет сохранённой версии приложения');
+  }
 }
 
 self.addEventListener('fetch', (event) => {
@@ -67,7 +81,7 @@ self.addEventListener('fetch', (event) => {
 
   // Переходы по страницам: свежий index, при отсутствии сети — из кэша.
   if (request.mode === 'navigate') {
-    event.respondWith(fromCacheOrNetwork(request));
+    event.respondWith(navigationFromNetwork(request));
     return;
   }
 

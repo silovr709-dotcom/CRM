@@ -34,6 +34,12 @@
       "short_name": "График",
       "url": "./#/schedule",
       "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Склад: приходы с фабрики",
+      "short_name": "Склад",
+      "url": "./#/warehouse",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
