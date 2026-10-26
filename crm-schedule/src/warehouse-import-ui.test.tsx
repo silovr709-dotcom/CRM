@@ -28,6 +28,8 @@ vi.mock('./lib/pdfText', async (importOriginal) => {
   ]];
   return {
     ...actual,
+    isPdfFile: actual.isPdfFile,
+    readPdf: vi.fn(async () => ({ pages: layout, text: actual.layoutText(layout) })),
     extractPdfLayout: vi.fn(async () => layout),
   };
 });
@@ -110,6 +112,20 @@ describe('загрузка ведомости целиком', () => {
     expect((within(dialog).getByLabelText('Количество 2 заказа 91_15dr') as HTMLInputElement).value).toBe('5');
     expect(within(dialog).getByText(/сделка: Кухня на Ленина/)).toBeTruthy();
     expect((within(dialog).getByLabelText('Водитель') as HTMLInputElement).value).toContain('Сергей');
+  });
+
+  it('принимает PDF без расширения в имени — как его отдаёт телефон', async () => {
+    renderWarehouse();
+
+    fireEvent.click(screen.getByRole('button', { name: /Ведомость PDF/ }));
+    const dialog = await screen.findByRole('dialog');
+    // Телефон и мессенджеры часто отдают файл без «.pdf» и без типа —
+    // приложение должно смотреть содержимое, а не название.
+    fireEvent.change(within(dialog).getByLabelText('Файл ведомости'), {
+      target: { files: [new File(['%PDF-1.4'], 'Ведомость с фабрики', { type: '' })] },
+    });
+
+    expect(await within(dialog).findByText(/Нашёл заказов: 3/)).toBeTruthy();
   });
 
   it('записывает отмеченные заказы пачкой, с одним файлом на всех', async () => {

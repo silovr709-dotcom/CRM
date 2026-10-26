@@ -4,11 +4,32 @@
 
 let workerReady = false;
 
-/** Есть ли смысл пробовать: PDF читаем, фото — нет (текста там нет). */
-export function canExtractPdfText(file: { name?: string; mime?: string }): boolean {
-  const mime = file.mime ?? '';
+/**
+ * Похоже ли, что это PDF — по типу и имени. У файла с телефона тип браузер
+ * кладёт в `type` (не в `mime`!), а имя может быть без расширения вовсе,
+ * поэтому окончательно PDF опознаём по содержимому — см. isPdfFile ниже.
+ */
+export function canExtractPdfText(file: { name?: string; mime?: string; type?: string }): boolean {
+  const mime = `${file.mime ?? ''} ${file.type ?? ''}`.toLowerCase();
   const name = (file.name ?? '').toLowerCase();
-  return mime === 'application/pdf' || name.endsWith('.pdf');
+  return mime.includes('pdf') || /\.pdf(\s|$)/.test(name);
+}
+
+/**
+ * Надёжное опознание PDF по сигнатуре `%PDF-` в начале файла.
+ * Имя и тип от телефона/мессенджера ненадёжны: файл может называться просто
+ * «Ведомость» без расширения — приложение раньше из-за этого писало
+ * «это фото или скан» про настоящий PDF с выделяемым текстом.
+ */
+export async function isPdfFile(blob: Blob): Promise<boolean> {
+  try {
+    const head = new Uint8Array(await blob.slice(0, 1024).arrayBuffer());
+    const text = new TextDecoder('latin1').decode(head);
+    if (text.includes('%PDF-')) return true;
+  } catch {
+    /* не прочитали заголовок — посмотрим на имя и тип */
+  }
+  return canExtractPdfText(blob as { name?: string; type?: string });
 }
 
 /** Кусок текста PDF и его место на странице (x/y — левый нижний угол). */
@@ -54,12 +75,21 @@ async function loadDocument(blob: Blob) {
   return pdfjs.getDocument({ data: bytes, isEvalSupported: false }).promise;
 }
 
+/** Результат чтения PDF: страницы с текстом или честная причина неудачи. */
+export interface PdfRead {
+  pages: PdfTextSpan[][];
+  text: string;
+  /** Почему прочитать не удалось (файл защищён, повреждён, не загрузилась читалка). */
+  error?: string;
+}
+
 /**
- * Текст страниц вместе с координатами каждого кусочка. По этим координатам
- * склад раскладывает таблицу ведомости по колонкам заказов.
+ * Читает PDF и не прячет ошибки. Раньше любая неудача превращалась в пустой
+ * текст, и приложение врало «нет текстового слоя» даже про нормальный PDF,
+ * если, например, не поднялся воркер читалки.
  */
-export async function extractPdfLayout(blob: Blob, maxPages = 6): Promise<PdfTextSpan[][]> {
-  if (typeof window === 'undefined') return [];
+export async function readPdf(blob: Blob, maxPages = 6): Promise<PdfRead> {
+  if (typeof window === 'undefined') return { pages: [], text: '', error: 'PDF читается только в браузере' };
   try {
     const document = await loadDocument(blob);
     const pages: PdfTextSpan[][] = [];
@@ -82,10 +112,21 @@ export async function extractPdfLayout(blob: Blob, maxPages = 6): Promise<PdfTex
       pages.push(spans);
     }
     await document.destroy();
-    return pages;
-  } catch {
-    return [];
+    return { pages, text: layoutText(pages) };
+  } catch (error) {
+    // Причина нужна в интерфейсе и в консоли: «не прочиталось» ≠ «нет текста».
+    console.error('Не удалось прочитать PDF', error);
+    const message = error instanceof Error ? error.message : String(error);
+    return { pages: [], text: '', error: message.slice(0, 160) };
   }
+}
+
+/**
+ * Текст страниц вместе с координатами каждого кусочка. По этим координатам
+ * склад раскладывает таблицу ведомости по колонкам заказов.
+ */
+export async function extractPdfLayout(blob: Blob, maxPages = 6): Promise<PdfTextSpan[][]> {
+  return (await readPdf(blob, maxPages)).pages;
 }
 
 /**
