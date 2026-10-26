@@ -5,7 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 import type {
   Account, AppData, Attachment, Client, Deal, DealItem, DealSchedule, DealStatus, HistoryEntry,
-  IssuedDocument, RoleId, Settings,
+  IssuedDocument, RoleId, Settings, WarehouseReceipt,
 } from './types';
 import { demoData } from './lib/demoData';
 import { emptyData, loadData, saveData, writeAutoBackup } from './lib/storage';
@@ -16,6 +16,9 @@ import { nextSequence, documentNumber } from './lib/documents';
 import { nowIso, uid } from './lib/utils';
 import { buildContact, snoozeContact as snoozeDate, type ContactInput } from './lib/contacts';
 import { todayISO } from './lib/dates';
+import {
+  buildReceipt, findDealByOrderNo, receiptProblem, type ReceiptInput,
+} from './lib/warehouse';
 import { defaultNextAction, statusMeta } from './lib/crm';
 import {
   MAX_FILE_BYTES, compressImage, detectKind, removeFile, saveFile, type OwnerType,
@@ -98,6 +101,15 @@ interface AppContextValue {
   logContact: (dealId: string, input: ContactActionInput) => void;
   /** Отложить контакт на N дней, не засоряя журнал «позвонил». */
   snoozeContact: (dealId: string, days: number) => void;
+  /** Поступления на склад: отгрузочные ведомости с фабрики. */
+  receipts: WarehouseReceipt[];
+  /** Записать приход. Возвращает текст ошибки или пустую строку. */
+  addReceipt: (input: ReceiptInput, file?: File | null) => Promise<string>;
+  /** Изменить поступление (в том числе привязать сделку или выдать со склада). */
+  updateReceipt: (id: string, patch: Partial<WarehouseReceipt>) => void;
+  /** Приложить ведомость к уже созданной записи. */
+  attachReceiptFile: (id: string, file: File) => Promise<string>;
+  removeReceipt: (id: string) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   replaceData: (next: AppData, options?: { backupReason?: string; undoLabel?: string }) => void;
   resetDemo: () => void;
@@ -1074,6 +1086,84 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, [patchDeal]);
 
+  const receipts = data.receipts ?? [];
+
+  const addReceipt = useCallback(async (input: ReceiptInput, file?: File | null): Promise<string> => {
+    const problem = receiptProblem(input);
+    if (problem) return problem;
+    const id = uid('rcpt');
+    let attachment: Attachment | undefined;
+    if (file) {
+      if (file.size > MAX_FILE_BYTES) return `Файл больше ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} МБ`;
+      attachment = {
+        id: uid('file'),
+        name: file.name,
+        mime: file.type || 'application/octet-stream',
+        size: file.size,
+        kind: detectKind(file),
+        createdAt: nowIso(),
+        addedBy: me(),
+      };
+      try {
+        await saveFile(attachment, 'receipt', id, file);
+      } catch {
+        return 'Не удалось сохранить файл в этом браузере';
+      }
+    }
+    const deal = findDealByOrderNo(dataRef.current.deals, input.orderNo ?? '');
+    const receipt = buildReceipt(
+      { ...input, file: attachment, dealId: input.dealId || deal?.id, author: me() },
+      id,
+    );
+    setData((current) => ({ ...current, receipts: [...(current.receipts ?? []), receipt], updatedAt: nowIso() }));
+    return '';
+  }, [me]);
+
+  const updateReceipt = useCallback((id: string, patch: Partial<WarehouseReceipt>) => {
+    setData((current) => ({
+      ...current,
+      receipts: (current.receipts ?? []).map((receipt) => (receipt.id === id
+        ? { ...receipt, ...patch, updatedAt: nowIso() }
+        : receipt)),
+      updatedAt: nowIso(),
+    }));
+  }, []);
+
+  const attachReceiptFile = useCallback(async (id: string, file: File): Promise<string> => {
+    if (file.size > MAX_FILE_BYTES) return `Файл больше ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} МБ`;
+    const attachment: Attachment = {
+      id: uid('file'),
+      name: file.name,
+      mime: file.type || 'application/octet-stream',
+      size: file.size,
+      kind: detectKind(file),
+      createdAt: nowIso(),
+      addedBy: me(),
+    };
+    try {
+      await saveFile(attachment, 'receipt', id, file);
+    } catch {
+      return 'Не удалось сохранить файл в этом браузере';
+    }
+    updateReceipt(id, { file: attachment });
+    return '';
+  }, [me, updateReceipt]);
+
+  const removeReceipt = useCallback((id: string) => {
+    const receipt = dataRef.current.receipts?.find((item) => item.id === id);
+    if (!receipt) return;
+    const sharedElsewhere = (dataRef.current.receipts ?? [])
+      .some((item) => item.id !== id && item.file?.id && item.file.id === receipt.file?.id);
+    if (receipt.file && !sharedElsewhere) void removeFile(receipt.file.id);
+    pushUndo('удалено поступление на склад');
+    setData((current) => ({
+      ...current,
+      receipts: (current.receipts ?? []).filter((item) => item.id !== id),
+      updatedAt: nowIso(),
+    }));
+    notify(`Поступление ${receipt.orderNo || 'без номера'} удалено`, 'info', { label: 'Вернуть', run: undo });
+  }, [notify, pushUndo, undo]);
+
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     setData((current) => ({ ...current, settings: { ...current.settings, ...patch }, updatedAt: nowIso() }));
   }, []);
@@ -1232,6 +1322,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     markClientReminder,
     logContact,
     snoozeContact: snoozeDealContact,
+    receipts,
+    addReceipt,
+    updateReceipt,
+    attachReceiptFile,
+    removeReceipt,
     updateSettings,
     replaceData,
     resetDemo,
@@ -1253,7 +1348,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }), [
     data, accounts, currentAccount, needsLogin, login, logout, addAccount, updateAccount, removeAccount,
     clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
-    logContact, snoozeDealContact,
+    logContact, snoozeDealContact, receipts, addReceipt, updateReceipt, attachReceiptFile, removeReceipt,
     removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
     removeAttachment, saveDealItems, issueDocument, markClientReminder, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,

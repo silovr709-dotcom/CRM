@@ -420,6 +420,7 @@ export default function DataView() {
                   version: 2,
                   clients: data.clients,
                   deals: data.deals,
+                  receipts: data.receipts,
                   settings: data.settings,
                   createdAt: data.createdAt,
                   updatedAt: data.updatedAt,

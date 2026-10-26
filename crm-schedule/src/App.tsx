@@ -1,12 +1,13 @@
 // Единое приложение: CRM + график монтажей. Маршруты в адресе, ⌘K, тема, карточки.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CalendarDays, ChartColumn, CheckSquare, Download, LayoutDashboard, LogOut, Menu, Moon, Plus,
+  Boxes, CalendarDays, ChartColumn, CheckSquare, Download, LayoutDashboard, LogOut, Menu, Moon, Plus,
   Search, Settings2, Smartphone, Sun, TriangleAlert, Users, WifiOff, X,
 } from 'lucide-react';
 import { useApp } from './store';
 import Dashboard from './components/Dashboard';
 import CrmView from './components/CrmView';
+import WarehouseView from './components/WarehouseView';
 import ScheduleView from './components/ScheduleView';
 import TasksView from './components/TasksView';
 import ReportsView from './components/ReportsView';
@@ -39,6 +40,7 @@ import { navigate, useRoute, type ViewId } from './lib/router';
 const NAV: Array<{ id: ViewId; label: string; short: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', label: 'Обзор', short: 'Обзор', icon: LayoutDashboard },
   { id: 'crm', label: 'CRM', short: 'CRM', icon: Users },
+  { id: 'warehouse', label: 'Склад', short: 'Склад', icon: Boxes },
   { id: 'schedule', label: 'График монтажей', short: 'График', icon: CalendarDays },
   { id: 'tasks', label: 'Задачи', short: 'Задачи', icon: CheckSquare },
   { id: 'reports', label: 'Отчёты', short: 'Отчёты', icon: ChartColumn },
@@ -459,6 +461,7 @@ export default function App() {
           />
         )}
 
+        {view === 'warehouse' && <WarehouseView onOpenDeal={openDeal} />}
         {view === 'schedule' && (
           <ScheduleView
             onOpenDeal={(id) => { setInstallDay(null); openDeal(id); }}

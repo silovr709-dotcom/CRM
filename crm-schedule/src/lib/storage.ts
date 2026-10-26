@@ -5,8 +5,10 @@ import type {
   Attachment, AttachmentKind,
   AppData, AutomationRule, Client, Deal, DealSchedule, DealStatus, DealTask, HistoryEntry,
   MessageTemplate, RoleId, RuleId, ScheduleStatus, Settings, TaskKind, TaskRepeat, ThemeMode,
+  WarehouseReceipt,
 } from '../types';
 import { CONTACT_CHANNELS, CONTACT_OUTCOMES } from './contacts';
+import { cleanOrderNo } from './warehouse';
 import { demoData } from './demoData';
 import { SCHEDULE_KINDS, scheduleStatusMeta, type ScheduleKind } from './schedule';
 import { isoDay, parseDay } from './dates';
@@ -29,6 +31,7 @@ export function emptyData(): AppData {
     version: 2,
     clients: [],
     deals: [],
+    receipts: [],
     settings: defaultSettings(),
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -215,6 +218,8 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
   return {
     id: raw.id ?? uid('deal'),
     title: typeof raw.title === 'string' && raw.title ? raw.title : 'Без названия',
+    // Номер заказа фабрики: без него поступление на склад не связать со сделкой.
+    orderNo: typeof raw.orderNo === 'string' ? cleanOrderNo(raw.orderNo) || undefined : undefined,
     clientId: raw.clientId ?? '',
     amount: Number(raw.amount) || 0,
     manager: raw.manager,
@@ -310,6 +315,32 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
 }
 
 /** Мягкая проверка: принимаем только то, что похоже на нашу базу. */
+function normalizeReceipt(raw: Partial<WarehouseReceipt>): WarehouseReceipt {
+  return {
+    id: raw.id ?? uid('rcpt'),
+    orderNo: cleanOrderNo(raw.orderNo),
+    shippedAt: raw.shippedAt?.slice(0, 10) || undefined,
+    receivedAt: (raw.receivedAt ?? isoDay(new Date())).slice(0, 10),
+    packages: Math.max(0, Math.round(Number(raw.packages) || 0)),
+    items: Array.isArray(raw.items)
+      ? raw.items
+        .map((item) => ({ name: String(item?.name ?? '').trim(), qty: Math.max(0, Math.round(Number(item?.qty) || 0)) }))
+        .filter((item) => item.name)
+      : [],
+    driver: raw.driver,
+    shippedBy: raw.shippedBy,
+    note: raw.note,
+    dealId: raw.dealId,
+    file: raw.file ? normalizeAttachment(raw.file) ?? undefined : undefined,
+    text: typeof raw.text === 'string' ? raw.text.slice(0, 20000) : undefined,
+    issuedAt: raw.issuedAt?.slice(0, 10) || undefined,
+    issuedTo: raw.issuedTo,
+    author: raw.author,
+    createdAt: raw.createdAt ?? nowIso(),
+    updatedAt: raw.updatedAt ?? nowIso(),
+  };
+}
+
 export function validateData(raw: unknown): AppData | null {
   const data = raw as Partial<AppData> | null;
   if (!data || typeof data !== 'object') return null;
@@ -318,6 +349,7 @@ export function validateData(raw: unknown): AppData | null {
     version: 2,
     clients: data.clients.map(normalizeClient),
     deals: data.deals.map(normalizeDeal),
+    receipts: Array.isArray(data.receipts) ? data.receipts.map(normalizeReceipt) : [],
     settings: normalizeSettings(data.settings),
     createdAt: data.createdAt ?? nowIso(),
     updatedAt: data.updatedAt ?? nowIso(),
@@ -349,6 +381,7 @@ export function exportBackup(data: AppData) {
     version: 2,
     clients: data.clients,
     deals: data.deals,
+    receipts: data.receipts ?? [],
     settings: data.settings,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
@@ -552,6 +585,7 @@ export function importCalculatorBackup(raw: string): { data: AppData; deals: num
       version: 2,
       clients,
       deals,
+      receipts: [],
       settings,
       createdAt: nowIso(),
       updatedAt: nowIso(),

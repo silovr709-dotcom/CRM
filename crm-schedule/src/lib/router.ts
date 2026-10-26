@@ -2,7 +2,7 @@
 // Хэш-роутинг работает и на статическом хостинге, и в файле, и в PWA.
 import { useEffect, useState } from 'react';
 
-export type ViewId = 'overview' | 'crm' | 'schedule' | 'tasks' | 'reports' | 'data';
+export type ViewId = 'overview' | 'crm' | 'warehouse' | 'schedule' | 'tasks' | 'reports' | 'data';
 
 export interface Route {
   view: ViewId;
@@ -20,7 +20,7 @@ export interface Route {
   tab?: string;
 }
 
-const VIEWS: ViewId[] = ['overview', 'crm', 'schedule', 'tasks', 'reports', 'data'];
+const VIEWS: ViewId[] = ['overview', 'crm', 'warehouse', 'schedule', 'tasks', 'reports', 'data'];
 
 export function parseHash(hash: string): Route {
   const clean = hash.replace(/^#\/?/, '');

@@ -22,8 +22,8 @@ export function attachmentIdFromArchive(name: string): string {
 }
 
 /** Все вложения из данных — со ссылкой на владельца. */
-export function collectAttachments(data: AppData): Array<{ ownerType: 'deal' | 'client'; ownerId: string; attachment: Attachment }> {
-  const result: Array<{ ownerType: 'deal' | 'client'; ownerId: string; attachment: Attachment }> = [];
+export function collectAttachments(data: AppData): Array<{ ownerType: 'deal' | 'client' | 'receipt'; ownerId: string; attachment: Attachment }> {
+  const result: Array<{ ownerType: 'deal' | 'client' | 'receipt'; ownerId: string; attachment: Attachment }> = [];
   for (const deal of data.deals ?? []) {
     for (const attachment of deal.attachments ?? []) {
       result.push({ ownerType: 'deal', ownerId: deal.id, attachment });
@@ -33,6 +33,10 @@ export function collectAttachments(data: AppData): Array<{ ownerType: 'deal' | '
     for (const attachment of client.attachments ?? []) {
       result.push({ ownerType: 'client', ownerId: client.id, attachment });
     }
+  }
+  // Ведомости склада — такие же файлы: без них архив терял бы документы приходов.
+  for (const receipt of data.receipts ?? []) {
+    if (receipt.file) result.push({ ownerType: 'receipt', ownerId: receipt.id, attachment: receipt.file });
   }
   return result;
 }
@@ -113,6 +117,7 @@ function findAttachment(payload: unknown, id: string): Attachment | null {
   const lists: unknown[] = [
     ...(Array.isArray(data.deals) ? data.deals.map((deal) => deal.attachments) : []),
     ...(Array.isArray(data.clients) ? data.clients.map((client) => client.attachments) : []),
+    ...(Array.isArray(data.receipts) ? data.receipts.map((receipt) => (receipt.file ? [receipt.file] : [])) : []),
   ];
   for (const list of lists) {
     const found = normalizeAttachments(list).find((item) => item.id === id);

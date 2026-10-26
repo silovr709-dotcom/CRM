@@ -5,7 +5,7 @@
 // хранит только SHA-256 от кода, поэтому сам код нигде не записан, а базу
 // нельзя перебрать. Код — это и есть «ключ от общей базы».
 
-import type { AppData, Client, Deal } from '../types';
+import type { AppData, Client, Deal, WarehouseReceipt } from '../types';
 import { validateData } from './storage';
 import { nowIso } from './utils';
 
@@ -27,10 +27,11 @@ const TOMBSTONE_TTL_DAYS = 180;
 export interface Removed {
   clients: Record<string, string>;
   deals: Record<string, string>;
+  receipts: Record<string, string>;
 }
 
 export function emptyRemoved(): Removed {
-  return { clients: {}, deals: {} };
+  return { clients: {}, deals: {}, receipts: {} };
 }
 
 export interface SyncConfig {
@@ -173,7 +174,7 @@ export function normalizeRemoved(raw: unknown): Removed {
     }
     return out;
   };
-  return { clients: pick(source.clients), deals: pick(source.deals) };
+  return { clients: pick(source.clients), deals: pick(source.deals), receipts: pick(source.receipts) };
 }
 
 export function buildEnvelope(data: AppData, removed: Removed, device: string): SyncEnvelope {
@@ -240,7 +241,11 @@ export function mergeRemoved(a: Removed, b: Removed): Removed {
     }
     return out;
   };
-  return { clients: merge(a.clients, b.clients), deals: merge(a.deals, b.deals) };
+  return {
+    clients: merge(a.clients, b.clients),
+    deals: merge(a.deals, b.deals),
+    receipts: merge(a.receipts ?? {}, b.receipts ?? {}),
+  };
 }
 
 function mergeList<T extends { id: string; createdAt?: string; updatedAt?: string }>(
@@ -295,6 +300,11 @@ export function mergeSyncData(
   const deleted = mergeRemoved(removed, emptyRemoved());
   const clients = mergeList<Client>(local.clients, remote.clients, deleted.clients, now);
   const deals = mergeList<Deal>(local.deals, remote.deals, deleted.deals, now);
+  // Поступления на склад живут отдельно от сделок: удаление сделки не должно
+  // стирать историю «что и когда привезли».
+  const receipts = mergeList<WarehouseReceipt>(
+    local.receipts ?? [], remote.receipts ?? [], deleted.receipts, now,
+  );
 
   const localUpdated = local.updatedAt || '';
   const remoteUpdated = remote.updatedAt || '';
@@ -321,11 +331,12 @@ export function mergeSyncData(
       version: 2,
       clients: clients.items,
       deals: deals.items,
+      receipts: receipts.items,
       settings,
       createdAt,
       updatedAt: localUpdated > remoteUpdated ? localUpdated : remoteUpdated,
     },
-    removed: { clients: clients.deleted, deals: deals.deleted },
+    removed: { clients: clients.deleted, deals: deals.deleted, receipts: receipts.deleted },
   };
 }
 

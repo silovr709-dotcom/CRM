@@ -2314,3 +2314,83 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select:
 .deal-meta .touch-line { flex-basis: 100%; }
 .mini-deal-list li { display: grid; gap: 4px; }
 .mini-deal-list .mini-contact { padding: 0 0 6px; }
+
+/* --- Склад: поиск по номеру заказа, приходы, ведомости --- */
+.warehouse-search {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); margin-bottom: 12px;
+}
+.warehouse-search input {
+  flex: 1; border: 0; background: transparent; font-size: 16px; color: var(--ink); outline: none;
+}
+.warehouse-search svg { color: var(--muted); flex: none; }
+.warehouse-stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 12px; }
+.warehouse-stats .stat {
+  display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto;
+  gap: 0 8px; align-items: center; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
+}
+.warehouse-stats .stat-icon {
+  grid-row: span 2; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--surface-2); color: var(--muted);
+}
+.warehouse-stats b { font-size: 17px; letter-spacing: -0.3px; }
+.warehouse-stats small { color: var(--muted); font-size: 11.5px; }
+.warehouse-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.receipt-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.receipt-card {
+  display: flex; align-items: stretch; gap: 6px; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--surface); overflow: hidden;
+}
+.receipt-card.issued { opacity: 0.72; }
+.receipt-main {
+  flex: 1; display: grid; gap: 3px; padding: 12px 14px; text-align: left;
+  background: transparent; border: 0; cursor: pointer; color: inherit; min-width: 0;
+}
+.receipt-main:hover { background: var(--surface-2); }
+.receipt-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.receipt-order { font-size: 15px; letter-spacing: 0.4px; font-variant-numeric: tabular-nums; }
+.receipt-file-chip {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
+  color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px;
+}
+.receipt-deal { font-size: 13px; color: var(--ink); }
+.receipt-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+.receipt-meta b { color: var(--ink); }
+.receipt-items { font-size: 12.5px; color: var(--muted); }
+.receipt-note { font-size: 12px; color: var(--amber, #b45309); }
+.receipt-actions {
+  display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  padding: 8px; border-left: 1px solid var(--line);
+}
+.receipt-grid { display: grid; gap: 14px; grid-template-columns: minmax(200px, 260px) 1fr; align-items: start; }
+.receipt-file { display: grid; gap: 8px; }
+.receipt-drop { cursor: pointer; }
+.receipt-drop.has-file { border-color: var(--accent); }
+.receipt-existing-file { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.receipt-fields { display: grid; gap: 10px; }
+.receipt-row { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+.receipt-items { margin-top: 16px; display: grid; gap: 8px; }
+.receipt-items .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.receipt-items h3 { margin: 0; font-size: 14px; }
+.receipt-item-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.receipt-item-list li { display: grid; grid-template-columns: 1fr 84px auto; gap: 6px; align-items: center; }
+.receipt-item-list input { padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 13px; }
+.receipt-item-list input[type='number'] { text-align: center; }
+@media (max-width: 720px) {
+  .receipt-grid { grid-template-columns: 1fr; }
+  .receipt-row { grid-template-columns: 1fr; }
+  .receipt-actions { flex-direction: row; border-left: 0; border-top: 1px solid var(--line); }
+  .receipt-card { flex-direction: column; }
+}
+
+.deal-receipt-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; }
+.deal-receipt-list li { display: grid; gap: 1px; font-size: 12.5px; }
+
+/* В нижней навигации теперь семь разделов: на узком экране ужимаем подписи. */
+@media (max-width: 430px) {
+  .mobile-nav { padding-left: 2px; padding-right: 2px; }
+  .mobile-nav button { padding: 4px 3px; font-size: 9.5px; gap: 2px; }
+  .mobile-nav button svg { width: 17px; height: 17px; }
+}

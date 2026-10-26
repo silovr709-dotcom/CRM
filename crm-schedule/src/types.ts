@@ -209,6 +209,8 @@ export interface Deal {
   id: string;
   /** Название заказа, например «Кухня на Ленина». */
   title: string;
+  /** Номер заказа на фабрике (например, 91_53d4) — по нему ищут на складе. */
+  orderNo?: string;
   clientId: string;
   /** Сумма заказа для клиента. 0 — сумма ещё не заполнена. */
   amount: number;
@@ -386,10 +388,53 @@ export interface Settings {
   demo: boolean;
 }
 
+/** Строка отгрузочной ведомости: что именно привезли и сколько. */
+export interface WarehouseItem {
+  name: string;
+  qty: number;
+}
+
+/**
+ * Поступление на склад: водитель привёз мебель, отдал отгрузочную ведомость.
+ * Главный ключ — номер заказа: по нему видно, когда пришло, сколько упаковок
+ * и что именно. Сам PDF ведомости лежит в файлах этого устройства.
+ */
+export interface WarehouseReceipt {
+  id: string;
+  /** Номер заказа фабрики: «91_53d4». Поиск идёт по нему в первую очередь. */
+  orderNo: string;
+  /** Дата отгрузки с фабрики из ведомости, YYYY-MM-DD. */
+  shippedAt?: string;
+  /** Когда приняли на склад, YYYY-MM-DD. */
+  receivedAt: string;
+  /** Всего упаковок по ведомости (строка «Итого»). */
+  packages: number;
+  items: WarehouseItem[];
+  driver?: string;
+  /** Кто отгрузил на фабрике. */
+  shippedBy?: string;
+  note?: string;
+  /** Сделка, к которой относится заказ (если нашли по номеру). */
+  dealId?: string;
+  /** Ведомость: PDF или фото. Файл лежит в IndexedDB этого устройства. */
+  file?: Attachment;
+  /** Распознанный текст ведомости: поиск работает даже там, где файла нет. */
+  text?: string;
+  /** Когда выдали со склада / увезли на монтаж. */
+  issuedAt?: string;
+  /** Кому выдали: бригада или клиент. */
+  issuedTo?: string;
+  author?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AppData {
   version: 2;
   clients: Client[];
   deals: Deal[];
+  /** Поступления на склад: отгрузочные ведомости с фабрики. */
+  receipts: WarehouseReceipt[];
   settings: Settings;
   createdAt: string;
   updatedAt: string;
