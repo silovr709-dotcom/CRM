@@ -12,7 +12,9 @@ import { isPdfFile, readPdf } from '../lib/pdfText';
 import {
   cleanOrderNo, dealOptions, findDealByOrderNo, itemsMismatch, looksLikeOrderNo,
   packagesFromItems, parseManifestItems, receiptProblem, receivedLabel, SHIPMENT_ROWS,
+  shipmentRowItems, type ParsedManifest,
 } from '../lib/warehouse';
+import { recognizeManifest } from '../lib/ocr';
 import Modal from './Modal';
 
 interface Draft {
@@ -33,7 +35,8 @@ function draftFrom(receipt?: WarehouseReceipt): Draft {
     receivedAt: receipt?.receivedAt ?? todayISO(),
     shippedAt: receipt?.shippedAt ?? '',
     packages: receipt ? String(receipt.packages) : '',
-    items: receipt?.items?.length ? receipt.items.map((item) => ({ ...item })) : [],
+    // Новый приход: все позиции бланка уже подставлены — вписывается только количество.
+    items: receipt?.items?.length ? receipt.items.map((item) => ({ ...item })) : shipmentRowItems(),
     driver: receipt?.driver ?? '',
     shippedBy: receipt?.shippedBy ?? '',
     note: receipt?.note ?? '',
@@ -61,6 +64,8 @@ export default function ReceiptDialog({ receipt, onClose, onSaved }: {
   const [file, setFile] = useState<File | null>(null);
   const [parsedText, setParsedText] = useState(receipt?.text ?? '');
   const [parsing, setParsing] = useState(false);
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [needOcr, setNeedOcr] = useState(false);
   const [parseNote, setParseNote] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -83,32 +88,46 @@ export default function ReceiptDialog({ receipt, onClose, onSaved }: {
   const readFile = async (picked: File) => {
     setFile(picked);
     setParseNote('');
-    if (!(await isPdfFile(picked))) return;
+    setNeedOcr(false);
+    if (!(await isPdfFile(picked))) {
+      setParseNote('Это фото ведомости: текста в файле нет. Можно распознать его кнопкой ниже — или вписать количество по готовым позициям.');
+      setNeedOcr(true);
+      return;
+    }
     setParsing(true);
     const read = await readPdf(picked);
     const layout = read.pages;
     const text = read.text;
     setParsing(false);
     if (read.error) {
-      setParseNote(`Файл — настоящий PDF, но прочитать его не получилось: ${read.error}. Заполните номер и количество руками — файл всё равно приложится.`);
+      setParseNote(`Файл — настоящий PDF, но прочитать его не получилось: ${read.error}. Можно распознать его как картинку кнопкой ниже — или заполнить руками, файл всё равно приложится.`);
+      setNeedOcr(true);
       return;
     }
     if (!text) {
-      setParseNote('PDF открылся, но текста в нём приложение не нашло (похоже на скан) — заполните номер и количество руками.');
+      setParseNote('PDF открылся, но текста в нём нет: это скан (картинка внутри PDF). Нажмите «Распознать скан» — приложение прочитает лист как фото.');
+      setNeedOcr(true);
       return;
     }
     setParsedText(text);
-    const parsed = parseManifestItems(layout);
+    applyParsed(parseManifestItems(layout));
+  };
+
+  /** Подставляет найденное в форму, не затирая то, что человек уже вписал. */
+  const applyParsed = (parsed: ParsedManifest) => {
     const firstOrder = parsed.orders[0];
-    setDraft((current) => ({
-      ...current,
-      orderNo: current.orderNo || firstOrder?.orderNo || parsed.orderNos[0] || '',
-      shippedAt: current.shippedAt || parsed.shippedAt || '',
-      packages: current.packages || (firstOrder?.packages || parsed.packages ? String(firstOrder?.packages || parsed.packages) : ''),
-      items: current.items.length > 0 ? current.items : (firstOrder?.items.length ? firstOrder.items : parsed.items),
-      driver: current.driver || parsed.driver || '',
-      shippedBy: current.shippedBy || parsed.shippedBy || '',
-    }));
+    setDraft((current) => {
+      const touched = current.items.some((item) => Number(item.qty) > 0);
+      return {
+        ...current,
+        orderNo: current.orderNo || firstOrder?.orderNo || parsed.orderNos[0] || '',
+        shippedAt: current.shippedAt || parsed.shippedAt || '',
+        packages: current.packages || (firstOrder?.packages || parsed.packages ? String(firstOrder?.packages || parsed.packages) : ''),
+        items: touched ? current.items : shipmentRowItems(firstOrder?.items.length ? firstOrder.items : parsed.items),
+        driver: current.driver || parsed.driver || '',
+        shippedBy: current.shippedBy || parsed.shippedBy || '',
+      };
+    });
     const found = [
       parsed.orderNos.length ? `номер заказа: ${parsed.orderNos.slice(0, 3).join(', ')}` : 'номер заказа не нашёл',
       parsed.shippedAt ? `дата отгрузки: ${fmtDate(parsed.shippedAt)}` : '',
@@ -118,6 +137,27 @@ export default function ReceiptDialog({ receipt, onClose, onSaved }: {
     setParseNote(`${found}. Проверьте цифры перед сохранением.${parsed.orders.length > 1
       ? ` В ведомости ещё ${parsed.orders.length - 1} заказ(а): все сразу записываются через «Ведомость PDF» на складе.`
       : ''}`);
+  };
+
+  /** Сканированная ведомость: текста в файле нет, читаем картинку (OCR). */
+  const runOcr = async () => {
+    if (!file) return;
+    setOcrBusy(true);
+    setParseNote('Распознаю скан…');
+    try {
+      const result = await recognizeManifest(file, setParseNote);
+      if (result.text) setParsedText(result.text.slice(0, 12_000));
+      if (result.parsed.orderNos.length > 0 || result.parsed.items.length > 0) {
+        applyParsed(result.parsed);
+      } else {
+        setParseNote(result.text
+          ? 'Распознавание прочитало текст, но заказ в нём не нашёлся. Проверьте позиции ниже и впишите количество.'
+          : 'Распознавание ничего не прочитало: лист слишком бледный или фото размыто. Заполните количество по позициям ниже.');
+      }
+    } catch (error) {
+      setParseNote(`Распознать не получилось: ${error instanceof Error ? error.message : 'ошибка распознавания'}. В первый раз для OCR нужен интернет — модель загружается один раз.`);
+    }
+    setOcrBusy(false);
   };
 
   const setItem = (index: number, patchItem: Partial<WarehouseItem>) => {
@@ -132,7 +172,7 @@ export default function ReceiptDialog({ receipt, onClose, onSaved }: {
       receivedAt: draft.receivedAt,
       shippedAt: draft.shippedAt || undefined,
       packages: Number(draft.packages) || packagesFromItems(draft.items),
-      items: draft.items.filter((item) => item.name.trim()),
+      items: draft.items.filter((item) => item.name.trim() && Number(item.qty) > 0),
       driver: draft.driver,
       shippedBy: draft.shippedBy,
       note: draft.note,
@@ -251,6 +291,11 @@ export default function ReceiptDialog({ receipt, onClose, onSaved }: {
           </div>
           {parsing && <p className="inline-note">Читаю текст из PDF…</p>}
           {parseNote && <p className="inline-note">{parseNote}</p>}
+          {file && needOcr && (
+            <button type="button" className="btn small" onClick={() => void runOcr()} disabled={ocrBusy}>
+              {ocrBusy ? 'Распознаю…' : 'Распознать скан (OCR)'}
+            </button>
+          )}
           {!isNew && receipt.file && !file && (
             <div className="receipt-existing-file">
               <FileText size={14} />
@@ -352,7 +397,7 @@ export default function ReceiptDialog({ receipt, onClose, onSaved }: {
         <div className="section-head">
           <div>
             <h3>Что именно привезли</h3>
-            <span className="muted small">позиции из ведомости: наименование и количество упаковок</span>
+            <span className="muted small">все позиции ведомости уже подставлены — впишите только количество, свои строки добавляются кнопкой «Позиция»</span>
           </div>
           <button type="button" className="btn small ghost" onClick={() => addRow()}>
             <Plus size={13} /> Позиция
@@ -377,7 +422,8 @@ export default function ReceiptDialog({ receipt, onClose, onSaved }: {
                 <input
                   type="number"
                   min={0}
-                  value={item.qty}
+                  value={item.qty === 0 ? '' : item.qty}
+                  placeholder="0"
                   aria-label={`Количество ${index + 1}`}
                   onChange={(event) => setItem(index, { qty: Number(event.target.value) || 0 })}
                 />

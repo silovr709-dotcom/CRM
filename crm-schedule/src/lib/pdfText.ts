@@ -137,3 +137,43 @@ export async function extractPdfText(blob: Blob, maxPages = 6): Promise<string> 
   const pages = await extractPdfLayout(blob, maxPages);
   return layoutText(pages);
 }
+
+/** Страница PDF, отрисованная картинкой — вход для распознавания (OCR). */
+export interface RenderedPdfPage {
+  blob: Blob;
+  width: number;
+  height: number;
+}
+
+/**
+ * Рисует страницы PDF в картинки. Сканированная ведомость — это картинка
+ * внутри PDF: текстового слоя у неё нет, читает её только OCR по изображению.
+ */
+export async function renderPdfPages(blob: Blob, maxPages = 4): Promise<RenderedPdfPage[]> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return [];
+  const pdfDocument = await loadDocument(blob);
+  try {
+    const pages: RenderedPdfPage[] = [];
+    const count = Math.min(pdfDocument.numPages, maxPages);
+    for (let index = 1; index <= count; index += 1) {
+      const page = await pdfDocument.getPage(index);
+      const base = page.getViewport({ scale: 1 });
+      // ~200 dpi, но без фанатизма: огромная страница тормозит распознавание.
+      const scale = Math.min(2.2, 2200 / Math.max(1, base.width));
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      const context = canvas.getContext('2d');
+      if (!context) continue;
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: context, viewport }).promise;
+      const image = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.88));
+      if (image) pages.push({ blob: image, width: canvas.width, height: canvas.height });
+    }
+    return pages;
+  } finally {
+    await pdfDocument.destroy();
+  }
+}

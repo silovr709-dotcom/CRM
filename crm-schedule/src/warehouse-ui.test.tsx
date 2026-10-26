@@ -177,6 +177,29 @@ describe('новый приход', () => {
     });
   });
 
+  it('позиции ведомости уже подставлены — вписывается только количество', async () => {
+    seed(makeData());
+    renderApp();
+
+    fireEvent.click(addButton());
+    const dialog = await screen.findByRole('dialog');
+    // Названия из бланка Visma стоят готовыми, от человека — только цифры.
+    expect((within(dialog).getByLabelText('Наименование 1') as HTMLInputElement).value).toBe('Каркас');
+    expect((within(dialog).getByLabelText('Наименование 3') as HTMLInputElement).value).toBe('Фасады');
+    fireEvent.change(within(dialog).getByLabelText('Номер заказа'), { target: { value: '91_77aa' } });
+    fireEvent.change(within(dialog).getByLabelText('Количество 1'), { target: { value: '2' } });
+    fireEvent.change(within(dialog).getByLabelText('Количество 15'), { target: { value: '1' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Записать приход' }));
+
+    const data = await stored((current) => expect(current.receipts).toHaveLength(1));
+    // Пустые строки бланка в запись не попадают.
+    expect(data.receipts[0]).toMatchObject({
+      orderNo: '91_77aa',
+      packages: 3,
+      items: [{ name: 'Каркас', qty: 2 }, { name: 'Фурнитура', qty: 1 }],
+    });
+  });
+
   it('не пускает без номера заказа и объясняет почему', async () => {
     seed(makeData());
     renderApp();

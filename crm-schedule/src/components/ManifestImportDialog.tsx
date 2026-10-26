@@ -11,8 +11,9 @@ import { fmtDate, todayISO } from '../lib/dates';
 import { isPdfFile, readPdf } from '../lib/pdfText';
 import {
   cleanOrderNo, findDealByOrderNo, itemsMismatch, orderKey, packagesFromItems,
-  parseManifestItems, type ParsedManifestOrder,
+  parseManifestItems, SHIPMENT_ROWS, shipmentRowItems, type ParsedManifest, type ParsedManifestOrder,
 } from '../lib/warehouse';
+import { recognizeManifest } from '../lib/ocr';
 import Modal from './Modal';
 
 interface DraftOrder {
@@ -38,13 +39,16 @@ function draftFromParsed(order: ParsedManifestOrder): DraftOrder {
 
 function blankOrder(): DraftOrder {
   nextKey += 1;
-  return { key: nextKey, selected: true, orderNo: '', packages: '', items: [] };
+  // Позиции бланка уже подставлены — человеку остаётся вписать количество.
+  return { key: nextKey, selected: true, orderNo: '', packages: '', items: shipmentRowItems() };
 }
 
 export default function ManifestImportDialog({ onClose }: { onClose: () => void }) {
   const { deals, receipts, addReceipts, notify } = useApp();
   const [file, setFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [needOcr, setNeedOcr] = useState(false);
   const [parseNote, setParseNote] = useState('');
   const [parsedText, setParsedText] = useState('');
   const [byColumns, setByColumns] = useState(false);
@@ -71,8 +75,10 @@ export default function ManifestImportDialog({ onClose }: { onClose: () => void 
     setFile(picked);
     setError('');
     setByColumns(false);
+    setNeedOcr(false);
     if (!(await isPdfFile(picked))) {
-      setParseNote('Это фото или скан: текста в файле нет. Добавьте заказы вручную ниже — файл приложится к каждому приходу.');
+      setParseNote('Это фото ведомости: текста в файле нет. Нажмите «Распознать скан» — приложение прочитает лист как картинку. Или добавьте заказы вручную — файл приложится к каждому приходу.');
+      setNeedOcr(true);
       return;
     }
     setParsing(true);
@@ -82,21 +88,27 @@ export default function ManifestImportDialog({ onClose }: { onClose: () => void 
     const text = read.text;
     setParsing(false);
     if (read.error) {
-      setParseNote(`Файл — настоящий PDF, но прочитать его не получилось: ${read.error}. Попробуйте открыть его и сохранить заново (или переслать файлом, а не фото). Заказы можно добавить вручную ниже — файл приложится к каждому приходу.`);
+      setParseNote(`Файл — настоящий PDF, но прочитать его как текст не получилось: ${read.error}. Можно распознать его как картинку кнопкой «Распознать скан» — или добавить заказы вручную.`);
+      setNeedOcr(true);
       return;
     }
     if (!text) {
-      setParseNote('PDF открылся, но текста в нём приложение не нашло — бывает у сканов и у файлов, где текст набран картинкой. Добавьте заказы вручную ниже — файл приложится к каждому приходу.');
+      setParseNote('PDF открылся, но текста в нём нет: это скан — картинка внутри PDF (на телефоне текст выделяет сам телефон, в файле его нет). Нажмите «Распознать скан», приложение прочитает страницы как фото.');
+      setNeedOcr(true);
       return;
     }
     setParsedText(text.slice(0, 12_000));
-    const parsed = parseManifestItems(layout);
+    applyParsed(parseManifestItems(layout));
+  };
+
+  /** Показывает найденные заказы карточками — общий путь для PDF и OCR. */
+  const applyParsed = (parsed: ParsedManifest) => {
     setShippedAt((current) => current || parsed.shippedAt || '');
     setDriver((current) => current || parsed.driver || '');
     setShippedBy((current) => current || parsed.shippedBy || '');
     setByColumns(parsed.tableByColumns);
     if (parsed.orders.length === 0) {
-      setParseNote('Текст в PDF есть, но номеров заказов в нём не нашёл. Добавьте заказы вручную ниже — файл приложится к каждому.');
+      setParseNote('Текст прочитался, но номеров заказов в нём не нашлось. Добавьте заказы вручную ниже — файл приложится к каждому приходу.');
       return;
     }
     setOrders(parsed.orders.map(draftFromParsed));
@@ -108,6 +120,27 @@ export default function ManifestImportDialog({ onClose }: { onClose: () => void 
         ? 'Количество разнёс по колонкам заказов — проверьте цифры перед записью.'
         : 'Часть количеств по колонкам разнести не удалось — проверьте и допишите пустые строки.'),
     );
+  };
+
+  /** Сканированная ведомость: читаем страницы как картинки (OCR). */
+  const runOcr = async () => {
+    if (!file) return;
+    setOcrBusy(true);
+    setParseNote('Распознаю скан…');
+    try {
+      const result = await recognizeManifest(file, setParseNote);
+      if (result.text) setParsedText(result.text.slice(0, 12_000));
+      if (result.parsed.orders.length > 0) {
+        applyParsed(result.parsed);
+      } else {
+        setParseNote(result.text
+          ? 'Распознавание прочитало текст, но номеров заказов не нашло. Добавьте заказы вручную ниже — позиции уже подставлены, останется вписать количество.'
+          : 'Распознавание ничего не прочитало: лист бледный или фото размыто. Добавьте заказы вручную ниже — позиции уже подставлены.');
+      }
+    } catch (error) {
+      setParseNote(`Распознать не получилось: ${error instanceof Error ? error.message : 'ошибка распознавания'}. В первый раз нужен интернет — модель распознавания загружается один раз и дальше лежит в кэше. Заказы можно добавить вручную.`);
+    }
+    setOcrBusy(false);
   };
 
   const patchOrder = (key: number, patch: Partial<DraftOrder>) => {
@@ -142,7 +175,7 @@ export default function ManifestImportDialog({ onClose }: { onClose: () => void 
       receivedAt,
       shippedAt: shippedAt || undefined,
       packages: Number(order.packages) || packagesFromItems(order.items),
-      items: order.items.filter((item) => item.name.trim()),
+      items: order.items.filter((item) => item.name.trim() && Number(item.qty) > 0),
       driver,
       shippedBy,
       dealId: findDealByOrderNo(deals, order.orderNo)?.id,
@@ -202,6 +235,11 @@ export default function ManifestImportDialog({ onClose }: { onClose: () => void 
       </div>
       {parsing && <p className="inline-note"><ScanSearch size={13} /> Читаю текст и таблицу ведомости…</p>}
       {parseNote && !parsing && <p className="inline-note">{parseNote}</p>}
+      {file && needOcr && !parsing && (
+        <button type="button" className="btn" onClick={() => void runOcr()} disabled={ocrBusy}>
+          {ocrBusy ? 'Распознаю…' : 'Распознать скан (OCR)'}
+        </button>
+      )}
       {file && byColumns && <p className="inline-note">Файл приложится к каждому записанному приходу — открывать его можно из любой записи заказа.</p>}
 
       <div className="receipt-row manifest-shared">
@@ -311,7 +349,8 @@ export default function ManifestImportDialog({ onClose }: { onClose: () => void 
                         <input
                           type="number"
                           min={0}
-                          value={item.qty}
+                          value={item.qty === 0 ? '' : item.qty}
+                          placeholder="0"
                           aria-label={`Количество ${index + 1} заказа ${order.orderNo || orderIndex + 1}`}
                           onChange={(event) => patchItem(order.key, index, { qty: Number(event.target.value) || 0 })}
                         />
@@ -338,6 +377,15 @@ export default function ManifestImportDialog({ onClose }: { onClose: () => void 
                   >
                     <Plus size={13} /> Позиция
                   </button>
+                  {order.items.length < SHIPMENT_ROWS.length && (
+                    <button
+                      type="button"
+                      className="btn small ghost"
+                      onClick={() => patchOrder(order.key, { items: shipmentRowItems(order.items) })}
+                    >
+                      Все позиции ведомости
+                    </button>
+                  )}
                   <span className={`small ${mismatch ? 'danger' : 'muted'}`}>
                     Сумма позиций: {packagesFromItems(order.items)}
                     {mismatch ? ' — не сходится с «Итого», проверьте' : ''}

@@ -544,6 +544,21 @@ export function emptyItem(name = ''): WarehouseItem {
   return { name, qty: 1 };
 }
 
+/**
+ * Позиции ведомости списком: распознанные/введённые плюс все остальные строки
+ * бланка Visma с пустым количеством. Человеку остаётся только проставить
+ * цифры — названия придумывать и вбивать не нужно. Своя позиция добавляется
+ * отдельной строкой, как раньше.
+ */
+export function shipmentRowItems(existing: WarehouseItem[] = []): WarehouseItem[] {
+  const result = existing.map((item) => ({ ...item }));
+  const known = new Set(result.map((item) => item.name.trim().toLowerCase()));
+  for (const row of SHIPMENT_ROWS) {
+    if (!known.has(row.toLowerCase())) result.push({ name: row, qty: 0 });
+  }
+  return result;
+}
+
 /** Короткая сводка для карточки сделки: «пришло 4 уп. 11 июня». */
 export function dealReceiptsLine(receipts: WarehouseReceipt[]): string {
   if (receipts.length === 0) return 'на склад не приходило';
