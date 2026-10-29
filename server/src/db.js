@@ -295,7 +295,10 @@ function bootstrapAdmin() {
   const { salt, hash } = hashPassword(envPass || 'admin');
   db.prepare(`INSERT INTO users (login, name, role, pass_salt, pass_hash, must_change_password)
               VALUES (?, ?, 'admin', ?, ?, ?)`)
-    .run(login, 'Администратор', salt, hash, envPass ? 0 : 1);
+    // ADMIN_MUST_CHANGE=1 — пароль из переменной одноразовый: при первом входе
+    // приложение попросит придумать свой (так работает установщик на сервере).
+    .run(login, 'Администратор', salt, hash,
+      envPass && process.env.ADMIN_MUST_CHANGE !== '1' ? 0 : 1);
   console.log(envPass
     ? `Создан администратор «${login}» с паролем из ADMIN_PASSWORD.`
     : `Создан администратор «${login}» с временным паролем «admin» — смените его после входа.`);
