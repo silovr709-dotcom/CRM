@@ -23,6 +23,7 @@ import Modal from './Modal';
 import ReminderSettings from './ReminderSettings';
 import SyncCard from './SyncCard';
 import AccessCard from './AccessCard';
+import ServerUsersCard from './ServerUsersCard';
 
 function emptyPreviewDeal(): Deal {
   const stamp = new Date().toISOString();
@@ -50,7 +51,7 @@ function emptyPreviewDeal(): Deal {
 export default function DataView() {
   const {
     data, deals, clients, settings, updateSettings, replaceData, resetDemo, clearAll,
-    undo, canUndo, notify, storageOk, savedAt, role,
+    undo, canUndo, notify, storageOk, savedAt, role, server,
   } = useApp();
   const [draft, setDraft] = useState(() => ({
     companyName: settings.companyName,
@@ -196,7 +197,8 @@ export default function DataView() {
         <div><span>Сохранено</span><b>{savedAt ? fmtDateTime(savedAt) : '—'}</b></div>
       </section>
 
-      <AccessCard />
+      <ServerUsersCard />
+      {!server.available && <AccessCard />}
 
       <ReminderSettings />
 

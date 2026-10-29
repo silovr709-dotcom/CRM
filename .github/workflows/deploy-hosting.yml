@@ -1,0 +1,93 @@
+# Публикация приложения на собственный хостинг (reg.ru) по FTP.
+#
+# Срабатывает при изменениях в main и вручную (Actions → «Публикация на свой хостинг»).
+# Доступы к FTP GitHub берёт из секретов репозитория (их добавляет владелец,
+# см. docs/HOSTING.md): FTP_SERVER, FTP_USERNAME, FTP_PASSWORD, FTP_SERVER_DIR.
+# Папка api/data на сервере не трогается: там живут пользователи и база.
+
+name: Публикация на свой хостинг
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crm-schedule/**'
+      - 'server/**'
+      - '.github/workflows/deploy-hosting.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosting-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Сборка и загрузка на хостинг
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      # Пока владелец не добавил FTP-секреты (docs/HOSTING.md), публикация на
+      # хостинг пропускается и main не краснеет.
+      - name: Проверка секретов FTP
+        id: cfg
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+        run: |
+          if [ -z "$FTP_SERVER" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Секреты FTP не добавлены — публикация на хостинг пропущена. См. docs/HOSTING.md"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.cfg.outputs.configured == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crm-schedule/package-lock.json
+
+      - name: Установка зависимостей
+        if: steps.cfg.outputs.configured == 'true'
+        working-directory: crm-schedule
+        run: npm ci
+
+      - name: Тесты
+        if: steps.cfg.outputs.configured == 'true'
+        working-directory: crm-schedule
+        run: npm test
+
+      - name: Сборка приложения
+        if: steps.cfg.outputs.configured == 'true'
+        working-directory: crm-schedule
+        run: npm run build
+
+      - name: Подготовка папки публикации
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          mkdir -p deploy/api
+          cp -r crm-schedule/dist/. deploy/
+          cp server/api/index.php deploy/api/index.php
+          mkdir -p deploy/api/data
+          cp server/api/data/.htaccess deploy/api/data/.htaccess
+          cp server/.htaccess deploy/.htaccess
+          ls -la deploy deploy/api
+
+      - name: Загрузка на хостинг по FTP
+        if: steps.cfg.outputs.configured == 'true'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          server-dir: ${{ secrets.FTP_SERVER_DIR }}
+          local-dir: ./deploy/
+          # Данные сервера (пользователи, сессии, база) деплой не затирает.
+          exclude: |
+            **/api/data/state.json
+            api/data/state.json

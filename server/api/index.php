@@ -1,0 +1,526 @@
+<?php
+/* Сервер приложения «CRM + График» на обычном PHP-хостинге (reg.ru).
+ *
+ * Одна фирма: сотрудники с ролями (owner/manager/installer), вход по
+ * логину/паролю (password_hash), токены сессий, общая база одним документом.
+ * Хранилище — JSON-файл в data/ (директория закрыта от прямого доступа).
+ * Роль enforced на сервере: монтажник не получает деньги даже напрямую
+ * из API, а его запись не может стереть суммы, которых он не видел.
+ */
+
+declare(strict_types=1);
+
+const API_VERSION = 1;
+const TOKEN_TTL = 2592000; // 30 дней
+const MAX_BODY = 8388608; // 8 МБ на документ базы
+const ROLES = ['owner', 'manager', 'installer'];
+
+header('Content-Type: application/json; charset=utf-8');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
+function out(array $payload, int $status = 200): void
+{
+    http_response_code($status);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function body(): array
+{
+    $raw = file_get_contents('php://input');
+    if ($raw === false || $raw === '') return [];
+    if (strlen($raw) > MAX_BODY) out(['ok' => false, 'error' => 'too_large', 'message' => 'Слишком большой запрос'], 413);
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function dataDir(): string
+{
+    $dir = __DIR__ . '/data';
+    if (!is_dir($dir)) @mkdir($dir, 0775, true);
+    return $dir;
+}
+
+function statePath(): string
+{
+    return dataDir() . '/state.json';
+}
+
+function emptyState(): array
+{
+    return [
+        'users' => [],
+        'sessions' => [],
+        'workspace' => ['revision' => 0, 'envelope' => null, 'updatedAt' => '', 'device' => '', 'versions' => []],
+    ];
+}
+
+/* Чтение-изменение-запись состояния одним захватом файла: без гонок. */
+function withState(callable $fn)
+{
+    $path = statePath();
+    $handle = fopen($path, 'c+');
+    if ($handle === false) out(['ok' => false, 'error' => 'storage', 'message' => 'Сервер не может хранить данные'], 500);
+    flock($handle, LOCK_EX);
+    $raw = stream_get_contents($handle);
+    $state = $raw ? json_decode($raw, true) : null;
+    if (!is_array($state)) $state = emptyState();
+    $state += emptyState();
+    $state['users'] = is_array($state['users'] ?? null) ? $state['users'] : [];
+    $state['sessions'] = is_array($state['sessions'] ?? null) ? $state['sessions'] : [];
+    $state['workspace'] = is_array($state['workspace'] ?? null) ? $state['workspace'] : emptyState()['workspace'];
+
+    [$result, $dirty] = $fn($state);
+    if ($dirty) {
+        rewind($handle);
+        ftruncate($handle, 0);
+        fwrite($handle, json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        fflush($handle);
+    }
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    return $result;
+}
+
+function publicUser(array $user): array
+{
+    return [
+        'id' => $user['id'],
+        'name' => $user['name'],
+        'login' => $user['login'],
+        'role' => $user['role'],
+        'active' => $user['active'] ?? true,
+        'createdAt' => $user['createdAt'] ?? '',
+    ];
+}
+
+function findUser(array $state, string $id): ?array
+{
+    foreach ($state['users'] as $user) if (($user['id'] ?? '') === $id) return $user;
+    return null;
+}
+
+function makeToken(array &$state, string $userId): string
+{
+    $token = bin2hex(random_bytes(32));
+    // Старые сессии этого пользователя не копим бесконечно.
+    foreach ($state['sessions'] as $hash => $session) {
+        if (($session['expires'] ?? 0) < time()) unset($state['sessions'][$hash]);
+    }
+    $state['sessions'][hash('sha256', $token)] = ['userId' => $userId, 'expires' => time() + TOKEN_TTL];
+    return $token;
+}
+
+function authUser(array $state): ?array
+{
+    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? ($_SERVER['HTTP_X_AUTH_TOKEN'] ?? '');
+    if (!preg_match('/Bearer\s+(.+)/i', (string)$header, $m)) return null;
+    $hash = hash('sha256', trim($m[1]));
+    $session = $state['sessions'][$hash] ?? null;
+    if (!$session || ($session['expires'] ?? 0) < time()) return null;
+    $user = findUser($state, (string)($session['userId'] ?? ''));
+    if (!$user || !($user['active'] ?? true)) return null;
+    return $user;
+}
+
+function requireUser(array $state): array
+{
+    $user = authUser($state);
+    if (!$user) out(['ok' => false, 'error' => 'unauthorized', 'message' => 'Войдите, пожалуйста'], 401);
+    return $user;
+}
+
+function requireOwner(array $state): array
+{
+    $user = requireUser($state);
+    if (($user['role'] ?? '') !== 'owner') out(['ok' => false, 'error' => 'forbidden', 'message' => 'Это может только руководитель'], 403);
+    return $user;
+}
+
+function cleanLogin(string $login): string
+{
+    return mb_strtolower(trim($login));
+}
+
+function validRole($role): bool
+{
+    return in_array($role, ROLES, true);
+}
+
+/* ------------------------- роли и денежные поля ------------------------- */
+
+/* Убирает из сделки то, что роли видеть нельзя. */
+function hideMoneyFromDeal(array $deal, string $role): array
+{
+    if ($role === 'installer') {
+        $deal['amount'] = 0;
+        $deal['payments'] = [];
+        $deal['plan'] = [];
+        $deal['expenses'] = [];
+        if (isset($deal['items']) && is_array($deal['items'])) {
+            foreach ($deal['items'] as &$item) if (is_array($item)) $item['price'] = 0;
+            unset($item);
+        }
+    } elseif ($role === 'manager') {
+        $deal['expenses'] = [];
+    }
+    return $deal;
+}
+
+/* Что отдаём пользователю: деньги фильтруются по роли прямо на сервере. */
+function envelopeForRole($envelope, string $role)
+{
+    if (!is_array($envelope) || !isset($envelope['data']) || !is_array($envelope['data'])) return $envelope;
+    if (isset($envelope['data']['settings']) && is_array($envelope['data']['settings'])) {
+        // Учётки живут на сервере, в документе базы их отпечатков быть не должно.
+        $envelope['data']['settings']['accounts'] = [];
+    }
+    if ($role !== 'owner' && isset($envelope['data']['deals']) && is_array($envelope['data']['deals'])) {
+        foreach ($envelope['data']['deals'] as &$deal) {
+            if (is_array($deal)) $deal = hideMoneyFromDeal($deal, $role);
+        }
+        unset($deal);
+    }
+    return $envelope;
+}
+
+/**
+ * Что принимаем на хранение: чужие деньги записью не затираем.
+ * Не-руководитель не меняет настройки фирмы; монтажник не трогает суммы,
+ * оплаты, план и затраты; менеджер не трогает затраты.
+ */
+function envelopeForStorage(array $incoming, string $role, $stored): array
+{
+    if (isset($incoming['data']['settings']) && is_array($incoming['data']['settings'])) {
+        $incoming['data']['settings']['accounts'] = [];
+    }
+    if (!is_array($stored) || !isset($stored['data']) || !is_array($stored['data'])) {
+        // Первую запись делает тот, кто вошёл первым (руководитель после настройки).
+        return envelopeForRole($incoming, 'owner');
+    }
+    if ($role !== 'owner' && isset($stored['data']['settings'])) {
+        $incoming['data']['settings'] = $stored['data']['settings'];
+    }
+    if ($role === 'owner') return $incoming;
+    if (!isset($incoming['data']['deals']) || !is_array($incoming['data']['deals'])) return $incoming;
+
+    $storedDeals = [];
+    foreach (($stored['data']['deals'] ?? []) as $deal) {
+        if (is_array($deal) && isset($deal['id'])) $storedDeals[(string)$deal['id']] = $deal;
+    }
+    foreach ($incoming['data']['deals'] as &$deal) {
+        if (!is_array($deal) || !isset($deal['id'])) continue;
+        $old = $storedDeals[(string)$deal['id']] ?? null;
+        if ($role === 'manager') {
+            if ($old !== null && isset($old['expenses'])) $deal['expenses'] = $old['expenses'];
+            else $deal['expenses'] = [];
+        } elseif ($role === 'installer') {
+            if ($old !== null) {
+                foreach (['amount', 'payments', 'plan', 'expenses', 'items'] as $field) {
+                    if (array_key_exists($field, $old)) $deal[$field] = $old[$field];
+                }
+            } else {
+                $deal = hideMoneyFromDeal($deal, 'installer');
+            }
+        }
+    }
+    unset($deal);
+    return $incoming;
+}
+
+/* -------------------------------- маршруты -------------------------------- */
+
+$action = (string)($_GET['action'] ?? 'health');
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+if ($action === 'health') {
+    $info = withState(function (array $state) {
+        return [[
+            'ok' => true,
+            'version' => API_VERSION,
+            'needsSetup' => count($state['users']) === 0,
+            'users' => count($state['users']),
+            'revision' => (int)($state['workspace']['revision'] ?? 0),
+        ], false];
+    });
+    out($info);
+}
+
+if ($action === 'setup' && $method === 'POST') {
+    $input = body();
+    $name = trim((string)($input['name'] ?? ''));
+    $login = cleanLogin((string)($input['login'] ?? ''));
+    $password = (string)($input['password'] ?? '');
+    if ($name === '' || $login === '' || mb_strlen($password) < 6) {
+        out(['ok' => false, 'error' => 'invalid', 'message' => 'Имя, логин и пароль не короче 6 символов'], 422);
+    }
+    $result = withState(function (array &$state) use ($name, $login, $password) {
+        if (count($state['users']) > 0) return [['error' => 'done'], false];
+        $user = [
+            'id' => 'usr-' . bin2hex(random_bytes(6)),
+            'name' => $name,
+            'login' => $login,
+            'passHash' => password_hash($password, PASSWORD_DEFAULT),
+            'role' => 'owner',
+            'active' => true,
+            'createdAt' => gmdate('c'),
+        ];
+        $state['users'][] = $user;
+        $token = makeToken($state, $user['id']);
+        return [['user' => $user, 'token' => $token], true];
+    });
+    if (isset($result['error'])) out(['ok' => false, 'error' => 'setup_done', 'message' => 'Руководитель уже создан — войдите'], 409);
+    out(['ok' => true, 'token' => $result['token'], 'user' => publicUser($result['user'])]);
+}
+
+if ($action === 'login' && $method === 'POST') {
+    $input = body();
+    $login = cleanLogin((string)($input['login'] ?? ''));
+    $password = (string)($input['password'] ?? '');
+    $result = withState(function (array &$state) use ($login, $password) {
+        foreach ($state['users'] as $user) {
+            if (($user['login'] ?? '') === $login && ($user['active'] ?? true)) {
+                if (password_verify($password, (string)($user['passHash'] ?? ''))) {
+                    $token = makeToken($state, $user['id']);
+                    return [['user' => $user, 'token' => $token], true];
+                }
+                break;
+            }
+        }
+        return [null, false];
+    });
+    if ($result === null) out(['ok' => false, 'error' => 'credentials', 'message' => 'Логин или пароль не подошли'], 401);
+    out(['ok' => true, 'token' => $result['token'], 'user' => publicUser($result['user'])]);
+}
+
+if ($action === 'logout' && $method === 'POST') {
+    $header = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? '');
+    if (preg_match('/Bearer\s+(.+)/i', $header, $m)) {
+        $hash = hash('sha256', trim($m[1]));
+        withState(function (array &$state) use ($hash) {
+            unset($state['sessions'][$hash]);
+            return [true, true];
+        });
+    }
+    out(['ok' => true]);
+}
+
+if ($action === 'me') {
+    $user = withState(function (array $state) {
+        $me = authUser($state);
+        return [$me ? publicUser($me) : null, false];
+    });
+    if ($user === null) out(['ok' => false, 'error' => 'unauthorized', 'message' => 'Войдите, пожалуйста'], 401);
+    out(['ok' => true, 'user' => $user]);
+}
+
+/* ------------------------------ пользователи ------------------------------ */
+
+if ($action === 'users' && $method === 'GET') {
+    $users = withState(function (array $state) {
+        requireOwner($state);
+        return [array_map('publicUser', $state['users']), false];
+    });
+    out(['ok' => true, 'users' => $users]);
+}
+
+if ($action === 'user_create' && $method === 'POST') {
+    $input = body();
+    $name = trim((string)($input['name'] ?? ''));
+    $login = cleanLogin((string)($input['login'] ?? ''));
+    $password = (string)($input['password'] ?? '');
+    $role = (string)($input['role'] ?? 'manager');
+    if ($name === '' || $login === '' || mb_strlen($password) < 6 || !validRole($role)) {
+        out(['ok' => false, 'error' => 'invalid', 'message' => 'Имя, логин, пароль от 6 символов и роль обязательны'], 422);
+    }
+    $result = withState(function (array &$state) use ($name, $login, $password, $role) {
+        requireOwner($state);
+        foreach ($state['users'] as $user) {
+            if (($user['login'] ?? '') === $login) return ['taken', false];
+        }
+        $user = [
+            'id' => 'usr-' . bin2hex(random_bytes(6)),
+            'name' => $name,
+            'login' => $login,
+            'passHash' => password_hash($password, PASSWORD_DEFAULT),
+            'role' => $role,
+            'active' => true,
+            'createdAt' => gmdate('c'),
+        ];
+        $state['users'][] = $user;
+        return [$user, true];
+    });
+    if ($result === 'taken') out(['ok' => false, 'error' => 'login_taken', 'message' => 'Такой логин уже занят'], 409);
+    out(['ok' => true, 'user' => publicUser($result)]);
+}
+
+if ($action === 'user_update' && $method === 'POST') {
+    $input = body();
+    $id = (string)($input['id'] ?? '');
+    $result = withState(function (array &$state) use ($input, $id) {
+        $actor = requireOwner($state);
+        foreach ($state['users'] as &$user) {
+            if (($user['id'] ?? '') !== $id) continue;
+            if (isset($input['name']) && trim((string)$input['name']) !== '') $user['name'] = trim((string)$input['name']);
+            if (isset($input['role']) && validRole($input['role'])) {
+                if (($user['role'] ?? '') === 'owner' && $input['role'] !== 'owner') {
+                    $owners = count(array_filter($state['users'], fn($u) => ($u['role'] ?? '') === 'owner' && ($u['active'] ?? true)));
+                    if ($owners <= 1) return ['last_owner', false];
+                }
+                $user['role'] = (string)$input['role'];
+            }
+            if (isset($input['active'])) {
+                if (($actor['id'] ?? '') === $id && !$input['active']) return ['self', false];
+                $user['active'] = (bool)$input['active'];
+                if (!$user['active']) {
+                    foreach ($state['sessions'] as $hash => $session) {
+                        if (($session['userId'] ?? '') === $id) unset($state['sessions'][$hash]);
+                    }
+                }
+            }
+            if (isset($input['password']) && (string)$input['password'] !== '') {
+                if (mb_strlen((string)$input['password']) < 6) return ['short', false];
+                $user['passHash'] = password_hash((string)$input['password'], PASSWORD_DEFAULT);
+            }
+            return [$user, true];
+        }
+        unset($user);
+        return [null, false];
+    });
+    if ($result === 'last_owner') out(['ok' => false, 'error' => 'last_owner', 'message' => 'Нельзя убрать последнего руководителя'], 422);
+    if ($result === 'self') out(['ok' => false, 'error' => 'self', 'message' => 'Себя отключить нельзя'], 422);
+    if ($result === 'short') out(['ok' => false, 'error' => 'invalid', 'message' => 'Пароль короче 6 символов'], 422);
+    if ($result === null) out(['ok' => false, 'error' => 'not_found', 'message' => 'Пользователь не найден'], 404);
+    out(['ok' => true, 'user' => publicUser($result)]);
+}
+
+if ($action === 'user_delete' && $method === 'POST') {
+    $input = body();
+    $id = (string)($input['id'] ?? '');
+    $result = withState(function (array &$state) use ($id) {
+        $actor = requireOwner($state);
+        if (($actor['id'] ?? '') === $id) return ['self', false];
+        $before = count($state['users']);
+        $state['users'] = array_values(array_filter($state['users'], fn($u) => ($u['id'] ?? '') !== $id));
+        if (count($state['users']) === $before) return [null, false];
+        foreach ($state['sessions'] as $hash => $session) {
+            if (($session['userId'] ?? '') === $id) unset($state['sessions'][$hash]);
+        }
+        return [true, true];
+    });
+    if ($result === 'self') out(['ok' => false, 'error' => 'self', 'message' => 'Себя удалить нельзя'], 422);
+    if ($result === null) out(['ok' => false, 'error' => 'not_found', 'message' => 'Пользователь не найден'], 404);
+    out(['ok' => true]);
+}
+
+/* --------------------------------- данные --------------------------------- */
+
+if ($action === 'data' && $method === 'GET') {
+    $known = isset($_GET['known_revision']) ? (int)$_GET['known_revision'] : 0;
+    $result = withState(function (array $state) use ($known) {
+        $user = requireUser($state);
+        $workspace = $state['workspace'];
+        $revision = (int)($workspace['revision'] ?? 0);
+        if (empty($workspace['envelope'])) {
+            return [['found' => false, 'revision' => 0, 'user' => publicUser($user)], false];
+        }
+        if ($known > 0 && $known === $revision) {
+            return [[
+                'found' => true, 'unchanged' => true, 'revision' => $revision,
+                'updatedAt' => $workspace['updatedAt'] ?? '', 'device' => $workspace['device'] ?? '',
+                'user' => publicUser($user),
+            ], false];
+        }
+        return [[
+            'found' => true, 'revision' => $revision,
+            'envelope' => envelopeForRole($workspace['envelope'], (string)$user['role']),
+            'updatedAt' => $workspace['updatedAt'] ?? '', 'device' => $workspace['device'] ?? '',
+            'user' => publicUser($user),
+        ], false];
+    });
+    out(array_merge(['ok' => true], $result));
+}
+
+if ($action === 'data' && $method === 'POST') {
+    $input = body();
+    $envelope = $input['envelope'] ?? null;
+    $baseRevision = (int)($input['revision'] ?? 0);
+    $device = mb_substr((string)($input['device'] ?? ''), 0, 80);
+    if (!is_array($envelope) || !isset($envelope['data']) || !is_array($envelope['data'])) {
+        out(['ok' => false, 'error' => 'invalid', 'message' => 'Нет данных для записи'], 422);
+    }
+    $result = withState(function (array &$state) use ($envelope, $baseRevision, $device) {
+        $user = requireUser($state);
+        $workspace = &$state['workspace'];
+        $revision = (int)($workspace['revision'] ?? 0);
+        if ($baseRevision !== $revision) {
+            return [['conflict' => true, 'revision' => $revision], false];
+        }
+        $workspace['envelope'] = envelopeForStorage($envelope, (string)$user['role'], $workspace['envelope'] ?? null);
+        $workspace['revision'] = $revision + 1;
+        $workspace['updatedAt'] = gmdate('c');
+        $workspace['device'] = $device;
+        $versions = $workspace['versions'] ?? [];
+        $versions[] = [
+            'revision' => $workspace['revision'],
+            'device' => $device,
+            'savedAt' => $workspace['updatedAt'],
+            'user' => $user['name'] ?? '',
+            'envelope' => $workspace['envelope'],
+        ];
+        $workspace['versions'] = array_slice($versions, -12);
+        return [['revision' => $workspace['revision']], true];
+    });
+    if (!empty($result['conflict'])) {
+        out(['ok' => false, 'conflict' => true, 'revision' => $result['revision'], 'message' => 'На сервере уже есть более новая версия'], 409);
+    }
+    out(['ok' => true, 'revision' => $result['revision']]);
+}
+
+if ($action === 'versions' && $method === 'GET') {
+    $versions = withState(function (array $state) {
+        requireOwner($state);
+        $list = [];
+        foreach (($state['workspace']['versions'] ?? []) as $version) {
+            $envelope = $version['envelope'] ?? null;
+            $list[] = [
+                'revision' => (int)($version['revision'] ?? 0),
+                'device' => (string)($version['device'] ?? ''),
+                'savedAt' => (string)($version['savedAt'] ?? ''),
+                'user' => (string)($version['user'] ?? ''),
+                'deals' => is_array($envelope) ? count($envelope['data']['deals'] ?? []) : 0,
+                'clients' => is_array($envelope) ? count($envelope['data']['clients'] ?? []) : 0,
+            ];
+        }
+        return [array_reverse($list), false];
+    });
+    out(['ok' => true, 'versions' => $versions]);
+}
+
+if ($action === 'version_restore' && $method === 'POST') {
+    $input = body();
+    $wanted = (int)($input['revision'] ?? 0);
+    $result = withState(function (array &$state) use ($wanted) {
+        requireOwner($state);
+        foreach (($state['workspace']['versions'] ?? []) as $version) {
+            if ((int)($version['revision'] ?? 0) === $wanted && isset($version['envelope'])) {
+                $state['workspace']['envelope'] = $version['envelope'];
+                $state['workspace']['revision'] = ((int)($state['workspace']['revision'] ?? 0)) + 1;
+                $state['workspace']['updatedAt'] = gmdate('c');
+                $state['workspace']['device'] = 'восстановлено';
+                return [$state['workspace']['revision'], true];
+            }
+        }
+        return [null, false];
+    });
+    if ($result === null) out(['ok' => false, 'error' => 'not_found', 'message' => 'Версия не найдена'], 404);
+    out(['ok' => true, 'revision' => $result]);
+}
+
+out(['ok' => false, 'error' => 'unknown_action', 'message' => 'Неизвестный запрос'], 404);

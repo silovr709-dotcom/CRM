@@ -1,0 +1,33 @@
+# Сайт приложения на своём домене: HTTPS, оболочка без кэша, ассеты с хэшем — надолго.
+RewriteEngine On
+
+# На HTTPS — если хостинг уже выдал сертификат и запрос пришёл по http.
+RewriteCond %{HTTPS} off
+RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1) [NC]
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# API — настоящие файлы PHP, их не трогаем.
+RewriteRule ^api/ - [L]
+
+# Всё остальное, чего нет на диске, — оболочка приложения (hash-роутинг, но пусть будет).
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]
+
+<IfModule mod_expires.c>
+  ExpiresActive On
+  # Оболочка и service worker должны проверяться при каждом открытии,
+  # иначе телефон снова «не увидит обновлений».
+  ExpiresByType text/html "access plus 0 seconds"
+  # Хэшированные ассеты не меняются никогда.
+  ExpiresByType text/css "access plus 1 year"
+  ExpiresByType application/javascript "access plus 1 year"
+  ExpiresByType image/png "access plus 1 month"
+  ExpiresByType image/svg+xml "access plus 1 month"
+</IfModule>
+
+<FilesMatch "(^sw\.js$|^index\.html$)">
+  <IfModule mod_headers.c>
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+  </IfModule>
+</FilesMatch>
