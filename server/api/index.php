@@ -117,11 +117,39 @@ function makeToken(array &$state, string $userId): string
     return $token;
 }
 
+/* Токен из заголовков: Authorization на виртуальных хостингах Apache часто
+ * не доходит до PHP, поэтому смотрим все места, где он может оказаться,
+ * включая запасной X-Auth-Token (его клиент присылает всегда вместе). */
+function bearerToken(): string
+{
+    $candidates = [
+        (string)($_SERVER['HTTP_AUTHORIZATION'] ?? ''),
+        (string)($_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? ''),
+        (string)($_SERVER['HTTP_X_AUTH_TOKEN'] ?? ''),
+    ];
+    if (function_exists('getallheaders')) {
+        $headers = getallheaders();
+        if (is_array($headers)) {
+            foreach ($headers as $name => $value) {
+                $lower = strtolower((string)$name);
+                if ($lower === 'authorization' || $lower === 'x-auth-token') $candidates[] = (string)$value;
+            }
+        }
+    }
+    foreach ($candidates as $candidate) {
+        $candidate = trim($candidate);
+        if ($candidate === '') continue;
+        if (preg_match('/Bearer\s+(.+)/i', $candidate, $m)) return trim($m[1]);
+        if (strpos($candidate, ' ') === false) return $candidate; // X-Auth-Token приходит без префикса
+    }
+    return '';
+}
+
 function authUser(array $state): ?array
 {
-    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? ($_SERVER['HTTP_X_AUTH_TOKEN'] ?? '');
-    if (!preg_match('/Bearer\s+(.+)/i', (string)$header, $m)) return null;
-    $hash = hash('sha256', trim($m[1]));
+    $token = bearerToken();
+    if ($token === '') return null;
+    $hash = hash('sha256', $token);
     $session = $state['sessions'][$hash] ?? null;
     if (!$session || ($session['expires'] ?? 0) < time()) return null;
     $user = findUser($state, (string)($session['userId'] ?? ''));

@@ -68,7 +68,9 @@ async function call<T>(
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+        // Токен — двумя заголовками: на части PHP-хостингов (Apache + PHP-FPM)
+        // Authorization до PHP не доходит, а X-Auth-Token проходит.
+        ...(options.token ? { Authorization: `Bearer ${options.token}`, 'X-Auth-Token': options.token } : {}),
       },
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       signal: controller?.signal,

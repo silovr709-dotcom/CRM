@@ -6,6 +6,10 @@ RewriteCond %{HTTPS} off
 RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1) [NC]
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
+# Пробросить заголовок входа (токен) в PHP: Apache на части хостингов его съедает.
+RewriteCond %{HTTP:Authorization} ^(.+)$
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+
 # API — настоящие файлы PHP, их не трогаем.
 RewriteRule ^api/ - [L]
 
