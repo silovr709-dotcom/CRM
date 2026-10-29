@@ -65,6 +65,9 @@ async function call<T>(
   try {
     response = await fetch(serverApiUrl(action, options.query), {
       method: options.method ?? 'GET',
+      // Своя cookie сессии — третий канал входа, если хостинг режет заголовки.
+      credentials: 'same-origin',
+      cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',

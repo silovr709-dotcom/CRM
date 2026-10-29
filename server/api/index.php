@@ -14,6 +14,7 @@ const API_VERSION = 1;
 const TOKEN_TTL = 2592000; // 30 дней
 const MAX_BODY = 8388608; // 8 МБ на документ базы
 const ROLES = ['owner', 'manager', 'installer'];
+const SESSION_COOKIE = 'crm_session';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
@@ -142,7 +143,27 @@ function bearerToken(): string
         if (preg_match('/Bearer\s+(.+)/i', $candidate, $m)) return trim($m[1]);
         if (strpos($candidate, ' ') === false) return $candidate; // X-Auth-Token приходит без префикса
     }
-    return '';
+    // Последний запасной канал — cookie сессии. Она не зависит от того,
+    // пропустил ли Apache заголовки до PHP.
+    return trim((string)($_COOKIE[SESSION_COOKIE] ?? ''));
+}
+
+function setSessionCookie(string $token, bool $clear = false): void
+{
+    if (headers_sent()) return;
+    $expires = $clear ? time() - 3600 : time() + TOKEN_TTL;
+    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    $parts = [
+        SESSION_COOKIE . '=' . rawurlencode($clear ? '' : $token),
+        'Expires=' . gmdate('D, d M Y H:i:s', $expires) . ' GMT',
+        'Max-Age=' . ($clear ? 0 : TOKEN_TTL),
+        'Path=/',
+        'HttpOnly',
+        'SameSite=Lax',
+    ];
+    if ($secure) $parts[] = 'Secure';
+    header('Set-Cookie: ' . implode('; ', $parts), false);
 }
 
 function authUser(array $state): ?array
@@ -304,6 +325,7 @@ if ($action === 'setup' && $method === 'POST') {
         return [['user' => $user, 'token' => $token], true];
     });
     if (isset($result['error'])) out(['ok' => false, 'error' => 'setup_done', 'message' => 'Руководитель уже создан — войдите'], 409);
+    setSessionCookie((string)$result['token']);
     out(['ok' => true, 'token' => $result['token'], 'user' => publicUser($result['user'])]);
 }
 
@@ -324,18 +346,20 @@ if ($action === 'login' && $method === 'POST') {
         return [null, false];
     });
     if ($result === null) out(['ok' => false, 'error' => 'credentials', 'message' => 'Логин или пароль не подошли'], 401);
+    setSessionCookie((string)$result['token']);
     out(['ok' => true, 'token' => $result['token'], 'user' => publicUser($result['user'])]);
 }
 
 if ($action === 'logout' && $method === 'POST') {
-    $header = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? '');
-    if (preg_match('/Bearer\s+(.+)/i', $header, $m)) {
-        $hash = hash('sha256', trim($m[1]));
+    $token = bearerToken();
+    if ($token !== '') {
+        $hash = hash('sha256', $token);
         withState(function (array &$state) use ($hash) {
             unset($state['sessions'][$hash]);
             return [true, true];
         });
     }
+    setSessionCookie('', true);
     out(['ok' => true]);
 }
 
