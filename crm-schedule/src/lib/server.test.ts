@@ -90,6 +90,19 @@ describe('свой сервер: данные', () => {
     expect(String((fetchMock.mock.calls as unknown as Array<[string]>)[0][0])).toContain('known_revision=5');
   });
 
+  it('токен уходит и стандартным, и запасным заголовком', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({
+      ok: true, found: true, unchanged: true, revision: 5, updatedAt: '', device: 'ПК',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await serverPull('tok-abc', 5);
+    const init = (fetchMock.mock.calls as unknown as Array<[string, RequestInit]>)[0][1];
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer tok-abc');
+    expect(headers['X-Auth-Token']).toBe('tok-abc');
+  });
+
   it('конфликт записи — не ошибка, а сигнал перечитать базу', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(
       { ok: false, conflict: true, revision: 7, message: 'На сервере уже есть более новая версия' },
