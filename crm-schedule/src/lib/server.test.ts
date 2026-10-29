@@ -101,6 +101,8 @@ describe('свой сервер: данные', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer tok-abc');
     expect(headers['X-Auth-Token']).toBe('tok-abc');
+    expect(init.credentials).toBe('same-origin');
+    expect(init.cache).toBe('no-store');
   });
 
   it('конфликт записи — не ошибка, а сигнал перечитать базу', async () => {

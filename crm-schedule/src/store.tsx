@@ -599,11 +599,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       const shaped = error as Error & { status?: number };
       if (shaped.status === 401) {
-        setServerSession(null);
-        patchServer({ user: null, status: 'error', error: 'Сессия истекла — войдите снова' });
-        return false;
+        // Один 401 от запроса к данным ещё не значит, что вход мёртв:
+        // проверяем саму сессию отдельным запросом и выходим только по его 401.
+        try {
+          const user = await serverMe(session.token);
+          setServerSession({ ...session, user });
+          failure = 'Вход подтверждён, но сервер не принял запрос к базе. Повторим синхронизацию автоматически.';
+        } catch (meError) {
+          const meShaped = meError as Error & { status?: number };
+          if (meShaped.status === 401) {
+            setServerSession(null);
+            patchServer({ user: null, status: 'error', error: 'Сервер не подтвердил вход. Войдите ещё раз; если повторится, пришлите текст этой ошибки.' });
+            return false;
+          }
+          failure = meShaped.message || 'Не удалось проверить вход на сервере';
+        }
+      } else {
+        failure = shaped.message || 'Не удалось связаться с сервером';
       }
-      failure = shaped.message || 'Не удалось связаться с сервером';
     } finally {
       serverBusy.current = false;
     }
@@ -678,10 +691,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setServerSession({ ...session, user });
         void serverRoundRef.current();
-      } catch {
+      } catch (error) {
         if (!cancelled) {
-          setServerSession(null);
-          patchServer({ user: null, status: 'error', error: 'Сессия истекла — войдите снова' });
+          const shaped = error as Error & { status?: number };
+          // Сбрасываем вход только если сервер прямо сказал 401. Временная
+          // ошибка сети не должна выбрасывать сотрудника на форму входа.
+          if (shaped.status === 401) {
+            setServerSession(null);
+            patchServer({ user: null, status: 'error', error: 'Сервер не подтвердил вход. Войдите ещё раз; если повторится, пришлите текст этой ошибки.' });
+          } else {
+            patchServer({ status: 'error', error: shaped.message || 'Не удалось проверить вход на сервере' });
+          }
         }
       }
     })();

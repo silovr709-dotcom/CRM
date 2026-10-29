@@ -4,10 +4,12 @@
  *
  * v4: навигация раньше брала index из кэша, а свежую копию клала под другим
  * ключом ('./index.html' вместо './'), поэтому установленное приложение
- * навсегда оставалось на старой версии — новых разделов было не видно. */
+ * навсегда оставалось на старой версии — новых разделов было не видно.
+ * v5: ответы PHP-API больше не проходят через кэш service worker: запросы
+ * входа и базы зависят от заголовков/cookie, а cache.match их не различает. */
 
 // При смене стратегии кэширования поднимайте версию: старые кэши сотрутся.
-const VERSION = 'crm-v4';
+const VERSION = 'crm-v5';
 const CORE = `crm-core-${VERSION}`;
 const RUNTIME = `crm-runtime-${VERSION}`;
 
@@ -78,6 +80,8 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  // API не кэшируем и не подменяем: вход, роли и база всегда идут в сеть.
+  if (url.pathname.includes('/api/')) return;
 
   // Переходы по страницам: свежий index, при отсутствии сети — из кэша.
   if (request.mode === 'navigate') {

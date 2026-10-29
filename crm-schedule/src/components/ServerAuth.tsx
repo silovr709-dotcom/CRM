@@ -93,6 +93,7 @@ export default function ServerAuth() {
           </label>
           {setup && <p className="inline-note">Пароль — не короче 6 символов. Логин лучше латиницей: его удобно вводить с телефона.</p>}
           {error && <p className="login-error" role="alert">{error}</p>}
+          {!error && server.error && <p className="login-error" role="alert">{server.error}</p>}
           <button type="submit" className="btn primary login-submit" disabled={busy || !login || !password || (setup && !name)}>
             <LogIn size={16} /> {busy ? 'Проверяем…' : setup ? 'Создать и войти' : 'Войти'}
           </button>

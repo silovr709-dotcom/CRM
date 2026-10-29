@@ -17,7 +17,7 @@ function section(from: string, to: string): string {
 
 describe('обновление установленного приложения', () => {
   it('версия кэша поднята — старые кэши сотрутся при активации', () => {
-    expect(sw).toContain("const VERSION = 'crm-v4'");
+    expect(sw).toContain("const VERSION = 'crm-v5'");
     expect(section("self.addEventListener('activate'", "self.addEventListener('message'")).toContain('caches.delete');
   });
 
@@ -38,5 +38,9 @@ describe('обновление установленного приложения
 
   it('обработчик переходов использует сетевую стратегию', () => {
     expect(sw).toContain('event.respondWith(navigationFromNetwork(request))');
+  });
+
+  it('запросы к PHP-API не проходят через кэш', () => {
+    expect(sw).toContain("if (url.pathname.includes('/api/')) return;");
   });
 });
