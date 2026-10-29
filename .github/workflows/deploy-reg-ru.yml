@@ -1,0 +1,143 @@
+# Публикация только собранного интерфейса CRM на REG.RU.
+# По умолчанию отключена: сначала нужен отдельный FTP-пользователь, доступный
+# только в каталоге CRM, и проверка workflow_dispatch с dry_run=true. Реальная
+# выкладка также требует явного подтверждения в отдельном файле репозитория.
+# См. crm-schedule/docs/REG-RU-DEPLOY.md. Данные и база CRM здесь не разворачиваются.
+name: CRM — публикация на REG.RU
+
+on:
+  push:
+    branches:
+      - main
+      - arena/c931d8fc-crm
+    paths:
+      - 'crm-schedule/**'
+      - '.github/workflows/deploy-reg-ru.yml'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Проверить FTP и показать изменения без загрузки файлов'
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+# Только одна выкладка CRM на хостинг за раз, включая разные ветки.
+concurrency:
+  group: crm-reg-ru-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: Проверки, сборка и публикация
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crm-schedule/package-lock.json
+
+      # Секреты FTP не передаются установке зависимостей, тестам или сборке.
+      - name: Установить зависимости
+        working-directory: crm-schedule
+        run: npm ci
+
+      - name: Проверить CRM
+        working-directory: crm-schedule
+        run: npm test
+
+      - name: Собрать CRM
+        working-directory: crm-schedule
+        run: npm run build
+
+      - name: Определить режим публикации
+        id: mode
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUEST_DRY_RUN: ${{ inputs.dry_run }}
+          AUTO_DEPLOY: ${{ vars.CRM_DEPLOY_ENABLED }}
+        shell: bash
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$REQUEST_DRY_RUN" == "true" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "dry_run=true" >> "$GITHUB_OUTPUT"
+            echo "Пробная проверка: файлы на хостинге не изменяются."
+          elif [[ "$AUTO_DEPLOY" == "true" && -f crm-schedule/.reg-ru-deploy-approved ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+            echo "Автоматическая публикация включена."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+              echo "::error::Настоящая публикация отключена. Сначала выполните пробный запуск и подтвердите настройки переменной и файлом разрешения."
+              exit 1
+            fi
+            echo "::notice::Публикация отключена. Требуются пробный запуск, переменная CRM_DEPLOY_ENABLED и файл разрешения."
+          fi
+
+      - name: Проверить настройки FTP
+        if: steps.mode.outputs.run == 'true'
+        env:
+          CRM_FTP_SERVER: ${{ secrets.CRM_FTP_SERVER }}
+          CRM_FTP_USERNAME: ${{ secrets.CRM_FTP_USERNAME }}
+          CRM_FTP_PASSWORD: ${{ secrets.CRM_FTP_PASSWORD }}
+          CRM_FTP_REMOTE_DIR: ${{ secrets.CRM_FTP_REMOTE_DIR }}
+          FTP_ROOT_ISOLATED: ${{ vars.CRM_FTP_ROOT_ISOLATED }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in CRM_FTP_SERVER CRM_FTP_USERNAME CRM_FTP_PASSWORD CRM_FTP_REMOTE_DIR; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Не задан секрет $name в настройках GitHub Actions репозитория CRM."
+              missing=1
+            fi
+          done
+          if [[ "$missing" != 0 ]]; then exit 1; fi
+          if [[ "$CRM_FTP_SERVER" == *://* || "$CRM_FTP_SERVER" == */* || "$CRM_FTP_SERVER" == *[[:space:]]* ]]; then
+            echo "::error::CRM_FTP_SERVER должен содержать только имя FTP-сервера без https://, пути и пробелов."
+            exit 1
+          fi
+          if [[ "$CRM_FTP_REMOTE_DIR" != */ ]]; then
+            echo "::error::CRM_FTP_REMOTE_DIR должен заканчиваться символом /"
+            exit 1
+          fi
+          if [[ "$CRM_FTP_REMOTE_DIR" == *..* ]]; then
+            echo "::error::CRM_FTP_REMOTE_DIR не должен содержать .."
+            exit 1
+          fi
+          if [[ ( "$CRM_FTP_REMOTE_DIR" == '/' || "$CRM_FTP_REMOTE_DIR" == './' ) && "$FTP_ROOT_ISOLATED" != 'true' ]]; then
+            echo "::error::Для FTP-корня сначала подтвердите, что пользователь ограничен только папкой CRM: CRM_FTP_ROOT_ISOLATED=true."
+            exit 1
+          fi
+
+      # Только шифрованное соединение с проверкой сертификата. Не использовать
+      # FTP-логин, который имеет доступ к калькулятору или другим сайтам.
+      - name: Проверить или загрузить сборку
+        if: steps.mode.outputs.run == 'true'
+        uses: SamKirkland/FTP-Deploy-Action@110f9186c050f71550953127052e77650219c287 # v4.4.0
+        with:
+          server: ${{ secrets.CRM_FTP_SERVER }}
+          username: ${{ secrets.CRM_FTP_USERNAME }}
+          password: ${{ secrets.CRM_FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          security: strict
+          local-dir: ./crm-schedule/dist/
+          server-dir: ${{ secrets.CRM_FTP_REMOTE_DIR }}
+          state-name: .crm-deploy-sync-state.json
+          dry-run: ${{ steps.mode.outputs.dry_run }}
+          dangerous-clean-slate: false
+          timeout: 120000
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.well-known/**
+            **/recept-data/**
+            **/api/**
