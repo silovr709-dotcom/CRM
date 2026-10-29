@@ -9,7 +9,7 @@
  * входа и базы зависят от заголовков/cookie, а cache.match их не различает. */
 
 // При смене стратегии кэширования поднимайте версию: старые кэши сотрутся.
-const VERSION = 'crm-v5';
+const VERSION = 'crm-v6';
 const CORE = `crm-core-${VERSION}`;
 const RUNTIME = `crm-runtime-${VERSION}`;
 

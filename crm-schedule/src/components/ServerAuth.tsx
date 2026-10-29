@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { KeyRound, LogIn, Server, UserRound } from 'lucide-react';
 import { useApp } from '../store';
+import { buildDate } from '../lib/pwa';
 
 export default function ServerAuth() {
   const { server, serverLogin, serverSetup, serverCheck, settings } = useApp();
@@ -124,6 +125,10 @@ export default function ServerAuth() {
             Нет логина? Попросите руководителя завести учётную запись в «Данных → Сотрудники на сервере».
           </p>
         )}
+        <p className="inline-note">
+          Версия приложения от {new Date(buildDate()).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+          {' '}— если дата старая, открыта прежняя сборка из кэша телефона.
+        </p>
       </div>
     </div>
   );
