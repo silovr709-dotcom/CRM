@@ -79,7 +79,13 @@ async function call<T>(
       signal: controller?.signal,
     });
   } catch {
-    throw new Error('Нет связи с сервером');
+    // Сеть оборвалась или сервер не ответил вовремя: HTTP-ответа не было вовсе.
+    // Помечаем status=0/code='network' — вызывающий код отличает это от отказа
+    // сервера (401/403/…) и может повторить запрос.
+    const error = new Error('Нет связи с сервером') as Error & { status?: number; code?: string };
+    error.status = 0;
+    error.code = 'network';
+    throw error;
   } finally {
     if (timer) window.clearTimeout(timer);
   }
@@ -172,12 +178,12 @@ export function saveServerRemoved(removed: Removed): void {
 /* -------------------------------- вход -------------------------------- */
 
 export async function serverSetup(input: { name: string; login: string; password: string }): Promise<ServerSession> {
-  const raw = await call<{ token: string; user: ServerUser }>('setup', { method: 'POST', body: input });
+  const raw = await call<{ token: string; user: ServerUser }>('setup', { method: 'POST', body: input, timeoutMs: 20_000 });
   return { token: raw.token, user: raw.user, revision: 0 };
 }
 
 export async function serverLogin(input: { login: string; password: string }): Promise<ServerSession> {
-  const raw = await call<{ token: string; user: ServerUser }>('login', { method: 'POST', body: input });
+  const raw = await call<{ token: string; user: ServerUser }>('login', { method: 'POST', body: input, timeoutMs: 20_000 });
   return { token: raw.token, user: raw.user, revision: 0 };
 }
 
@@ -190,7 +196,7 @@ export async function serverLogout(token: string): Promise<void> {
 }
 
 export async function serverMe(token: string): Promise<ServerUser> {
-  const raw = await call<{ user: ServerUser }>('me', { token });
+  const raw = await call<{ user: ServerUser }>('me', { token, timeoutMs: 20_000 });
   return raw.user;
 }
 
