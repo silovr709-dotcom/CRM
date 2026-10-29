@@ -156,6 +156,8 @@ interface AppContextValue {
   serverLogout: () => Promise<void>;
   /** Синхронизироваться со своим сервером прямо сейчас. */
   serverSyncNow: () => Promise<void>;
+  /** Проверка связи с сервером с экрана входа: человекочитаемый итог. */
+  serverCheck: () => Promise<string>;
 }
 
 interface SyncRoundOptions {
@@ -637,29 +639,75 @@ export function AppProvider({ children }: { children: ReactNode }) {
     serverRoundRef.current = serverRound;
   }, [serverRound]);
 
+  /** Вход/настройка: при обрыве сети (нет HTTP-ответа) повторяем один раз —
+   * мобильный интернет и домашний Wi-Fi теряют одиночные запросы регулярно. */
+  const withNetworkRetry = useCallback(async <T,>(run: () => Promise<T>): Promise<T> => {
+    try {
+      return await run();
+    } catch (error) {
+      const shaped = error as Error & { status?: number };
+      if (shaped.status) throw error; // сервер ответил — повтор не поможет
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      return run();
+    }
+  }, []);
+
+  /** После получения сессии: подтвердить её запросом me и пустить внутрь,
+   * не дожидаясь загрузки базы (она подтянется обменом в фоне). */
+  const acceptSession = useCallback(async (session: ServerSession): Promise<string> => {
+    setServerSession(session);
+    patchServer({ available: true, needsSetup: false, error: '' });
+    try {
+      const user = await withNetworkRetry(() => serverMe(session.token));
+      setServerSession({ ...session, user });
+    } catch (error) {
+      const shaped = error as Error & { status?: number };
+      if (shaped.status === 401) {
+        setServerSession(null);
+        return 'Сервер выдал вход, но сразу его не подтвердил (401). Пришлите этот текст — будем чинить проверку сессии на хостинге.';
+      }
+      // Сеть моргнула на проверке — сессию не трогаем, обмен повторит сам.
+      patchServer({ status: 'error', error: 'Вход выполнен, но проверка сессии не прошла из-за сети. Данные подтянутся автоматически.' });
+    }
+    void serverRoundRef.current();
+    return '';
+  }, [patchServer, setServerSession, withNetworkRetry]);
+
   const serverLogin = useCallback(async (login: string, password: string): Promise<string> => {
     try {
-      const session = await apiServerLogin({ login: login.trim(), password });
-      setServerSession(session);
-      patchServer({ available: true, needsSetup: false, error: '' });
-      await serverRoundRef.current();
-      return '';
+      const session = await withNetworkRetry(() => apiServerLogin({ login: login.trim(), password }));
+      return await acceptSession(session);
     } catch (error) {
+      const shaped = error as Error & { status?: number; code?: string };
+      if (shaped.code === 'network' || shaped.status === 0) {
+        return 'Нет связи с сервером даже со второй попытки. Сеть до сервера не доходит: попробуйте другую сеть (Wi-Fi ↔ мобильный интернет) или открыть сайт заново.';
+      }
       return error instanceof Error ? error.message : 'Не удалось войти';
     }
-  }, [patchServer, setServerSession]);
+  }, [acceptSession, withNetworkRetry]);
 
   const serverSetup = useCallback(async (name: string, login: string, password: string): Promise<string> => {
     try {
-      const session = await apiServerSetup({ name: name.trim(), login: login.trim(), password });
-      setServerSession(session);
-      patchServer({ available: true, needsSetup: false, error: '' });
-      await serverRoundRef.current();
-      return '';
+      const session = await withNetworkRetry(() => apiServerSetup({ name: name.trim(), login: login.trim(), password }));
+      return await acceptSession(session);
     } catch (error) {
+      const shaped = error as Error & { status?: number; code?: string };
+      if (shaped.code === 'network' || shaped.status === 0) {
+        return 'Нет связи с сервером даже со второй попытки. Сеть до сервера не доходит: попробуйте другую сеть (Wi-Fi ↔ мобильный интернет) или открыть сайт заново.';
+      }
       return error instanceof Error ? error.message : 'Не удалось настроить сервер';
     }
-  }, [patchServer, setServerSession]);
+  }, [acceptSession, withNetworkRetry]);
+
+  /** Проверка связи с экрана входа: что сервер отвечает этой сети прямо сейчас. */
+  const serverCheck = useCallback(async (): Promise<string> => {
+    const health = await serverHealth();
+    if (!health) return 'Сервер не отвечает из этой сети. Откройте в браузере https://тверь-рецепт.рф/api/index.php?action=health — если и там пусто, сеть или хостинг недоступны.';
+    patchServer({ checked: true, available: true, needsSetup: health.needsSetup, revision: health.revision });
+    return health.needsSetup
+      ? 'Сервер отвечает, учётных записей пока нет — можно создавать руководителя.'
+      : `Сервер отвечает: учётных записей ${health.users}, вход должен работать. Если вход не проходит — дело в запросе входа, пришлите текст ошибки после нажатия «Войти».`;
+  }, [patchServer]);
 
   const serverLogout = useCallback(async (): Promise<void> => {
     const session = serverSessionRef.current;
@@ -1687,6 +1735,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     serverSetup,
     serverLogout,
     serverSyncNow,
+    serverCheck,
   }), [
     data, accounts, currentAccount, needsLogin, login, logout, addAccount, updateAccount, removeAccount,
     clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
@@ -1696,7 +1745,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,
     role, me,
     sync, enableSync, disableSync, syncNow, loadVersions, restoreVersion,
-    server, serverLogin, serverSetup, serverLogout, serverSyncNow,
+    server, serverLogin, serverSetup, serverLogout, serverSyncNow, serverCheck,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

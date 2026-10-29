@@ -60,6 +60,13 @@ describe('свой сервер: сессия', () => {
     expect(loadServerSession()).toBeNull();
   });
 
+  it('обрыв сети помечается status=0 — вызывающий код повторит запрос', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    await expect(serverLogin({ login: 'irina', password: 'secret1' })).rejects.toMatchObject({
+      message: 'Нет связи с сервером', status: 0, code: 'network',
+    });
+  });
+
   it('ошибка входа приходит текстом для человека', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(
       { ok: false, error: 'credentials', message: 'Логин или пароль не подошли' },
