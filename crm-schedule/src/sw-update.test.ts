@@ -17,7 +17,7 @@ function section(from: string, to: string): string {
 
 describe('обновление установленного приложения', () => {
   it('версия кэша поднята — старые кэши сотрутся при активации', () => {
-    expect(sw).toContain("const VERSION = 'crm-v5'");
+    expect(sw).toContain("const VERSION = 'crm-v6'");
     expect(section("self.addEventListener('activate'", "self.addEventListener('message'")).toContain('caches.delete');
   });
 

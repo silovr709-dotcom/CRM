@@ -102,8 +102,12 @@ export function registerServiceWorker(options: ServiceWorkerOptions): () => void
   };
 
   navigator.serviceWorker
-    .register(`${import.meta.env.BASE_URL}sw.js`)
+    // sw.js всегда тянем из сети, минуя HTTP-кэш: иначе телефон сутками
+    // проверяет обновления по старой копии скрипта и «не видит» новых версий.
+    .register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: 'none' })
     .then((value) => {
+      // И сразу проверяем обновление, не дожидаясь сворачивания приложения.
+      value.update().catch(() => {});
       handleUpdate(value.installing);
       value.addEventListener('updatefound', () => handleUpdate(value.installing));
       // Проверяем обновления при возврате к приложению.
