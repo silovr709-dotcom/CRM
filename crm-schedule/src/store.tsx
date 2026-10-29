@@ -29,6 +29,12 @@ import {
   fetchVersion, hashEnvelope, listVersions, pullSpace, pushSpace, saveSyncConfig, syncUiFromConfig,
   type Removed, type SpaceVersion, type SyncConfig, type SyncUiState,
 } from './lib/sync';
+import {
+  loadServerRemoved, loadServerSession, saveServerRemoved, saveServerSession,
+  serverHealth, serverLogin as apiServerLogin, serverLogout as apiServerLogout,
+  serverMe, serverPull, serverPush, serverSetup as apiServerSetup,
+  type ServerSession, type ServerUiState,
+} from './lib/server';
 
 export interface ToastAction {
   label: string;
@@ -140,6 +146,16 @@ interface AppContextValue {
   loadVersions: () => Promise<SpaceVersion[]>;
   /** Откатить общую базу к одной из прошлых версий. */
   restoreVersion: (revision: number) => Promise<boolean>;
+  /** Свой сервер на домене: доступен ли, кто вошёл, как синхронизируется. */
+  server: ServerUiState;
+  /** Вход на своём сервере. Возвращает текст ошибки или пустую строку. */
+  serverLogin: (login: string, password: string) => Promise<string>;
+  /** Первая настройка сервера: создать руководителя. */
+  serverSetup: (name: string, login: string, password: string) => Promise<string>;
+  /** Выйти с сервера на этом устройстве. */
+  serverLogout: () => Promise<void>;
+  /** Синхронизироваться со своим сервером прямо сейчас. */
+  serverSyncNow: () => Promise<void>;
 }
 
 interface SyncRoundOptions {
@@ -207,17 +223,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   /* ------------------------- общая база устройств ------------------------- */
 
+  /* ------------------------- свой сервер на домене ------------------------- */
+
+  const serverSessionRef = useRef<ServerSession | null>(loadServerSession());
+  const serverRemovedRef = useRef<Removed>(loadServerRemoved());
+  const [server, setServer] = useState<ServerUiState>(() => ({
+    checked: false,
+    available: false,
+    needsSetup: false,
+    user: serverSessionRef.current?.user ?? null,
+    status: serverSessionRef.current ? 'ok' : 'off',
+    error: '',
+    lastSyncAt: '',
+    revision: serverSessionRef.current?.revision ?? 0,
+  }));
+  const serverBusy = useRef(false);
+  const serverRerun = useRef(false);
+  const domainSig = useRef('');
+  const serverPushTimer = useRef(0);
+  const serverRoundRef = useRef<(options?: { allowCreate?: boolean }) => Promise<boolean>>(async () => false);
+
+  const patchServer = useCallback((patch: Partial<ServerUiState>) => {
+    setServer((current) => ({ ...current, ...patch }));
+  }, []);
+
+  const setServerSession = useCallback((session: ServerSession | null) => {
+    serverSessionRef.current = session;
+    saveServerSession(session);
+    setServer((current) => ({
+      ...current,
+      user: session?.user ?? null,
+      revision: session?.revision ?? 0,
+      status: session ? current.status : 'off',
+    }));
+  }, []);
+
   const accounts = data.settings.accounts ?? [];
   const [sessionId, setSessionId] = useState<string>(() => loadSession());
   const currentAccount = accounts.find((account) => account.id === sessionId) ?? null;
   const needsLogin = accounts.length > 0 && !currentAccount;
-  /** Роль: из учётной записи, а без них — просто режим экрана. */
-  const role = roleMeta(currentAccount ? currentAccount.role : data.settings.role);
+  /** Роль: на своём сервере — из серверной учётки, дальше как раньше. */
+  const role = roleMeta(server.user ? server.user.role : currentAccount ? currentAccount.role : data.settings.role);
 
   /** Имя для подписей в истории: «кто это сделал». */
   const me = useCallback(
-    () => currentAccount?.name || authorName(dataRef.current.settings),
-    [currentAccount],
+    () => server.user?.name || currentAccount?.name || authorName(dataRef.current.settings),
+    [server.user, currentAccount],
   );
 
   const syncRef = useRef<SyncConfig | null>(loadSyncConfig());
@@ -241,30 +292,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
    */
   const rememberRemovals = useCallback((prev: AppData, next: AppData) => {
     const config = syncRef.current;
-    if (!config) return;
     const at = nowIso();
     const pairs: Array<[keyof Removed, Array<{ id: string }>, Array<{ id: string }>]> = [
       ['clients', prev.clients, next.clients],
       ['deals', prev.deals, next.deals],
+      ['receipts', prev.receipts ?? [], next.receipts ?? []],
     ];
-    let touched = false;
-    for (const [kind, before, after] of pairs) {
-      const beforeIds = new Set(before.map((item) => item.id));
-      const afterIds = new Set(after.map((item) => item.id));
-      for (const id of beforeIds) {
-        if (!afterIds.has(id)) {
-          config.removed[kind][id] = at;
-          touched = true;
+    const applyTo = (removed: Removed): boolean => {
+      let touched = false;
+      for (const [kind, before, after] of pairs) {
+        const beforeIds = new Set(before.map((item) => item.id));
+        const afterIds = new Set(after.map((item) => item.id));
+        for (const id of beforeIds) {
+          if (!afterIds.has(id)) {
+            removed[kind][id] = at;
+            touched = true;
+          }
+        }
+        for (const id of afterIds) {
+          if (!beforeIds.has(id) && removed[kind][id]) {
+            delete removed[kind][id];
+            touched = true;
+          }
         }
       }
-      for (const id of afterIds) {
-        if (!beforeIds.has(id) && config.removed[kind][id]) {
-          delete config.removed[kind][id];
-          touched = true;
-        }
-      }
-    }
-    if (touched) saveSyncConfig(config);
+      return touched;
+    };
+    if (config && applyTo(config.removed)) saveSyncConfig(config);
+    if (applyTo(serverRemovedRef.current)) saveServerRemoved(serverRemovedRef.current);
   }, []);
 
   /** Данные с сервера кладём напрямую: их удаления уже учтены в слиянии. */
@@ -430,6 +485,239 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     return result;
   }, [applyRemoteData, patchSyncUi]);
+
+  /* --------------------- обмен со своим сервером --------------------- */
+
+  /** Один круг: прочитать базу домена, слить с локальной, записать при расхождении. */
+  const serverRound = useCallback(async (options: { allowCreate?: boolean } = {}): Promise<boolean> => {
+    const session = serverSessionRef.current;
+    if (!session) return false;
+    if (serverBusy.current) {
+      serverRerun.current = true;
+      return true;
+    }
+    serverBusy.current = true;
+    serverRerun.current = false;
+    patchServer({ status: 'syncing', error: '' });
+    let failure = '';
+    let done = false;
+
+    try {
+      for (let attempt = 0; attempt < 3 && !done; attempt += 1) {
+        const remote = await serverPull(session.token, session.revision);
+
+        if (remote.found && remote.unchanged) {
+          const localEnvelope = buildEnvelope(dataRef.current, serverRemovedRef.current, deviceName());
+          if (envelopeSignature(localEnvelope) === domainSig.current) {
+            done = true;
+            break;
+          }
+          const pushed = await serverPush(session.token, localEnvelope, session.revision);
+          if (pushed.ok) {
+            session.revision = pushed.revision;
+            setServerSession({ ...session });
+            domainSig.current = envelopeSignature(localEnvelope);
+            done = true;
+          } else if (pushed.conflict) {
+            session.revision = pushed.revision || session.revision;
+            continue;
+          } else {
+            failure = pushed.error;
+          }
+          break;
+        }
+
+        if (!remote.found) {
+          if (options.allowCreate === false) {
+            failure = 'На сервере пока нет базы';
+            break;
+          }
+          const envelope = buildEnvelope(dataRef.current, serverRemovedRef.current, deviceName());
+          const created = await serverPush(session.token, envelope, 0);
+          if (created.ok) {
+            session.revision = created.revision;
+            setServerSession({ ...session });
+            domainSig.current = envelopeSignature(envelope);
+            done = true;
+          } else if (created.conflict) {
+            continue;
+          } else {
+            failure = created.error;
+          }
+          break;
+        }
+
+        if (!remote.envelope) {
+          failure = 'Данные на сервере повреждены';
+          break;
+        }
+
+        const local = dataRef.current;
+        const firstConnect = session.revision === 0 && isFreshData(local);
+        const merged = firstConnect
+          ? {
+              data: {
+                ...remote.envelope.data,
+                settings: {
+                  ...remote.envelope.data.settings,
+                  theme: local.settings.theme,
+                  notifications: local.settings.notifications,
+                },
+              },
+              removed: mergeRemoved(remote.envelope.removed, serverRemovedRef.current),
+            }
+          : mergeSyncData(local, remote.envelope.data, mergeRemoved(serverRemovedRef.current, remote.envelope.removed));
+        if (!firstConnect) merged.removed = mergeRemoved(merged.removed, serverRemovedRef.current);
+
+        session.revision = remote.revision;
+        serverRemovedRef.current = merged.removed;
+        saveServerRemoved(merged.removed);
+        domainSig.current = envelopeSignature(remote.envelope);
+        setServerSession({ ...session });
+
+        if (JSON.stringify(merged.data) !== JSON.stringify(local)) applyRemoteData(merged.data);
+
+        const envelope = buildEnvelope(merged.data, merged.removed, deviceName());
+        if (envelopeSignature(envelope) === domainSig.current) {
+          done = true;
+          break;
+        }
+        const pushed = await serverPush(session.token, envelope, session.revision);
+        if (pushed.ok) {
+          session.revision = pushed.revision;
+          setServerSession({ ...session });
+          domainSig.current = envelopeSignature(envelope);
+          done = true;
+        } else if (pushed.conflict) {
+          session.revision = pushed.revision || session.revision;
+          continue;
+        } else {
+          failure = pushed.error;
+          break;
+        }
+      }
+    } catch (error) {
+      const shaped = error as Error & { status?: number };
+      if (shaped.status === 401) {
+        setServerSession(null);
+        patchServer({ user: null, status: 'error', error: 'Сессия истекла — войдите снова' });
+        return false;
+      }
+      failure = shaped.message || 'Не удалось связаться с сервером';
+    } finally {
+      serverBusy.current = false;
+    }
+
+    if (failure) {
+      patchServer({ status: 'error', error: failure });
+      return false;
+    }
+    patchServer({ status: 'ok', error: '', lastSyncAt: nowIso(), revision: session.revision });
+    if (serverRerun.current) {
+      serverRerun.current = false;
+      window.setTimeout(() => { void serverRoundRef.current(options); }, 0);
+    }
+    return done;
+  }, [applyRemoteData, patchServer, setServerSession]);
+
+  useEffect(() => {
+    serverRoundRef.current = serverRound;
+  }, [serverRound]);
+
+  const serverLogin = useCallback(async (login: string, password: string): Promise<string> => {
+    try {
+      const session = await apiServerLogin({ login: login.trim(), password });
+      setServerSession(session);
+      patchServer({ available: true, needsSetup: false, error: '' });
+      await serverRoundRef.current();
+      return '';
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Не удалось войти';
+    }
+  }, [patchServer, setServerSession]);
+
+  const serverSetup = useCallback(async (name: string, login: string, password: string): Promise<string> => {
+    try {
+      const session = await apiServerSetup({ name: name.trim(), login: login.trim(), password });
+      setServerSession(session);
+      patchServer({ available: true, needsSetup: false, error: '' });
+      await serverRoundRef.current();
+      return '';
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Не удалось настроить сервер';
+    }
+  }, [patchServer, setServerSession]);
+
+  const serverLogout = useCallback(async (): Promise<void> => {
+    const session = serverSessionRef.current;
+    if (session) await apiServerLogout(session.token);
+    domainSig.current = '';
+    setServerSession(null);
+    patchServer({ status: 'off', error: '' });
+  }, [patchServer, setServerSession]);
+
+  const serverSyncNow = useCallback(async (): Promise<void> => {
+    await serverRoundRef.current();
+  }, []);
+
+  // Есть ли рядом свой сервер: проверяем один раз при запуске.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const health = await serverHealth();
+      if (cancelled) return;
+      if (!health) {
+        patchServer({ checked: true, available: false });
+        return;
+      }
+      patchServer({ checked: true, available: true, needsSetup: health.needsSetup, revision: health.revision });
+      const session = serverSessionRef.current;
+      if (!session) return;
+      try {
+        const user = await serverMe(session.token);
+        if (cancelled) return;
+        setServerSession({ ...session, user });
+        void serverRoundRef.current();
+      } catch {
+        if (!cancelled) {
+          setServerSession(null);
+          patchServer({ user: null, status: 'error', error: 'Сессия истекла — войдите снова' });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [patchServer, setServerSession]);
+
+  // Периодический обмен со своим сервером, пока сотрудник вошёл.
+  useEffect(() => {
+    if (!server.user) return undefined;
+    void serverRoundRef.current();
+    const tick = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      void serverRoundRef.current();
+    };
+    const timer = window.setInterval(tick, 20_000);
+    window.addEventListener('online', tick);
+    window.addEventListener('focus', tick);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('online', tick);
+      window.removeEventListener('focus', tick);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [server.user?.id]);
+
+  // Локальные правки уходят на свой сервер через секунду после последней.
+  useEffect(() => {
+    if (!server.user) return undefined;
+    const envelope = buildEnvelope(data, serverRemovedRef.current, deviceName());
+    if (envelopeSignature(envelope) === domainSig.current) return undefined;
+    window.clearTimeout(serverPushTimer.current);
+    serverPushTimer.current = window.setTimeout(() => { void serverRoundRef.current(); }, 1000);
+    return () => window.clearTimeout(serverPushTimer.current);
+  }, [data, server.user]);
 
   useEffect(() => {
     syncRoundRef.current = syncRound;
@@ -1374,6 +1662,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     syncNow,
     loadVersions,
     restoreVersion,
+    server,
+    serverLogin,
+    serverSetup,
+    serverLogout,
+    serverSyncNow,
   }), [
     data, accounts, currentAccount, needsLogin, login, logout, addAccount, updateAccount, removeAccount,
     clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
@@ -1383,6 +1676,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,
     role, me,
     sync, enableSync, disableSync, syncNow, loadVersions, restoreVersion,
+    server, serverLogin, serverSetup, serverLogout, serverSyncNow,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

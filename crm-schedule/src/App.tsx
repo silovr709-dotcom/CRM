@@ -22,6 +22,7 @@ import SyncBadge from './components/SyncBadge';
 import Modal from './components/Modal';
 import StatusPage from './components/StatusPage';
 import LoginScreen from './components/LoginScreen';
+import ServerAuth from './components/ServerAuth';
 import { fmtDate, fmtMoney, todayISO } from './lib/dates';
 import { contactTone, isClosedStatus } from './lib/crm';
 import { taskStats } from './lib/crmTasks';
@@ -54,7 +55,7 @@ export default function App() {
   const {
     deals, clients, settings, clientName, importSharedDeal, updateSettings,
     updateSchedule, notify, undo, sync, role, currentAccount, needsLogin, logout,
-    applyAutomationResult,
+    applyAutomationResult, server,
   } = useApp();
   const route = useRoute();
   const view = route.view;
@@ -244,6 +245,9 @@ export default function App() {
 
   // Страница для клиента живёт вне CRM: без меню, без правок, без общей базы.
   if (route.status) return <StatusPage payload={statusPayload} />;
+
+  // Свой сервер на домене: пока сотрудник не вошёл — дальше экрана входа нельзя.
+  if (server.available && !server.user) return <ServerAuth />;
 
   // Учётные записи заведены — без пароля внутрь не пускаем.
   if (needsLogin) return <LoginScreen />;
