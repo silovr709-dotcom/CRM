@@ -4,7 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
-  Account, AppData, Attachment, Client, Deal, DealItem, DealSchedule, DealStatus, HistoryEntry,
+  Account, AppData, Attachment, CalendarEvent, Client, Deal, DealItem, DealSchedule, DealStatus, HistoryEntry,
   IssuedDocument, RoleId, Settings, WarehouseReceipt,
 } from './types';
 import { demoData } from './lib/demoData';
@@ -61,6 +61,9 @@ interface UndoEntry {
   data: AppData;
 }
 
+/** Что пользователь вводит для события графика: без служебных полей. */
+export type CalendarEventInput = Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt' | 'author'>;
+
 interface AppContextValue {
   data: AppData;
   deals: Deal[];
@@ -109,6 +112,14 @@ interface AppContextValue {
   snoozeContact: (dealId: string, days: number) => void;
   /** Результат автоматики: задачи в сделках, без затирания чужих правок. */
   applyAutomationResult: (deals: Deal[], label?: string) => void;
+  /** Свободные события графика: встречи, выходные, отгрузки без сделок. */
+  calendarEvents: CalendarEvent[];
+  /** Добавить событие в график. Возвращает id. */
+  addCalendarEvent: (input: CalendarEventInput) => string;
+  /** Изменить событие графика. */
+  updateCalendarEvent: (id: string, patch: Partial<CalendarEvent>) => void;
+  /** Удалить событие графика (с подтверждением отката через тост). */
+  removeCalendarEvent: (id: string) => void;
   /** Поступления на склад: отгрузочные ведомости с фабрики. */
   receipts: WarehouseReceipt[];
   /** Записать приход. Возвращает текст ошибки или пустую строку. */
@@ -299,6 +310,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ['clients', prev.clients, next.clients],
       ['deals', prev.deals, next.deals],
       ['receipts', prev.receipts ?? [], next.receipts ?? []],
+      ['events', prev.events ?? [], next.events ?? []],
     ];
     const applyTo = (removed: Removed): boolean => {
       let touched = false;
@@ -1475,6 +1487,53 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const receipts = data.receipts ?? [];
 
+  const calendarEvents = data.events ?? [];
+
+  const addCalendarEvent = useCallback((input: CalendarEventInput): string => {
+    const id = uid('event');
+    const stamp = nowIso();
+    const event: CalendarEvent = {
+      ...input,
+      title: input.title.trim(),
+      date: input.date.slice(0, 10),
+      timeStart: input.timeStart || undefined,
+      timeEnd: input.timeEnd || undefined,
+      days: input.days ? Math.max(1, Math.min(14, Math.round(input.days))) : undefined,
+      category: input.category?.trim() || undefined,
+      team: input.team?.trim() || undefined,
+      place: input.place?.trim() || undefined,
+      note: input.note?.trim() || undefined,
+      id,
+      author: me(),
+      createdAt: stamp,
+      updatedAt: stamp,
+    };
+    setData((current) => ({ ...current, events: [...(current.events ?? []), event], updatedAt: nowIso() }));
+    return id;
+  }, [me]);
+
+  const updateCalendarEvent = useCallback((id: string, patch: Partial<CalendarEvent>) => {
+    setData((current) => ({
+      ...current,
+      events: (current.events ?? []).map((event) => (event.id === id
+        ? { ...event, ...patch, updatedAt: nowIso() }
+        : event)),
+      updatedAt: nowIso(),
+    }));
+  }, []);
+
+  const removeCalendarEvent = useCallback((id: string) => {
+    const event = dataRef.current.events?.find((item) => item.id === id);
+    if (!event) return;
+    pushUndo('удалено событие');
+    setData((current) => ({
+      ...current,
+      events: (current.events ?? []).filter((item) => item.id !== id),
+      updatedAt: nowIso(),
+    }));
+    notify(`Событие «${event.title}» удалено`, 'info', { label: 'Вернуть', run: undo });
+  }, [notify, pushUndo, undo]);
+
   const addReceipts = useCallback(async (inputs: ReceiptInput[], file?: File | null): Promise<string> => {
     if (inputs.length === 0) return 'Не выбрано ни одного заказа из ведомости';
     for (const input of inputs) {
@@ -1752,6 +1811,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     serverLogout,
     serverSyncNow,
     serverCheck,
+    calendarEvents,
+    addCalendarEvent,
+    updateCalendarEvent,
+    removeCalendarEvent,
   }), [
     data, accounts, currentAccount, needsLogin, login, logout, addAccount, updateAccount, removeAccount,
     clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,

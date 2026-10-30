@@ -490,6 +490,7 @@ export function demoData(): AppData {
     clients,
     deals,
     receipts,
+    events: [],
     settings: {
       ...defaultSettings(),
       companyName: 'Студия кухни',

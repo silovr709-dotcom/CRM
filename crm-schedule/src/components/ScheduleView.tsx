@@ -17,15 +17,17 @@ import { exportIcs } from '../lib/storage';
 import { printDaySheet } from '../lib/print';
 import { useDragDrop } from '../lib/dnd';
 import { isNarrow, usePrefs } from '../lib/viewPrefs';
+import type { CalendarEvent } from '../types';
 import Modal from './Modal';
 import EmptyState from './EmptyState';
+import CalendarEventDialog from './CalendarEventDialog';
 
 export default function ScheduleView(props: {
   onOpenDeal: (id: string) => void;
   onEditSchedule: (dealId: string) => void;
   onCreateInstall: (day?: string) => void;
 }) {
-  const { data, deals, clientName, settings, updateDeal, notify } = useApp();
+  const { data, deals, clientName, settings, updateDeal, notify, calendarEvents } = useApp();
   const today = todayISO();
   const [prefs, patchPrefs] = usePrefs('schedule', {
     // На телефоне сразу «Список дней»: календарь там тесный.
@@ -36,10 +38,28 @@ export default function ScheduleView(props: {
   });
   const [anchor, setAnchor] = useState(() => new Date());
   const [query, setQuery] = useState('');
+  /** Редактор свободного события: существующее или новое на выбранный день. */
+  const [eventEditor, setEventEditor] = useState<{ item?: CalendarEvent; date: string } | null>(null);
 
   const day = prefs.day || today;
 
-  const allEvents = useMemo(() => collectEvents(deals, (deal) => clientName(deal)), [deals, clientName]);
+  const allEvents = useMemo(
+    () => collectEvents(deals, (deal) => clientName(deal), calendarEvents),
+    [deals, clientName, calendarEvents],
+  );
+
+  /** Клик по событию: свободное открывает свой редактор, событие сделки — карточку сделки. */
+  const openEvent = (event: ScheduleEvent) => {
+    if (event.customId) {
+      const item = calendarEvents.find((entry) => entry.id === event.customId);
+      if (item) {
+        patchPrefs({ day: event.date });
+        setEventEditor({ item, date: item.date });
+        return;
+      }
+    }
+    props.onEditSchedule(event.dealId);
+  };
   const events = useMemo(() => allEvents
     .filter((event) => prefs.kinds.length === 0 || prefs.kinds.includes(event.kind))
     .filter((event) => !prefs.team || (event.team ?? '').trim() === prefs.team)
@@ -126,9 +146,9 @@ export default function ScheduleView(props: {
     <div className="page">
       <header className="page-head">
         <div>
-          <div className="eyebrow">Замеры · доставки · монтажи</div>
+          <div className="eyebrow">Замеры · доставки · монтажи · события</div>
           <h1>График монтажей</h1>
-          <p className="muted">Перетащите событие на другой день мышью или пальцем. Клик — быстрая правка.</p>
+          <p className="muted">Перетащите событие на другой день мышью или пальцем. Клик — быстрая правка. Кнопка «+ Событие» — любое дело без сделки: встреча, отгрузка, выходной.</p>
         </div>
         <div className="actions wrap">
           <button type="button" className="btn ghost" onClick={() => exportIcs(data, clientName)}>Скачать .ics</button>
@@ -140,6 +160,7 @@ export default function ScheduleView(props: {
           >
             <Printer size={15} /> Лист дня
           </button>
+          <button type="button" className="btn ghost" onClick={() => setEventEditor({ date: day })}>+ Событие</button>
           <button type="button" className="btn primary" onClick={() => props.onCreateInstall(day)}>+ Монтаж</button>
         </div>
       </header>
@@ -225,7 +246,7 @@ export default function ScheduleView(props: {
                 today={today}
                 day={day}
                 onSelect={(date) => patchPrefs({ day: date })}
-                onOpenDeal={props.onEditSchedule}
+                onOpenEvent={openEvent}
               />
             </section>
           ) : (
@@ -262,8 +283,8 @@ export default function ScheduleView(props: {
                             key={event.id}
                             event={event}
                             dragging={drag?.id === event.dealId && drag?.label === event.kind}
-                            onOpen={() => props.onEditSchedule(event.dealId)}
-                            bind={() => bind({ id: event.dealId, kind: 'event', label: event.kind })}
+                            onOpen={() => openEvent(event)}
+                            bind={() => (event.customId ? {} : bind({ id: event.dealId, kind: 'event', label: event.kind }))}
                           />
                         ))}
                         {items.length > limit && <span className="cell-more">+{items.length - limit}</span>}
@@ -297,8 +318,13 @@ export default function ScheduleView(props: {
                 compact
                 icon={<CalendarDays size={20} />}
                 title="На этот день пусто"
-                hint="Поставьте монтаж или замер — событие сразу появится в календаре."
-                action={<button type="button" className="btn small ghost" onClick={() => props.onCreateInstall(day)}>Поставить событие</button>}
+                hint="Поставьте монтаж, замер или обычное событие — всё появится в календаре."
+                action={(
+                  <>
+                    <button type="button" className="btn small ghost" onClick={() => setEventEditor({ date: day })}>Добавить событие</button>
+                    <button type="button" className="btn small ghost" onClick={() => props.onCreateInstall(day)}>Поставить монтаж</button>
+                  </>
+                )}
               />
             ) : (
               <ul className="day-events">
@@ -317,9 +343,11 @@ export default function ScheduleView(props: {
                         {event.address && <span className="with-icon"><MapPin size={12} /> {event.address}</span>}
                         {event.note && <span className="muted small">{event.note}</span>}
                         <div className="day-event-actions">
-                          <span className={`badge badge-${status.tone}`}>{status.label}</span>
-                          <button type="button" className="link-btn" onClick={() => props.onEditSchedule(event.dealId)}>править</button>
-                          <button type="button" className="link-btn" onClick={() => props.onOpenDeal(event.dealId)}>карточка →</button>
+                          {!event.customId && <span className={`badge badge-${status.tone}`}>{status.label}</span>}
+                          <button type="button" className="link-btn" onClick={() => openEvent(event)}>править</button>
+                          {!event.customId && (
+                            <button type="button" className="link-btn" onClick={() => props.onOpenDeal(event.dealId)}>карточка →</button>
+                          )}
                         </div>
                       </div>
                     </li>
@@ -328,6 +356,9 @@ export default function ScheduleView(props: {
               </ul>
             )}
             <div className="day-card-actions">
+              <button type="button" className="btn small ghost" onClick={() => setEventEditor({ date: day })}>
+                + Событие
+              </button>
               {routeUrl && (
                 <a className="btn small ghost" href={routeUrl} target="_blank" rel="noreferrer">
                   <MapPin size={13} /> Маршрут по адресам
@@ -399,6 +430,14 @@ export default function ScheduleView(props: {
           </section>
         </aside>
       </div>
+
+      {eventEditor && (
+        <CalendarEventDialog
+          item={eventEditor.item}
+          date={eventEditor.date}
+          onClose={() => setEventEditor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -431,13 +470,13 @@ function EventPill({ event, dragging, onOpen, bind }: {
   );
 }
 
-function DayList({ days, byDay, today, day, onSelect, onOpenDeal }: {
+function DayList({ days, byDay, today, day, onSelect, onOpenEvent }: {
   days: string[];
   byDay: Map<string, ScheduleEvent[]>;
   today: string;
   day: string;
   onSelect: (date: string) => void;
-  onOpenDeal: (id: string) => void;
+  onOpenEvent: (event: ScheduleEvent) => void;
 }) {
   return (
     <ul className="day-list-items">
@@ -454,7 +493,7 @@ function DayList({ days, byDay, today, day, onSelect, onOpenDeal }: {
               {items.map((event) => {
                 const kind = scheduleKindMeta(event.kind);
                 return (
-                  <button key={event.id} type="button" className="day-list-event" onClick={() => onOpenDeal(event.dealId)}>
+                  <button key={event.id} type="button" className="day-list-event" onClick={() => onOpenEvent(event)}>
                     <span className={`event-chip chip-${kind.color}`}>{kind.short}</span>
                     <span className="day-list-text">
                       <b>{event.dealTitle}</b>
