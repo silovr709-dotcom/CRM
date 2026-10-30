@@ -721,40 +721,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await serverRoundRef.current();
   }, []);
 
-  // Есть ли рядом свой сервер: проверяем один раз при запуске.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const health = await serverHealth();
-      if (cancelled) return;
-      if (!health) {
-        patchServer({ checked: true, available: false });
-        return;
+  // Есть ли рядом свой сервер. Проверяем при запуске и повторно — когда сеть
+  // меняется (телефон перескочил с домашнего Wi-Fi на мобильный интернет),
+  // иначе приложение до перезапуска живёт в «локальном» виде.
+  const probeServer = useCallback(async () => {
+    const health = await serverHealth();
+    if (!health) {
+      patchServer({ checked: true, available: false });
+      return;
+    }
+    patchServer({ checked: true, available: true, needsSetup: health.needsSetup, revision: health.revision });
+    const session = serverSessionRef.current;
+    if (!session) return;
+    try {
+      const user = await serverMe(session.token);
+      setServerSession({ ...session, user });
+      void serverRoundRef.current();
+    } catch (error) {
+      const shaped = error as Error & { status?: number };
+      // Сбрасываем вход только если сервер прямо сказал 401. Временная
+      // ошибка сети не должна выбрасывать сотрудника на форму входа.
+      if (shaped.status === 401) {
+        setServerSession(null);
+        patchServer({ user: null, status: 'error', error: 'Сервер не подтвердил вход. Войдите ещё раз; если повторится, пришлите текст этой ошибки.' });
+      } else {
+        patchServer({ status: 'error', error: shaped.message || 'Не удалось проверить вход на сервере' });
       }
-      patchServer({ checked: true, available: true, needsSetup: health.needsSetup, revision: health.revision });
-      const session = serverSessionRef.current;
-      if (!session) return;
-      try {
-        const user = await serverMe(session.token);
-        if (cancelled) return;
-        setServerSession({ ...session, user });
-        void serverRoundRef.current();
-      } catch (error) {
-        if (!cancelled) {
-          const shaped = error as Error & { status?: number };
-          // Сбрасываем вход только если сервер прямо сказал 401. Временная
-          // ошибка сети не должна выбрасывать сотрудника на форму входа.
-          if (shaped.status === 401) {
-            setServerSession(null);
-            patchServer({ user: null, status: 'error', error: 'Сервер не подтвердил вход. Войдите ещё раз; если повторится, пришлите текст этой ошибки.' });
-          } else {
-            patchServer({ status: 'error', error: shaped.message || 'Не удалось проверить вход на сервере' });
-          }
-        }
-      }
-    })();
-    return () => { cancelled = true; };
+    }
   }, [patchServer, setServerSession]);
+
+  useEffect(() => { void probeServer(); }, [probeServer]);
+
+  const serverAvailableRef = useRef(false);
+  useEffect(() => { serverAvailableRef.current = server.available; }, [server.available]);
+
+  // Сеть сменилась или приложение вернули на экран — если сервер не нашёлся
+  // в прошлый раз, пробуем ещё раз без перезапуска приложения.
+  useEffect(() => {
+    const retry = () => {
+      if (!serverAvailableRef.current) void probeServer();
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') retry(); };
+    window.addEventListener('online', retry);
+    window.addEventListener('focus', retry);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', retry);
+      window.removeEventListener('focus', retry);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [probeServer]);
 
   // Периодический обмен со своим сервером, пока сотрудник вошёл.
   useEffect(() => {

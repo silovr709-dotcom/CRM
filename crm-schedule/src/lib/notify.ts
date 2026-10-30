@@ -19,6 +19,36 @@ export async function askNotifyPermission(): Promise<NotifyPermission> {
   }
 }
 
+/** iPhone/iPad: там системные уведомления у веб-приложений — особая история. */
+export function isIosDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  if (/iPhone|iPad|iPod/i.test(ua)) return true;
+  // iPad с iPadOS 13+ представляется как Mac, но с сенсорным экраном.
+  return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+}
+
+/**
+ * Что сказать человеку по итогу запроса разрешения — вместо сухого
+ * «разрешение не выдано». У каждого исхода своё лечение.
+ */
+export function permissionHint(permission: NotifyPermission, ios = isIosDevice()): string {
+  switch (permission) {
+    case 'granted':
+      return 'Системные уведомления разрешены';
+    case 'denied':
+      return 'Браузер уже запретил уведомления для этого сайта, и повторно окно он не покажет. '
+        + 'Включите вручную: настройки сайта рядом с адресом (замок или «Настройки сайтов») → Уведомления → Разрешить, затем вернитесь сюда и нажмите «Проверить».';
+    case 'unsupported':
+      return ios
+        ? 'На iPhone и iPad уведомления работают только у установленного приложения: кнопка «Поделиться» → «На экран Домой», '
+          + 'затем откройте CRM с новой иконки и включите уведомления здесь. В обычной вкладке Safari Apple их не разрешает.'
+        : 'Этот браузер не поддерживает системные уведомления. Напоминания внутри приложения, звук и счётчик в заголовке продолжат работать.';
+    default:
+      return 'Запрос разрешения закрылся без ответа. Нажмите «Разрешить» ещё раз и в появившемся окне выберите «Разрешить», а не закрывайте его крестиком.';
+  }
+}
+
 /* ------------------------------ уведомления ------------------------------ */
 
 export interface BrowserPayload {
