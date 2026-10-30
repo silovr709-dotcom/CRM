@@ -370,6 +370,38 @@ describe('движок напоминаний', () => {
     expect(after.fire).toHaveLength(1);
   });
 
+  it('отложенное держится в планах до своего времени', () => {
+    const base = {
+      deals: [installDeal()],
+      rules: [rule({ offsets: [0] })],
+      settings: settings(),
+      clientName,
+    };
+    const first = evaluateReminders({ ...base, now: at('2026-10-25T14:00:00') });
+    const id = first.fire[0].id;
+    const snoozes = { [id]: '2026-10-25T16:00:00' };
+    const before = evaluateReminders({ ...base, now: at('2026-10-25T15:00:00'), snoozes });
+    expect(before.upcoming).toHaveLength(1);
+    expect(before.upcoming[0].id).toBe(id);
+    expect(before.upcoming[0].notifyAt).toBe(new Date('2026-10-25T16:00:00').toISOString());
+  });
+
+  it('горизонт планов расширяется для экспорта в календарь', () => {
+    const deal = installDeal({
+      schedule: { status: 'planned', installAt: '2026-11-20', timeStart: '10:00' },
+    });
+    const base = {
+      deals: [deal],
+      rules: [rule({ offsets: [0] })],
+      settings: settings(),
+      clientName,
+      now: at('2026-10-25T09:00:00'),
+    };
+    expect(evaluateReminders(base).upcoming).toHaveLength(0);
+    const wide = evaluateReminders({ ...base, horizonDays: 40 });
+    expect(wide.upcoming.some((reminder) => reminder.source === 'install')).toBe(true);
+  });
+
   it('повторяет просроченное каждый день, пока не закрыто', () => {
     const deal = makeDeal({
       tasks: [{ id: 't1', title: 'Позвонить', kind: 'call', dueAt: '2026-10-20', createdAt: '' }],

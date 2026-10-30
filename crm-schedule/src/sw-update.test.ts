@@ -17,8 +17,19 @@ function section(from: string, to: string): string {
 
 describe('обновление установленного приложения', () => {
   it('версия кэша поднята — старые кэши сотрутся при активации', () => {
-    expect(sw).toContain("const VERSION = 'crm-v6'");
+    expect(sw).toContain("const VERSION = 'crm-v7'");
     expect(section("self.addEventListener('activate'", "self.addEventListener('message'")).toContain('caches.delete');
+  });
+
+  it('при установке предкэширует всю сборку по манифесту — офлайн сразу полный', () => {
+    expect(sw).toContain("fetch('./.vite/manifest.json'");
+    expect(sw).toContain('precacheBuildAssets(cache)');
+    expect(sw).toContain('entry.dynamicImports');
+  });
+
+  it('клик по уведомлению открывает приложение', () => {
+    expect(sw).toContain("self.addEventListener('notificationclick'");
+    expect(sw).toContain('clients.openWindow');
   });
 
   it('новая версия активируется сразу, не ожидая закрытия вкладок', () => {

@@ -9,7 +9,9 @@
  * входа и базы зависят от заголовков/cookie, а cache.match их не различает. */
 
 // При смене стратегии кэширования поднимайте версию: старые кэши сотрутся.
-const VERSION = 'crm-v6';
+// v7: при установке предкэшируем все чанки сборки по манифесту Vite,
+// чтобы офлайн сразу работал весь, а не только уже открытые разделы.
+const VERSION = 'crm-v7';
 const CORE = `crm-core-${VERSION}`;
 const RUNTIME = `crm-runtime-${VERSION}`;
 
@@ -24,6 +26,47 @@ const CORE_ASSETS = [
   './icons/apple-touch-icon.png',
 ];
 
+async function precacheBuildAssets(cache) {
+  // По манифесту Vite собираем все файлы сборки: входной чанк, стили,
+  // ленивые чанки (PDF, OCR) и их зависимости — рекурсивно по imports.
+  const urls = new Set();
+  try {
+    const response = await fetch('./.vite/manifest.json', { cache: 'reload' });
+    if (response.ok) {
+      const manifest = await response.json();
+      const visit = (key, seen) => {
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        const entry = manifest[key];
+        if (!entry) return;
+        if (entry.file) urls.add(`./${entry.file}`);
+        for (const css of entry.css ?? []) urls.add(`./${css}`);
+        for (const asset of entry.assets ?? []) urls.add(`./${asset}`);
+        for (const dep of [...(entry.imports ?? []), ...(entry.dynamicImports ?? [])]) visit(dep, seen);
+      };
+      for (const key of Object.keys(manifest)) visit(key, new Set());
+    }
+  } catch {
+    /* манифеста нет (старая сборка) — обойдёмся оболочкой */
+  }
+  if (urls.size === 0) {
+    // Запасной путь: вытащить ассеты прямо из index.html.
+    try {
+      const html = await (await fetch('./index.html', { cache: 'reload' })).text();
+      for (const match of html.matchAll(/(?:src|href)="(\.\/assets\/[^"]+)"/g)) urls.add(match[1]);
+    } catch {
+      /* и это не вышло — останутся runtime-кэши */
+    }
+  }
+  await Promise.all([...urls].map(async (url) => {
+    try {
+      await cache.add(new Request(url, { cache: 'reload' }));
+    } catch {
+      /* один битый файл не ломает установку */
+    }
+  }));
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CORE);
@@ -35,6 +78,7 @@ self.addEventListener('install', (event) => {
         /* пропускаем: возможно, файла нет в этой сборке */
       }
     }));
+    await precacheBuildAssets(cache);
     // Новая версия не ждёт, пока закроют все вкладки: активируется сразу,
     // а страница сама перезагрузится по событию controllerchange.
     await self.skipWaiting();
@@ -51,6 +95,22 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
+// Клик по уведомлению (в том числе по сработавшему из локального расписания,
+// когда приложение было закрыто): поднять открытую вкладку или открыть приложение.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windows) {
+      if ('focus' in client) {
+        await client.focus();
+        return;
+      }
+    }
+    await self.clients.openWindow('./');
+  })());
 });
 
 async function navigationFromNetwork(request) {

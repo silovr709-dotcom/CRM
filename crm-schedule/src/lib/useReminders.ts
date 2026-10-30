@@ -5,9 +5,10 @@ import type { ReminderRule } from '../types';
 import { useApp } from '../store';
 import {
   clearSent, clearSnoozes, digestText, evaluateReminders, markSentMap, readSent,
-  readSnoozes, snoozeReminder, type PlannedReminder,
+  readSnoozes, reminderRulesWithDigest, snoozeReminder, type PlannedReminder,
 } from './reminders';
 import { deliverReminders } from './notify';
+import { cancelLocalReminder, readLocalSchedule, syncLocalReminderSchedule, wasShownLocally } from './localReminders';
 import { isClosedStatus } from './crm';
 import { taskStats } from './crmTasks';
 import { todayISO } from './dates';
@@ -48,21 +49,7 @@ export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
   handlersRef.current = handlers;
 
   // Сводка на день идёт отдельным правилом из настроек дайджеста.
-  const rules = useMemo<ReminderRule[]>(() => {
-    const base = settings.reminderRules ?? [];
-    const digestRule: ReminderRule = {
-      id: 'rule-digest',
-      label: 'Сводка на день',
-      enabled: Boolean(settings.digest?.enabled),
-      source: 'digest',
-      offsets: [0],
-      atTime: settings.digest?.at ?? '08:30',
-      channels: settings.digest?.channels ?? ['inapp', 'browser'],
-      priority: 'low',
-      respectQuietHours: true,
-    };
-    return [...base.filter((rule) => rule.source !== 'digest'), digestRule];
-  }, [settings.reminderRules, settings.digest]);
+  const rules = useMemo<ReminderRule[]>(() => reminderRulesWithDigest(settings), [settings]);
 
   const digestSummary = useCallback(() => {
     const today = todayISO();
@@ -98,10 +85,17 @@ export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
       if (settings.notifications === false) {
         setWaiting([]);
         setActive([]);
+        // И расписание устройства чистим: выключено — значит выключено везде.
+        void syncLocalReminderSchedule([]);
         return;
       }
 
       setWaiting(result.waiting);
+
+      // Ближайшие напоминания ставим в расписание самого устройства:
+      // уведомление придёт в срок и без интернета, и при закрытом приложении
+      // (где браузер умеет показывать по расписанию; проверка — внутри).
+      void syncLocalReminderSchedule([...result.upcoming, ...result.waiting]);
 
       if (result.skipped.length > 0) markSentMap(result.skipped);
 
@@ -111,7 +105,13 @@ export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
           const ids = new Set(result.fire.map((reminder) => reminder.id));
           return [...result.fire, ...current.filter((item) => !ids.has(item.id))].slice(0, MAX_ACTIVE);
         });
-        void deliverReminders(result.fire, {
+        // Если система уже показала это уведомление по локальному расписанию
+        // (приложение было закрыто), второй раз в «браузер» не шлём.
+        const localRegistry = readLocalSchedule();
+        const forDelivery = result.fire.map((reminder) => (wasShownLocally(reminder.id, localRegistry, Date.now())
+          ? { ...reminder, channels: reminder.channels.filter((channel) => channel !== 'browser') }
+          : reminder));
+        void deliverReminders(forDelivery, {
           pendingCount: result.fire.length,
           onInApp: (reminder) => {
             const action = reminder.dealId
@@ -146,18 +146,21 @@ export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
 
   const snooze = useCallback((id: string, until: Date) => {
     snoozeReminder(id, until);
+    void cancelLocalReminder(id);
     setActive((current) => current.filter((item) => item.id !== id));
     setWaiting((current) => current.filter((item) => item.id !== id));
   }, []);
 
   const dismiss = useCallback((id: string) => {
     markSentMap([id]);
+    void cancelLocalReminder(id);
     setActive((current) => current.filter((item) => item.id !== id));
     setWaiting((current) => current.filter((item) => item.id !== id));
   }, []);
 
   const dismissAll = useCallback(() => {
     markSentMap(active.map((item) => item.id));
+    for (const item of active) void cancelLocalReminder(item.id);
     setActive([]);
     setWaiting([]);
   }, [active]);

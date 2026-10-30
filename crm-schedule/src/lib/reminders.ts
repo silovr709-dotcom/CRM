@@ -238,6 +238,24 @@ export function defaultDigest(): DigestSettings {
   return { enabled: true, at: '08:30', weekdaysOnly: true, channels: ['inapp', 'browser'] };
 }
 
+/** Правила из настроек + сводка на день отдельным правилом. Один состав
+    нужен и живому движку, и расписанию на устройстве, и экспорту в календарь. */
+export function reminderRulesWithDigest(settings: Pick<Settings, 'reminderRules' | 'digest'>): ReminderRule[] {
+  const base = settings.reminderRules ?? [];
+  const digestRule: ReminderRule = {
+    id: 'rule-digest',
+    label: 'Сводка на день',
+    enabled: Boolean(settings.digest?.enabled),
+    source: 'digest',
+    offsets: [0],
+    atTime: settings.digest?.at ?? '08:30',
+    channels: settings.digest?.channels ?? ['inapp', 'browser'],
+    priority: 'low',
+    respectQuietHours: true,
+  };
+  return [...base.filter((rule) => rule.source !== 'digest'), digestRule];
+}
+
 /* -------------------------------- моменты ------------------------------- */
 
 export interface ReminderMoment {
@@ -426,6 +444,9 @@ export interface EvaluateInput {
   snoozes?: Record<string, string>;
   /** Текст сводки — собирается вызывающей стороной из данных. */
   digestSummary?: (now: Date) => string;
+  /** На сколько дней вперёд собирать планы (по умолчанию 7). Для экспорта
+      в календарь телефона нужно дальше: календарь напоминает сам. */
+  horizonDays?: number;
 }
 
 export interface EvaluateResult {
@@ -559,7 +580,7 @@ export function evaluateReminders(input: EvaluateInput): EvaluateResult {
   const upcoming: PlannedReminder[] = [];
   const waiting: PlannedReminder[] = [];
   const skipped: string[] = [];
-  const horizon = new Date(now.getTime() + UPCOMING_DAYS * 86400000);
+  const horizon = new Date(now.getTime() + (input.horizonDays ?? UPCOMING_DAYS) * 86400000);
 
   /** Один момент в одном наборе настроек: правило или личное напоминание задачи. */
   const planMoment = (config: PlanConfig, moment: ReminderMoment) => {
@@ -579,10 +600,30 @@ export function evaluateReminders(input: EvaluateInput): EvaluateResult {
       }
 
       // Отложенное напоминание показываем по времени «после», а не по сроку.
-      const snoozeUntil = snoozes[reminderId(config.ruleId, moment.key, offset, notifyAt)];
+      // Пока время не пришло, держим его в планах: так его можно заранее
+      // поставить в расписание устройства и выгрузить в календарь телефона.
+      const snoozeId = reminderId(config.ruleId, moment.key, offset, notifyAt);
+      const snoozeUntil = snoozes[snoozeId];
       if (snoozeUntil) {
         const at = new Date(snoozeUntil);
         if (at.getTime() > now.getTime()) {
+          if (at <= horizon && !sent[snoozeId]) {
+            upcoming.push({
+              id: snoozeId,
+              ruleId: config.ruleId,
+              ruleLabel: config.ruleLabel,
+              source: moment.source,
+              dealId: moment.dealId,
+              title: moment.title,
+              detail: moment.detail,
+              momentAt: moment.at.toISOString(),
+              notifyAt: at.toISOString(),
+              offsetMinutes: offset,
+              priority: config.priority,
+              channels: config.channels,
+              waitingForQuiet: false,
+            });
+          }
           continue;
         }
         notifyAt = at;
