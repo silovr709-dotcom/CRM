@@ -497,7 +497,7 @@ export default function App() {
           const Icon = item.icon;
           return (
             <button key={item.id} type="button" className={view === item.id ? 'active' : ''} onClick={() => go(item.id)}>
-              <Icon size={19} />
+              <Icon size={24} />
               <span>{item.short}</span>
               {item.id === 'crm' && counts.contacts > 0 && <b className="mobile-badge">{counts.contacts}</b>}
               {item.id === 'tasks' && counts.tasksOverdue > 0 && <b className="mobile-badge red">{counts.tasksOverdue}</b>}
