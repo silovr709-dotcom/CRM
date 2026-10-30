@@ -1,29 +1,21 @@
-# Сайт приложения на своём домене: HTTPS, оболочка без кэша, ассеты с хэшем — надолго.
-RewriteEngine On
-
-# На HTTPS — если хостинг уже выдал сертификат и запрос пришёл по http.
-RewriteCond %{HTTPS} off
-RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1) [NC]
-RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
-
-# Пробросить заголовок входа (токен) в PHP: Apache на части хостингов его съедает.
-RewriteCond %{HTTP:Authorization} ^(.+)$
-RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
-
-# API — настоящие файлы PHP, их не трогаем.
-RewriteRule ^api/ - [L]
-
-# Всё остальное, чего нет на диске, — оболочка приложения (hash-роутинг, но пусть будет).
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^ index.html [L]
+# Сайт приложения на своём домене.
+#
+# Намеренно без RewriteEngine и редиректов: на reg.ru прежний набор правил
+# (форс HTTPS + проброс Authorization в PHP + fallback на index.html) давал
+# HTTP 500 на всех файлах папки, включая статику. Приложению перезаписи не
+# нужны: роутинг — по хэшу (#/...), index.html отдаётся как DirectoryIndex,
+# api/ — настоящие файлы. Вход при этом не страдает: сессия подтверждается
+# cookie и заголовком X-Auth-Token, которые PHP видит без проброса.
+# Принудительный HTTPS при желании включается в панели хостинга
+# (Сайты → домен → SSL / «перенаправлять на HTTPS»), а не здесь.
+#
+# Единственное, что здесь осталось, — кэш: оболочка и service worker должны
+# проверяться при каждом открытии, иначе телефон «не увидит обновлений»;
+# хэшированные ассеты можно держать в кэше долго.
 
 <IfModule mod_expires.c>
   ExpiresActive On
-  # Оболочка и service worker должны проверяться при каждом открытии,
-  # иначе телефон снова «не увидит обновлений».
   ExpiresByType text/html "access plus 0 seconds"
-  # Хэшированные ассеты не меняются никогда.
   ExpiresByType text/css "access plus 1 year"
   ExpiresByType application/javascript "access plus 1 year"
   ExpiresByType image/png "access plus 1 month"
