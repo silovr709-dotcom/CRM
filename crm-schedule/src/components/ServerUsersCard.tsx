@@ -11,7 +11,7 @@ import {
 } from '../lib/server';
 
 export default function ServerUsersCard() {
-  const { server, serverLogout, serverSyncNow, notify } = useApp();
+  const { server, serverLogout, serverSyncNow, serverCheck, notify } = useApp();
   const me = server.user;
   const [users, setUsers] = useState<ServerUser[]>([]);
   const [loading, setLoading] = useState(false);
@@ -25,7 +25,7 @@ export default function ServerUsersCard() {
   const token = () => loadServerSession()?.token ?? '';
 
   const refresh = useCallback(async () => {
-    if (!me || me.role !== 'owner') return;
+    if (!me || me.role !== 'owner' || !server.available) return;
     setLoading(true);
     try {
       setUsers(await serverListUsers(token()));
@@ -34,9 +34,42 @@ export default function ServerUsersCard() {
       setError(caught instanceof Error ? caught.message : 'Не удалось загрузить сотрудников');
     }
     setLoading(false);
-  }, [me]);
+  }, [me, server.available]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Сервер не отвечает (например, домашний Wi-Fi не открывает домен), но вход
+  // на этом устройстве есть: показываем честную карточку «нет связи», а не
+  // прячемся — и не подменяем вид локальными настройками доступа.
+  if (!server.available && me) {
+    return (
+      <section className="card" aria-label="Сотрудники на сервере">
+        <div className="section-head">
+          <div>
+            <h2><Server size={16} /> Сотрудники на сервере</h2>
+            <span className="muted">учётные записи и роли хранятся на домене фирмы, вход — с любого устройства</span>
+          </div>
+        </div>
+        <div className="inline-warning">
+          Сервер фирмы сейчас не отвечает из этой сети — так бывает на домашнем Wi-Fi,
+          который ещё не обновил DNS домена. Вы вошли как {me.name}, данные пока
+          сохраняются на этом устройстве и уедут на сервер, когда связь появится.
+        </div>
+        <div className="data-actions">
+          <button
+            type="button"
+            className="btn small"
+            onClick={async () => { notify(await serverCheck(), 'info'); }}
+          >
+            Проверить связь
+          </button>
+          <button type="button" className="btn small ghost" onClick={() => { void serverLogout(); }}>
+            <LogOut size={14} /> Выйти
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   if (!server.available) return null;
 

@@ -9,7 +9,7 @@ import {
   CHANNEL_META, OFFSET_PRESETS, PRIORITY_META, SOURCE_META, defaultDigest, defaultQuietHours,
   defaultReminderRules, describeRule, fmtOffset, inQuietHours,
 } from '../lib/reminders';
-import { askNotifyPermission, notifyPermission, testNotification } from '../lib/notify';
+import { askNotifyPermission, notifyPermission, permissionHint, testNotification } from '../lib/notify';
 
 const SOURCES: ReminderSource[] = [
   'install', 'measure', 'delivery', 'ready', 'task', 'contact', 'payment', 'stale',
@@ -110,10 +110,7 @@ export default function ReminderSettings() {
         </label>
 
         <span className={`reminder-permission permission-${permission}`}>
-          {permission === 'granted' && 'системные уведомления разрешены'}
-          {permission === 'default' && 'разрешение ещё не выдано'}
-          {permission === 'denied' && 'уведомления запрещены в настройках браузера'}
-          {permission === 'unsupported' && 'браузер не поддерживает системные уведомления'}
+          {permissionHint(permission)}
         </span>
 
         <div className="reminder-test">
@@ -122,7 +119,7 @@ export default function ReminderSettings() {
             className="btn small ghost"
             onClick={async () => {
               const result = await testNotification(['browser', 'sound']);
-              notify(result.browser ? 'Уведомление отправлено' : 'Разрешите уведомления в браузере', result.browser ? 'ok' : 'error');
+              notify(result.browser ? 'Уведомление отправлено' : permissionHint(notifyPermission()), result.browser ? 'ok' : 'error');
             }}
           >
             <Volume2 size={14} /> Проверить
@@ -133,7 +130,7 @@ export default function ReminderSettings() {
             onClick={async () => {
               const value = await askNotifyPermission();
               setPermission(value);
-              notify(value === 'granted' ? 'Разрешение выдано' : 'Разрешение не выдано', value === 'granted' ? 'ok' : 'info');
+              notify(value === 'granted' ? 'Разрешение выдано' : permissionHint(value), value === 'granted' ? 'ok' : 'info');
             }}
           >
             Разрешить

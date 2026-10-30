@@ -198,7 +198,9 @@ export default function DataView() {
       </section>
 
       <ServerUsersCard />
-      {!server.available && <AccessCard />}
+      {/* Локальный доступ показываем, только когда серверного входа нет вовсе:
+          временная недоступность домена не должна менять вид раздела. */}
+      {!server.available && !server.user && <AccessCard />}
 
       <ReminderSettings />
 
