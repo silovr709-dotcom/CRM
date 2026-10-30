@@ -820,18 +820,38 @@ label { font-size: 12.5px; color: var(--ink-2); }
   .deal-arrow { display: none; }
   .client-deals { display: none; }
   .search-wrap { min-width: 100%; flex: 1; }
-  /* Карточки на телефоне — «шторка» снизу на всю ширину: больше места полям,
+  /* Карточки на телефоне — «шторка» снизу почти на весь экран: больше места полям,
      заголовок и кнопки всегда под рукой, закрытие — свайпом по смыслу вниз. */
   .modal-overlay { padding: 0; align-items: flex-end; }
   .modal {
-    max-height: 94dvh; border-radius: 18px 18px 0 0; width: 100%;
+    max-height: calc(100dvh - 10px); border-radius: 18px 18px 0 0; width: 100%;
     animation: sheet 0.22s ease;
   }
   .modal.modal-compact { width: calc(100% - 20px); margin: 0 10px 10px; border-radius: 16px; }
-  .modal-body { padding: 16px; }
-  .modal-head { padding: 16px 16px 12px; }
-  .modal-head h2 { font-size: 19px; }
-  .modal-head .icon-btn { width: 44px; height: 44px; flex: none; }
+  .modal-body { padding: 14px 16px 16px; }
+  /* Шапка карточки — одна компактная строка: имя и подпись обрезаются многоточием,
+     а не переносятся в три этажа и не съедают место у самой карточки. */
+  .modal-head { padding: 10px 14px 8px; align-items: center; gap: 10px; }
+  .modal-head-text { flex: 1; min-width: 0; }
+  .modal-head h2 {
+    font-size: 16.5px; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .modal-subtitle {
+    font-size: 11.5px; margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .deal-dialog-title { flex-wrap: nowrap; min-width: 0; }
+  .deal-dialog-title > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .modal-head .icon-btn { width: 40px; height: 40px; flex: none; }
+  /* Действия в шапке (позвонить, WhatsApp, Telegram, печать) — иконками в один ряд:
+     подписи прячем, смысл подсказывают иконка и всплывающая подсказка. */
+  .deal-head-actions { flex-wrap: nowrap; gap: 4px; }
+  .modal .deal-head-actions .btn {
+    font-size: 0; gap: 0; width: 40px; height: 40px; min-height: 40px;
+    padding: 0; border-radius: 10px; flex: none;
+  }
+  .modal .deal-head-actions .btn svg { width: 18px; height: 18px; }
   .modal-foot {
     gap: 10px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
     border-radius: 0;
@@ -855,14 +875,17 @@ label { font-size: 12.5px; color: var(--ink-2); }
      разделы не переносятся в три ряда и всегда доступны при прокрутке формы. */
   .modal .tabs {
     flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
-    margin: -16px -16px 14px; padding: 8px 12px 0;
-    position: sticky; top: -16px; background: var(--surface); z-index: 3;
+    margin: -14px -16px 12px; padding: 4px 10px 0;
+    position: sticky; top: -14px; background: var(--surface); z-index: 3;
   }
   .modal .tabs::-webkit-scrollbar { display: none; }
-  .modal .tabs button { flex: none; min-height: 46px; padding: 10px 14px; font-size: 13.5px; }
+  .modal .tabs button { flex: none; min-height: 40px; padding: 7px 12px; font-size: 13px; }
+  /* Мелкие кнопки и чипы вне карточек тоже доводим до зоны нажатия пальцем. */
+  .btn.small { min-height: 40px; padding: 8px 12px; }
+  .modal .status-chip { min-height: 38px; padding: 8px 11px; font-size: 12.5px; }
   .toolbar-count { display: none; }
   .focus-money { margin-left: 0; width: 100%; padding: 4px 10px; }
-  .toasts { bottom: 78px; }
+  .toasts { bottom: calc(86px + env(safe-area-inset-bottom)); }
 }
 
 /* =======================================================================
@@ -2484,3 +2507,21 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select:
   background: var(--surface); color: var(--ink); font-size: 12.5px;
 }
 .server-new-user { margin-top: 4px; }
+
+/* ---------- Мобильный аудит: добиваем места, где пальцем тесно ----------
+   Блок идёт последним, чтобы его правила выигрывали у точечных переопределений
+   выше по файлу при равной специфичности. */
+@media (max-width: 720px) {
+  /* Фильтры и поиск в палитре: шрифт 16px, иначе iOS приближает при фокусе. */
+  .search-wrap.small input, .palette-search input { font-size: 16px; }
+  /* Иконки-кнопки вне шапки и карточек — не меньше 36px. */
+  .icon-btn { width: 36px; height: 36px; }
+  /* Чипы-переключатели: высота под палец, текст не жмётся. */
+  .chip-toggle { min-height: 38px; padding: 7px 12px; font-size: 12.5px; }
+  /* Быстрые действия у сделок в списках видны всегда: на телефоне нет hover,
+     иначе до них не добраться. */
+  .deal-quick-actions { opacity: 1; }
+  /* Таблицы отчётов не распирают экран: узкие колонки прячем, цифры компактнее. */
+  .slice-table { font-size: 12px; }
+  .slice-table th, .slice-table td { padding-right: 6px; }
+}

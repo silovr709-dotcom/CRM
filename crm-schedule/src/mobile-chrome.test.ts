@@ -55,7 +55,7 @@ describe('мобильная шапка в зоне досягаемости', (
 describe('карточки клиента и сделки на телефоне', () => {
   it('окно карточки — шторка снизу на всю ширину', () => {
     expect(rule('.modal-overlay {', 'flex-end')).toContain('align-items: flex-end');
-    expect(rule('.modal {', '94dvh')).toContain('border-radius: 18px 18px 0 0');
+    expect(rule('.modal {', '100dvh')).toContain('border-radius: 18px 18px 0 0');
     expect(css).toContain('animation: sheet 0.22s ease');
   });
 
@@ -67,11 +67,18 @@ describe('карточки клиента и сделки на телефоне'
   it('вкладки карточки — одна прокручиваемая закреплённая строка', () => {
     expect(css).toContain('.modal .tabs {');
     expect(css).toContain('overflow-x: auto; scrollbar-width: none;');
-    expect(css).toContain('.modal .tabs button { flex: none; min-height: 46px;');
+    expect(css).toContain('.modal .tabs button { flex: none; min-height: 40px;');
+  });
+
+  it('шапка карточки компактная: одна строка, действия — иконками', () => {
+    expect(css).toContain('.modal-head { padding: 10px 14px 8px;');
+    expect(css).toContain('white-space: nowrap; overflow: hidden; text-overflow: ellipsis;');
+    expect(css).toContain('.modal .deal-head-actions .btn {');
+    expect(css).toContain('.deal-head-actions { flex-wrap: nowrap;');
   });
 
   it('кнопки действий в подвале карточки крупные', () => {
     expect(css).toContain('.modal-foot .btn { min-height: 50px;');
-    expect(css).toContain('.modal-head .icon-btn { width: 44px; height: 44px;');
+    expect(css).toContain('.modal-head .icon-btn { width: 40px; height: 40px;');
   });
 });
