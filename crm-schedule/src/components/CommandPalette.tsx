@@ -26,7 +26,7 @@ export default function CommandPalette(props: {
   onNewClient: () => void;
   onNewInstall: () => void;
 }) {
-  const { deals, clients, clientName, receipts } = useApp();
+  const { deals, clients, clientName, receipts, calendarEvents } = useApp();
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -88,8 +88,17 @@ export default function CommandPalette(props: {
       run: () => props.onView('warehouse'),
     }));
 
-    return [...actions, ...receiptItems, ...dealItems, ...clientItems, ...fileItems];
-  }, [deals, clients, clientName, receipts, props]);
+    // Свободные события графика: отпуск, совещание, выезд на объект.
+    const customItems: Item[] = calendarEvents.map((event) => ({
+      id: `e-${event.id}`,
+      group: 'События графика',
+      title: event.title,
+      subtitle: `${fmtDate(event.date)}${event.days && event.days > 1 ? ` · ${event.days} дн.` : ''}${event.repeat === 'weekly' ? ' · каждую неделю' : event.repeat === 'monthly' ? ' · каждый месяц' : ''}${event.place ? ` · ${event.place}` : ''}${event.team ? ` · ${event.team}` : ''}`,
+      run: () => props.onView('schedule'),
+    }));
+
+    return [...actions, ...receiptItems, ...dealItems, ...clientItems, ...fileItems, ...customItems];
+  }, [deals, clients, clientName, receipts, calendarEvents, props]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('ru-RU');
@@ -144,7 +153,7 @@ export default function CommandPalette(props: {
     if (group === 'Сделки') return <CheckSquare size={15} />;
     if (group === 'Клиенты') return <User size={15} />;
     if (group === 'Файлы') return <Paperclip size={15} />;
-    if (group === 'Перейти') return <CalendarDays size={15} />;
+    if (group === 'Перейти' || group === 'События графика') return <CalendarDays size={15} />;
     return <Plus size={15} />;
   };
 

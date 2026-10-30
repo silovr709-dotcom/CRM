@@ -21,7 +21,8 @@ import {
 } from './lib/warehouse';
 import { defaultNextAction, statusMeta } from './lib/crm';
 import {
-  MAX_FILE_BYTES, compressImage, detectKind, removeFile, saveFile, type OwnerType,
+  MAX_FILE_BYTES, compressImage, detectKind, getFile, listFiles, registerFileRemote, removeFile, saveFile,
+  type OwnerType,
 } from './lib/attachments';
 import {
   buildEnvelope, clearSyncConfig, deviceName, emptyRemoved, envelopeSignature, isFreshData,
@@ -31,8 +32,9 @@ import {
 } from './lib/sync';
 import {
   loadServerRemoved, loadServerSession, saveServerRemoved, saveServerSession,
-  serverHealth, serverLogin as apiServerLogin, serverLogout as apiServerLogout,
-  serverMe, serverPull, serverPush, serverSetup as apiServerSetup,
+  serverDeleteFile, serverDownloadFile, serverHealth, serverListFiles,
+  serverLogin as apiServerLogin, serverLogout as apiServerLogout,
+  serverMe, serverPull, serverPush, serverSetup as apiServerSetup, serverUploadFile,
   type ServerSession, type ServerUiState,
 } from './lib/server';
 
@@ -260,6 +262,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setServer((current) => ({ ...current, ...patch }));
   }, []);
 
+  const fileSyncMark = useRef<{ token: string; at: number } | null>(null);
+
   const setServerSession = useCallback((session: ServerSession | null) => {
     serverSessionRef.current = session;
     saveServerSession(session);
@@ -269,6 +273,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
       revision: session?.revision ?? 0,
       status: session ? current.status : 'off',
     }));
+    // Файлы вложений живут на сервере фирмы, пока есть вход: скачиваются
+    // по требованию, новые сразу уходят туда же.
+    if (session) {
+      const token = session.token;
+      registerFileRemote({
+        upload: (id, blob, meta) => serverUploadFile(token, id, blob, meta),
+        download: (id) => serverDownloadFile(token, id),
+        remove: (id) => serverDeleteFile(token, id),
+      });
+      // Фоновая выгрузка: файлы, добавленные до серверного входа или офлайн,
+      // постепенно переезжают на сервер, чтобы открывались везде.
+      const mark = fileSyncMark.current;
+      if (!mark || mark.token !== token || Date.now() - mark.at > 5 * 60_000) {
+        fileSyncMark.current = { token, at: Date.now() };
+        void (async () => {
+          try {
+            const onServer = await serverListFiles(token);
+            const local = await listFiles();
+            for (const file of local) {
+              if (onServer[file.id]) continue;
+              const blob = await getFile(file.id);
+              if (!blob) continue;
+              await serverUploadFile(token, file.id, blob, {
+                name: file.name,
+                mime: blob.type || 'application/octet-stream',
+              }).catch(() => {});
+            }
+          } catch {
+            /* сервер недоступен — выгрузка повторится при следующем входе */
+          }
+        })();
+      }
+    } else {
+      registerFileRemote(null);
+      fileSyncMark.current = null;
+    }
+  }, []);
+
+  // Сессия из прошлый раз: подключаем файлы сервера сразу при старте.
+  useEffect(() => {
+    if (serverSessionRef.current) setServerSession(serverSessionRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const accounts = data.settings.accounts ?? [];

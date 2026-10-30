@@ -39,7 +39,7 @@ export interface ReminderHandlers {
 }
 
 export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
-  const { deals, settings, clientName, notify } = useApp();
+  const { deals, settings, clientName, notify, calendarEvents } = useApp();
   const [active, setActive] = useState<PlannedReminder[]>([]);
   const [upcoming, setUpcoming] = useState<PlannedReminder[]>([]);
   const [waiting, setWaiting] = useState<PlannedReminder[]>([]);
@@ -83,6 +83,7 @@ export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
     try {
       const result = evaluateReminders({
         deals,
+        events: calendarEvents,
         rules,
         settings,
         clientName,
@@ -115,7 +116,7 @@ export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
           onInApp: (reminder) => {
             const action = reminder.dealId
               ? { label: 'Открыть', run: () => handlersRef.current.onOpenDeal?.(reminder.dealId as string) }
-              : reminder.source === 'install' || reminder.source === 'measure'
+              : ['install', 'measure', 'delivery', 'ready', 'custom'].includes(reminder.source)
                 ? { label: 'График', run: () => handlersRef.current.onOpenSchedule?.() }
                 : undefined;
             notify(reminder.title, 'info', action);
@@ -128,7 +129,7 @@ export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
     } finally {
       busy.current = false;
     }
-  }, [clientName, deals, digestSummary, notify, rules, settings]);
+  }, [calendarEvents, clientName, deals, digestSummary, notify, rules, settings]);
 
   useEffect(() => {
     tick();

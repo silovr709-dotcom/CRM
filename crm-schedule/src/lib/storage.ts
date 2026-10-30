@@ -352,6 +352,7 @@ export function normalizeCalendarEvent(raw: Partial<CalendarEvent>): CalendarEve
     timeStart: raw.timeStart || undefined,
     timeEnd: raw.timeEnd || undefined,
     days: raw.days ? Math.max(1, Math.min(14, Math.round(raw.days))) : undefined,
+    repeat: raw.repeat === 'weekly' || raw.repeat === 'monthly' ? raw.repeat : undefined,
     category: raw.category?.trim() || undefined,
     team: raw.team?.trim() || undefined,
     place: raw.place?.trim() || undefined,

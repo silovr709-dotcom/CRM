@@ -278,3 +278,81 @@ export async function serverPush(token: string, envelope: SyncEnvelope, revision
     return { ok: false, conflict: false, error: shaped.message || 'Сервер не принял данные' };
   }
 }
+
+/* ------------------------- файлы вложений ------------------------- */
+
+/** Описание файла на сервере фирмы: сам файл лежит рядом с базой, не в ней. */
+export interface ServerFileMeta {
+  name: string;
+  mime: string;
+  size: number;
+  ownerType?: string;
+  ownerId?: string;
+  by?: string;
+  at?: string;
+}
+
+/** Какие файлы уже лежат на сервере: id → описание. */
+export async function serverListFiles(token: string): Promise<Record<string, ServerFileMeta>> {
+  const raw = await call<{ files?: Record<string, ServerFileMeta> }>('files', { token, timeoutMs: 10_000 });
+  return raw.files && typeof raw.files === 'object' ? raw.files : {};
+}
+
+/** Загрузить файл на сервер фирмы, чтобы он открывался на всех устройствах. */
+export async function serverUploadFile(
+  token: string,
+  id: string,
+  blob: Blob,
+  meta: { name: string; mime: string; ownerType?: string; ownerId?: string },
+): Promise<void> {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? window.setTimeout(() => controller.abort(), 60_000) : 0;
+  try {
+    const response = await fetch(serverApiUrl('file_upload'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}`, 'X-Auth-Token': token } : {}),
+        'X-File-Id': id,
+        'X-File-Name': encodeURIComponent(meta.name || id),
+        'X-File-Mime': meta.mime || blob.type || 'application/octet-stream',
+        'X-File-Owner-Type': meta.ownerType ?? '',
+        'X-File-Owner': meta.ownerId ?? '',
+      },
+      body: blob,
+      signal: controller?.signal,
+    });
+    if (!response.ok) throw new Error(`Сервер не принял файл (${response.status})`);
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
+}
+
+/** Скачать файл с сервера фирмы. Нет файла или нет связи — null, не ошибка. */
+export async function serverDownloadFile(token: string, id: string): Promise<Blob | null> {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? window.setTimeout(() => controller.abort(), 30_000) : 0;
+  try {
+    const response = await fetch(serverApiUrl('file', `&id=${encodeURIComponent(id)}`), {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}`, 'X-Auth-Token': token } : {}),
+      },
+      signal: controller?.signal,
+    });
+    if (!response.ok) return null;
+    return await response.blob();
+  } catch {
+    return null;
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
+}
+
+/** Убрать файл с сервера фирмы (при удалении вложения). */
+export async function serverDeleteFile(token: string, id: string): Promise<void> {
+  await call('file_delete', { method: 'POST', token, body: { id }, timeoutMs: 10_000 });
+}

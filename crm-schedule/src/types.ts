@@ -297,7 +297,7 @@ export type ReminderPriority = 'low' | 'normal' | 'high';
 /** За чем следит правило. */
 export type ReminderSource =
   | 'install' | 'measure' | 'delivery' | 'ready'
-  | 'task' | 'contact' | 'payment' | 'stale' | 'digest';
+  | 'task' | 'contact' | 'payment' | 'stale' | 'digest' | 'custom';
 
 /**
  * Правило напоминания: «когда» × «о чём» × «куда».
@@ -444,6 +444,8 @@ export interface CalendarEvent {
   timeEnd?: string;
   /** Сколько дней длится (1–14), как монтаж. */
   days?: number;
+  /** Повтор: каждую неделю или каждый месяц в тот же день. */
+  repeat?: 'weekly' | 'monthly';
   /** Вид события свободным текстом: «встреча», «выходной», «обучение». */
   category?: string;
   /** Кто: бригада или сотрудник, показ в команде графика. */

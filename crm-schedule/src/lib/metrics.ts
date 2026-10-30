@@ -1,6 +1,6 @@
 // Сводные цифры для обзорного экрана.
 
-import type { Deal } from '../types';
+import type { CalendarEvent, Deal } from '../types';
 import { addDays, isoDay, todayISO } from './dates';
 import { contactTone, isClosedStatus } from './crm';
 import { paidAmount, taskStats } from './crmTasks';
@@ -68,10 +68,10 @@ export function dealsForToday(deals: Deal[], today = todayISO()): Deal[] {
     .sort((left, right) => (left.nextContactAt ?? '').localeCompare(right.nextContactAt ?? ''));
 }
 
-/** Монтажи и доставки на ближайшие дни, включая сегодня. */
-export function scheduleAhead(deals: Deal[], days = 7, today = todayISO()): ScheduleEvent[] {
-  return upcomingEvents(collectEvents(deals), today, days)
-    .filter((event) => event.kind === 'install' || event.kind === 'delivery' || event.kind === 'measure');
+/** Монтажи, доставки, замеры и свободные события на ближайшие дни, включая сегодня. */
+export function scheduleAhead(deals: Deal[], days = 7, today = todayISO(), custom: CalendarEvent[] = []): ScheduleEvent[] {
+  return upcomingEvents(collectEvents(deals, () => 'Без клиента', custom), today, days)
+    .filter((event) => event.kind === 'install' || event.kind === 'delivery' || event.kind === 'measure' || event.kind === 'custom');
 }
 
 /** Сумма полученных денег по сделке для подписи в списке. */

@@ -34,14 +34,14 @@ export default function Dashboard(props: {
   onOpenReports: () => void;
   onNewDeal: () => void;
 }) {
-  const { deals, clientName, updateDeal, settings, clients } = useApp();
+  const { deals, clientName, updateDeal, settings, clients, calendarEvents } = useApp();
   const today = todayISO();
   const [dismissed, patchDismissed] = usePrefs('overview-notes', { warnings: false, money: false });
 
   const warnings = useMemo(() => scheduleWarnings(deals), [deals]);
   const stats = useMemo(() => overview(deals, warnings.length, today), [deals, warnings.length, today]);
   const urgent = useMemo(() => dealsForToday(deals, today).slice(0, 6), [deals, today]);
-  const ahead = useMemo(() => scheduleAhead(deals, 10, today).slice(0, 7), [deals, today]);
+  const ahead = useMemo(() => scheduleAhead(deals, 10, today, calendarEvents).slice(0, 7), [deals, today, calendarEvents]);
   const tasks = useMemo(
     () => allTasks(deals, today).filter(({ tone }) => tone === 'overdue' || tone === 'today').slice(0, 6),
     [deals, today],
@@ -195,7 +195,7 @@ export default function Dashboard(props: {
               <div className="section-head">
                 <div>
                   <h2>График на 10 дней</h2>
-                  <span className="muted">замеры, доставки и монтажи</span>
+                  <span className="muted">замеры, доставки, монтажи и события</span>
                 </div>
                 <button type="button" className="link-btn" onClick={props.onOpenSchedule}>
                   открыть <ArrowRight size={13} />
@@ -209,7 +209,11 @@ export default function Dashboard(props: {
                     const kind = scheduleKindMeta(event.kind);
                     return (
                       <li key={event.id}>
-                        <button type="button" className="agenda-row" onClick={() => props.onOpenDeal(event.dealId)}>
+                        <button
+                          type="button"
+                          className="agenda-row"
+                          onClick={() => (event.customId ? props.onOpenSchedule() : props.onOpenDeal(event.dealId))}
+                        >
                           <span className={`event-chip chip-${kind.color}`}>{kind.short}</span>
                           <span className="agenda-main">
                             <b>{event.dealTitle}</b>

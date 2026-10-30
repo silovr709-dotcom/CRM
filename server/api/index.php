@@ -13,12 +13,15 @@ declare(strict_types=1);
 const API_VERSION = 1;
 const TOKEN_TTL = 2592000; // 30 дней
 const MAX_BODY = 8388608; // 8 МБ на документ базы
+const MAX_FILE = 10485760; // 10 МБ на один файл вложения
+const LOGIN_FAIL_LIMIT = 5; // после стольких неудач — пауза во входе
+const LOGIN_FAIL_PAUSE = 900; // 15 минут
 const ROLES = ['owner', 'manager', 'installer'];
 const SESSION_COOKIE = 'crm_session';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Headers: Content-Type, Authorization');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Auth-Token, X-File-Id, X-File-Name, X-File-Mime, X-File-Owner, X-File-Owner-Type');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
     http_response_code(204);
@@ -58,6 +61,8 @@ function emptyState(): array
     return [
         'users' => [],
         'sessions' => [],
+        'files' => [],
+        'loginFails' => [],
         'workspace' => ['revision' => 0, 'envelope' => null, 'updatedAt' => '', 'device' => '', 'versions' => []],
     ];
 }
@@ -75,6 +80,8 @@ function withState(callable $fn)
     $state += emptyState();
     $state['users'] = is_array($state['users'] ?? null) ? $state['users'] : [];
     $state['sessions'] = is_array($state['sessions'] ?? null) ? $state['sessions'] : [];
+    $state['files'] = is_array($state['files'] ?? null) ? $state['files'] : [];
+    $state['loginFails'] = is_array($state['loginFails'] ?? null) ? $state['loginFails'] : [];
     $state['workspace'] = is_array($state['workspace'] ?? null) ? $state['workspace'] : emptyState()['workspace'];
 
     [$result, $dirty] = $fn($state);
@@ -333,18 +340,40 @@ if ($action === 'login' && $method === 'POST') {
     $input = body();
     $login = cleanLogin((string)($input['login'] ?? ''));
     $password = (string)($input['password'] ?? '');
-    $result = withState(function (array &$state) use ($login, $password) {
+    // Защита от подбора пароля: после нескольких неудач с одного адреса
+    // вход по этому логину закрывается на паузу.
+    $failKey = $login . '|' . (string)($_SERVER['REMOTE_ADDR'] ?? '');
+    $result = withState(function (array &$state) use ($login, $password, $failKey) {
+        $now = time();
+        // Старые записи о неудачах не копим.
+        foreach ($state['loginFails'] as $key => $fail) {
+            if (!is_array($fail) || $now - (int)($fail['last'] ?? 0) > 86400) unset($state['loginFails'][$key]);
+        }
+        $fail = $state['loginFails'][$failKey] ?? null;
+        if (is_array($fail)
+            && (int)($fail['count'] ?? 0) >= LOGIN_FAIL_LIMIT
+            && $now - (int)($fail['last'] ?? 0) < LOGIN_FAIL_PAUSE) {
+            return [['locked' => (int)($fail['last'] ?? $now) + LOGIN_FAIL_PAUSE - $now], false];
+        }
         foreach ($state['users'] as $user) {
             if (($user['login'] ?? '') === $login && ($user['active'] ?? true)) {
                 if (password_verify($password, (string)($user['passHash'] ?? ''))) {
+                    unset($state['loginFails'][$failKey]);
                     $token = makeToken($state, $user['id']);
                     return [['user' => $user, 'token' => $token], true];
                 }
                 break;
             }
         }
-        return [null, false];
+        $count = is_array($fail) ? (int)($fail['count'] ?? 0) : 0;
+        if (is_array($fail) && $now - (int)($fail['last'] ?? 0) >= LOGIN_FAIL_PAUSE) $count = 0;
+        $state['loginFails'][$failKey] = ['count' => $count + 1, 'last' => $now];
+        return [null, true];
     });
+    if (is_array($result) && isset($result['locked'])) {
+        $minutes = max(1, (int)ceil(((int)$result['locked']) / 60));
+        out(['ok' => false, 'error' => 'locked', 'message' => "Слишком много попыток входа. Подождите {$minutes} мин. и попробуйте ещё раз"], 429);
+    }
     if ($result === null) out(['ok' => false, 'error' => 'credentials', 'message' => 'Логин или пароль не подошли'], 401);
     setSessionCookie((string)$result['token']);
     out(['ok' => true, 'token' => $result['token'], 'user' => publicUser($result['user'])]);
@@ -573,6 +602,99 @@ if ($action === 'version_restore' && $method === 'POST') {
     });
     if ($result === null) out(['ok' => false, 'error' => 'not_found', 'message' => 'Версия не найдена'], 404);
     out(['ok' => true, 'revision' => $result]);
+}
+
+/* -------------------------------- файлы -------------------------------- */
+
+/* Сами файлы лежат на диске рядом с состоянием, в документ базы попадают
+ * только описания: база не раздуется из-за фотографий монтажей. */
+function filesDir(): string
+{
+    $dir = dataDir() . '/files';
+    if (!is_dir($dir)) @mkdir($dir, 0775, true);
+    return $dir;
+}
+
+function validFileId(string $id): bool
+{
+    return (bool)preg_match('/^[A-Za-z0-9_-]{1,80}$/', $id);
+}
+
+if ($action === 'files' && $method === 'GET') {
+    $files = withState(function (array $state) {
+        requireUser($state);
+        return [$state['files'] ?? [], false];
+    });
+    out(['ok' => true, 'files' => $files]);
+}
+
+if ($action === 'file' && $method === 'GET') {
+    $id = (string)($_GET['id'] ?? '');
+    if (!validFileId($id)) out(['ok' => false, 'error' => 'invalid', 'message' => 'Неверный файл'], 422);
+    $meta = withState(function (array $state) use ($id) {
+        requireUser($state);
+        return [$state['files'][$id] ?? null, false];
+    });
+    $path = filesDir() . '/' . $id . '.bin';
+    if (!is_array($meta) || !is_file($path)) {
+        out(['ok' => false, 'error' => 'not_found', 'message' => 'Файл не найден на сервере'], 404);
+    }
+    header('Content-Type: ' . ((string)($meta['mime'] ?? '') !== '' ? (string)$meta['mime'] : 'application/octet-stream'));
+    header('Content-Length: ' . (string)filesize($path));
+    header("Content-Disposition: inline; filename*=UTF-8''" . rawurlencode((string)($meta['name'] ?? $id)));
+    readfile($path);
+    exit;
+}
+
+if ($action === 'file_upload' && $method === 'POST') {
+    $id = (string)($_SERVER['HTTP_X_FILE_ID'] ?? '');
+    if (!validFileId($id)) out(['ok' => false, 'error' => 'invalid', 'message' => 'Неверный файл'], 422);
+    $raw = file_get_contents('php://input');
+    if ($raw === false) out(['ok' => false, 'error' => 'storage', 'message' => 'Не удалось прочитать файл'], 500);
+    if (strlen($raw) > MAX_FILE) out(['ok' => false, 'error' => 'too_large', 'message' => 'Файл больше 10 МБ'], 413);
+    $name = mb_substr(urldecode((string)($_SERVER['HTTP_X_FILE_NAME'] ?? $id)), 0, 200);
+    $mime = mb_substr((string)($_SERVER['HTTP_X_FILE_MIME'] ?? 'application/octet-stream'), 0, 120);
+    $ownerType = mb_substr((string)($_SERVER['HTTP_X_FILE_OWNER_TYPE'] ?? ''), 0, 20);
+    $ownerId = mb_substr((string)($_SERVER['HTTP_X_FILE_OWNER'] ?? ''), 0, 80);
+    // Сначала проверяем вход и кладём файл на диск, описание — в состояние.
+    withState(function (array $state) {
+        requireUser($state);
+        return [true, false];
+    });
+    $path = filesDir() . '/' . $id . '.bin';
+    $tmp = $path . '.tmp' . bin2hex(random_bytes(4));
+    if (file_put_contents($tmp, $raw) === false || !rename($tmp, $path)) {
+        @unlink($tmp);
+        out(['ok' => false, 'error' => 'storage', 'message' => 'Сервер не может сохранить файл'], 500);
+    }
+    $meta = withState(function (array &$state) use ($id, $name, $mime, $ownerType, $ownerId, $raw) {
+        $user = requireUser($state);
+        $meta = [
+            'name' => $name,
+            'mime' => $mime,
+            'size' => strlen($raw),
+            'ownerType' => $ownerType,
+            'ownerId' => $ownerId,
+            'by' => (string)($user['name'] ?? ''),
+            'at' => gmdate('c'),
+        ];
+        $state['files'][$id] = $meta;
+        return [$meta, true];
+    });
+    out(['ok' => true, 'file' => $meta]);
+}
+
+if ($action === 'file_delete' && $method === 'POST') {
+    $input = body();
+    $id = (string)($input['id'] ?? '');
+    if (!validFileId($id)) out(['ok' => false, 'error' => 'invalid', 'message' => 'Неверный файл'], 422);
+    withState(function (array &$state) use ($id) {
+        requireUser($state);
+        unset($state['files'][$id]);
+        return [true, true];
+    });
+    @unlink(filesDir() . '/' . $id . '.bin');
+    out(['ok' => true]);
 }
 
 out(['ok' => false, 'error' => 'unknown_action', 'message' => 'Неизвестный запрос'], 404);

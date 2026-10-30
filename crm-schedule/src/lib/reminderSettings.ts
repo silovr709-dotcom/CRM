@@ -9,7 +9,7 @@ import {
 } from './reminders';
 
 const SOURCES: ReminderSource[] = [
-  'install', 'measure', 'delivery', 'ready', 'task', 'contact', 'payment', 'stale', 'digest',
+  'install', 'measure', 'delivery', 'ready', 'task', 'contact', 'payment', 'stale', 'digest', 'custom',
 ];
 const CHANNELS: ReminderChannel[] = ['inapp', 'browser', 'sound', 'title'];
 const PRIORITIES: ReminderPriority[] = ['low', 'normal', 'high'];

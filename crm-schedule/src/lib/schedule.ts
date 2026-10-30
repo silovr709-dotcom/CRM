@@ -91,32 +91,69 @@ export function dealEvents(deal: Deal, clientName = 'Без клиента'): Sc
   return events;
 }
 
+/**
+ * Даты повторений свободного события. Серия не бесконечна: показываем год
+ * назад и два года вперёд от сегодня — дальше календарем не листают.
+ */
+export function occurrenceDates(item: CalendarEvent, today = todayISO()): string[] {
+  if (!item.repeat) return [item.date];
+  const windowStart = addDays(today, -370);
+  const windowEnd = addDays(today, 730);
+  const dates: string[] = [];
+  if (item.repeat === 'weekly') {
+    let cursor = item.date;
+    while (cursor < windowStart) cursor = addDays(cursor, 7);
+    while (cursor <= windowEnd) {
+      dates.push(cursor);
+      cursor = addDays(cursor, 7);
+    }
+    return dates;
+  }
+  // monthly: тот же день месяца, в коротких месяцах — последний день.
+  const start = parseDay(item.date);
+  const dayOfMonth = start.getDate();
+  let year = start.getFullYear();
+  let month = start.getMonth();
+  for (let step = 0; step < 120; step += 1) {
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    const day = Math.min(dayOfMonth, lastDay);
+    const candidate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    if (candidate > windowEnd) break;
+    if (candidate >= windowStart && candidate >= item.date) dates.push(candidate);
+    month += 1;
+    if (month > 11) { month = 0; year += 1; }
+  }
+  return dates;
+}
+
 /** Свободные события графика: встречи, отгрузки, выходные — без сделок. */
 export function calendarEvents(items: CalendarEvent[]): ScheduleEvent[] {
   const events: ScheduleEvent[] = [];
   for (const item of items) {
     if (!item?.date || !item.title) continue;
     const days = Math.max(1, Math.min(14, Math.round(item.days ?? 1)));
-    for (let index = 0; index < days; index += 1) {
-      events.push({
-        id: `${item.id}-day-${index}`,
-        dealId: '',
-        dealTitle: item.title,
-        client: item.category || 'Событие',
-        kind: 'custom',
-        date: addDays(item.date, index),
-        dayIndex: days > 1 ? index + 1 : undefined,
-        dayCount: days > 1 ? days : undefined,
-        team: item.team,
-        address: item.place,
-        note: item.note,
-        timeStart: item.timeStart,
-        timeEnd: item.timeEnd,
-        status: 'planned',
-        amount: 0,
-        customId: item.id,
-        category: item.category,
-      });
+    for (const occurrence of occurrenceDates(item)) {
+      for (let index = 0; index < days; index += 1) {
+        events.push({
+          id: item.repeat ? `${item.id}-${occurrence}-${index}` : `${item.id}-day-${index}`,
+          dealId: '',
+          dealTitle: item.title,
+          client: item.category || 'Событие',
+          kind: 'custom',
+          date: addDays(occurrence, index),
+          dayIndex: days > 1 ? index + 1 : undefined,
+          dayCount: days > 1 ? days : undefined,
+          team: item.team,
+          address: item.place,
+          note: item.note,
+          timeStart: item.timeStart,
+          timeEnd: item.timeEnd,
+          status: 'planned',
+          amount: 0,
+          customId: item.id,
+          category: item.category,
+        });
+      }
     }
   }
   return events;
@@ -200,7 +237,7 @@ export interface ScheduleWarning {
  * Проверки графика: монтаж раньше готовности, доставка после монтажа,
  * монтаж без адреса или бригады и двойная занятость бригады.
  */
-export function scheduleWarnings(deals: Deal[]): ScheduleWarning[] {
+export function scheduleWarnings(deals: Deal[], custom: CalendarEvent[] = []): ScheduleWarning[] {
   const warnings: ScheduleWarning[] = [];
   const busy = new Map<string, Map<string, string[]>>();
 
@@ -269,6 +306,24 @@ export function scheduleWarnings(deals: Deal[]): ScheduleWarning[] {
         text: `Бригада «${left.schedule.team}» ${sameDay.split('-').reverse().join('.')}: «${left.title}» и «${right.title}» пересекаются по времени`,
       });
     }
+  }
+
+  // Свободные события тех же людей в день монтажа — не ошибка, но проверить стоит:
+  // выходной или обучение легко поставить поверх выезда по недосмотру.
+  const seenCustom = new Set<string>();
+  for (const event of calendarEvents(custom)) {
+    const team = event.team?.trim();
+    if (!team || !event.customId) continue;
+    const installs = busy.get(team)?.get(event.date);
+    if (!installs || installs.length === 0) continue;
+    const key = `${event.customId}:${event.date}`;
+    if (seenCustom.has(key)) continue;
+    seenCustom.add(key);
+    warnings.push({
+      dealId: '',
+      kind: 'warn',
+      text: `«${team}» ${event.date.split('-').reverse().join('.')}: событие «${event.dealTitle}» в день монтажа — ${installs.join(', ')}`,
+    });
   }
 
   return warnings;
