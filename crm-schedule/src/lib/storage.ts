@@ -3,7 +3,7 @@
 
 import type {
   Attachment, AttachmentKind,
-  AppData, AutomationRule, Client, Deal, DealSchedule, DealStatus, DealTask, HistoryEntry,
+  AppData, AutomationRule, CalendarEvent, Client, Deal, DealSchedule, DealStatus, DealTask, HistoryEntry,
   MessageTemplate, RoleId, RuleId, ScheduleStatus, Settings, TaskKind, TaskRepeat, ThemeMode,
   WarehouseReceipt,
 } from '../types';
@@ -32,6 +32,7 @@ export function emptyData(): AppData {
     clients: [],
     deals: [],
     receipts: [],
+    events: [],
     settings: defaultSettings(),
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -341,6 +342,26 @@ function normalizeReceipt(raw: Partial<WarehouseReceipt>): WarehouseReceipt {
   };
 }
 
+/** Свободное событие графика: даты и длительность приводим к формату. */
+export function normalizeCalendarEvent(raw: Partial<CalendarEvent>): CalendarEvent {
+  const title = String(raw.title ?? '').trim();
+  return {
+    id: raw.id ?? uid('event'),
+    title,
+    date: (raw.date ?? '').slice(0, 10),
+    timeStart: raw.timeStart || undefined,
+    timeEnd: raw.timeEnd || undefined,
+    days: raw.days ? Math.max(1, Math.min(14, Math.round(raw.days))) : undefined,
+    category: raw.category?.trim() || undefined,
+    team: raw.team?.trim() || undefined,
+    place: raw.place?.trim() || undefined,
+    note: raw.note?.trim() || undefined,
+    author: raw.author,
+    createdAt: raw.createdAt ?? nowIso(),
+    updatedAt: raw.updatedAt ?? nowIso(),
+  };
+}
+
 export function validateData(raw: unknown): AppData | null {
   const data = raw as Partial<AppData> | null;
   if (!data || typeof data !== 'object') return null;
@@ -350,6 +371,8 @@ export function validateData(raw: unknown): AppData | null {
     clients: data.clients.map(normalizeClient),
     deals: data.deals.map(normalizeDeal),
     receipts: Array.isArray(data.receipts) ? data.receipts.map(normalizeReceipt) : [],
+    // Старые базы без свободных событий открываются как прежде.
+    events: Array.isArray(data.events) ? data.events.map(normalizeCalendarEvent) : [],
     settings: normalizeSettings(data.settings),
     createdAt: data.createdAt ?? nowIso(),
     updatedAt: data.updatedAt ?? nowIso(),
@@ -382,6 +405,7 @@ export function exportBackup(data: AppData) {
     clients: data.clients,
     deals: data.deals,
     receipts: data.receipts ?? [],
+    events: data.events ?? [],
     settings: data.settings,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
@@ -586,6 +610,7 @@ export function importCalculatorBackup(raw: string): { data: AppData; deals: num
       clients,
       deals,
       receipts: [],
+      events: [],
       settings,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -674,6 +699,36 @@ export function buildIcs(data: AppData, clientName: (deal: Deal) => string): str
         'END:VEVENT',
       );
     }
+  }
+
+  // Свободные события графика попадают в тот же календарь.
+  for (const item of data.events ?? []) {
+    if (!item.date || !item.title) continue;
+    const end = new Date(parseDay(item.date));
+    end.setDate(end.getDate() + Math.max(1, Math.min(14, Math.round(item.days ?? 1))));
+    const description = [
+      item.category ? `Вид: ${item.category}` : '',
+      item.team ? `Кто: ${item.team}` : '',
+      item.note ?? '',
+    ].filter(Boolean).join('\\n');
+    const timed = Boolean(item.timeStart);
+    const startLine = timed
+      ? `DTSTART;TZID=Europe/Moscow:${icsDateTime(item.date, item.timeStart as string)}`
+      : `DTSTART;VALUE=DATE:${item.date.replace(/-/g, '')}`;
+    const endLine = timed
+      ? `DTEND;TZID=Europe/Moscow:${icsDateTime(item.date, item.timeEnd || item.timeStart || '10:00')}`
+      : `DTEND;VALUE=DATE:${isoDay(end).replace(/-/g, '')}`;
+    lines.push(
+      'BEGIN:VEVENT',
+      `UID:${item.id}@crm-schedule`,
+      `DTSTAMP:${stamp}`,
+      startLine,
+      endLine,
+      `SUMMARY:${icsEscape(item.title)}`,
+      item.place ? `LOCATION:${icsEscape(item.place)}` : '',
+      description ? `DESCRIPTION:${icsEscape(description)}` : '',
+      'END:VEVENT',
+    );
   }
 
   lines.push('END:VCALENDAR');

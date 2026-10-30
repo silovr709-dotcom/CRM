@@ -1,16 +1,17 @@
 // График монтажей: замеры, готовность на фабрике, доставки и монтажи по всем
 // заказам в одном календаре. Чистые функции — без React и хранилища.
 
-import type { Deal, DealSchedule, ScheduleStatus } from '../types';
+import type { CalendarEvent, Deal, DealSchedule, ScheduleStatus } from '../types';
 import { addDays, isoDay, minutesOf, parseDay, timeRangesOverlap, todayISO } from './dates';
 
-export type ScheduleKind = 'measure' | 'ready' | 'delivery' | 'install';
+export type ScheduleKind = 'measure' | 'ready' | 'delivery' | 'install' | 'custom';
 
 export const SCHEDULE_KINDS: Array<{ id: ScheduleKind; label: string; short: string; color: string }> = [
   { id: 'measure', label: 'Замер', short: 'З', color: 'blue' },
   { id: 'ready', label: 'Готовность на фабрике', short: 'Ф', color: 'violet' },
   { id: 'delivery', label: 'Доставка', short: 'Д', color: 'teal' },
   { id: 'install', label: 'Монтаж', short: 'М', color: 'orange' },
+  { id: 'custom', label: 'Событие', short: 'С', color: 'green' },
 ];
 
 export const SCHEDULE_STATUSES: Array<{ id: ScheduleStatus; label: string; tone: string }> = [
@@ -48,6 +49,10 @@ export interface ScheduleEvent {
   timeEnd?: string;
   status: ScheduleStatus;
   amount: number;
+  /** Свободное событие графика (kind === 'custom'): id записи CalendarEvent. */
+  customId?: string;
+  /** Вид свободного события свободным текстом: «встреча», «выходной». */
+  category?: string;
 }
 
 /** Все события графика по одной сделке. */
@@ -86,9 +91,46 @@ export function dealEvents(deal: Deal, clientName = 'Без клиента'): Sc
   return events;
 }
 
-export function collectEvents(deals: Deal[], clientName: (deal: Deal) => string = () => 'Без клиента'): ScheduleEvent[] {
-  return deals
-    .flatMap((deal) => dealEvents(deal, clientName(deal)))
+/** Свободные события графика: встречи, отгрузки, выходные — без сделок. */
+export function calendarEvents(items: CalendarEvent[]): ScheduleEvent[] {
+  const events: ScheduleEvent[] = [];
+  for (const item of items) {
+    if (!item?.date || !item.title) continue;
+    const days = Math.max(1, Math.min(14, Math.round(item.days ?? 1)));
+    for (let index = 0; index < days; index += 1) {
+      events.push({
+        id: `${item.id}-day-${index}`,
+        dealId: '',
+        dealTitle: item.title,
+        client: item.category || 'Событие',
+        kind: 'custom',
+        date: addDays(item.date, index),
+        dayIndex: days > 1 ? index + 1 : undefined,
+        dayCount: days > 1 ? days : undefined,
+        team: item.team,
+        address: item.place,
+        note: item.note,
+        timeStart: item.timeStart,
+        timeEnd: item.timeEnd,
+        status: 'planned',
+        amount: 0,
+        customId: item.id,
+        category: item.category,
+      });
+    }
+  }
+  return events;
+}
+
+export function collectEvents(
+  deals: Deal[],
+  clientName: (deal: Deal) => string = () => 'Без клиента',
+  custom: CalendarEvent[] = [],
+): ScheduleEvent[] {
+  return [
+    ...deals.flatMap((deal) => dealEvents(deal, clientName(deal))),
+    ...calendarEvents(custom),
+  ]
     .sort((left, right) => left.date.localeCompare(right.date)
       || (minutesOf(left.timeStart) ?? 24 * 60) - (minutesOf(right.timeStart) ?? 24 * 60)
       || left.dealTitle.localeCompare(right.dealTitle));

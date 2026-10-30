@@ -429,12 +429,40 @@ export interface WarehouseReceipt {
   updatedAt: string;
 }
 
+/**
+ * Свободное событие графика — всё, что не сделка и не монтаж: встреча,
+ * отгрузка клиенту на руки, выезд за материалами, совещание, выходной
+ * монтажника. Живёт прямо в графике, сделки и клиента ради него не заводим.
+ */
+export interface CalendarEvent {
+  id: string;
+  /** Что именно: «Замер у соседей», «Обучение по фурнитуре»… */
+  title: string;
+  /** Дата начала, YYYY-MM-DD. */
+  date: string;
+  timeStart?: string;
+  timeEnd?: string;
+  /** Сколько дней длится (1–14), как монтаж. */
+  days?: number;
+  /** Вид события свободным текстом: «встреча», «выходной», «обучение». */
+  category?: string;
+  /** Кто: бригада или сотрудник, показ в команде графика. */
+  team?: string;
+  place?: string;
+  note?: string;
+  author?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AppData {
   version: 2;
   clients: Client[];
   deals: Deal[];
   /** Поступления на склад: отгрузочные ведомости с фабрики. */
   receipts: WarehouseReceipt[];
+  /** Свободные события графика, не связанные со сделками. */
+  events: CalendarEvent[];
   settings: Settings;
   createdAt: string;
   updatedAt: string;

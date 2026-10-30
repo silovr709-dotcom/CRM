@@ -8,6 +8,7 @@ const baseData = {
   clients: [],
   deals: [makeDeal({ amount: 100000 })],
   receipts: [],
+  events: [],
   settings: { ...defaultSettings(), companyName: 'Студия' },
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
@@ -26,6 +27,19 @@ describe('проверка и восстановление базы', () => {
     expect(data?.deals[0].id).toBeTruthy();
     expect(data?.deals[0].schedule.status).toBe('planned');
     expect(data?.deals[0].amount).toBe(0);
+  });
+
+  it('старая база без свободных событий открывается, новая — чинится', () => {
+    const legacy = validateData({ clients: [], deals: [] });
+    expect(legacy?.events).toEqual([]);
+
+    const data = validateData({
+      clients: [],
+      deals: [],
+      events: [{ id: 'evt-1', title: '  Встреча  ', date: '2026-10-11T10:00:00', days: 30, category: ' Встреча ' }],
+    });
+    expect(data?.events).toHaveLength(1);
+    expect(data?.events[0]).toMatchObject({ title: 'Встреча', date: '2026-10-11', days: 14, category: 'Встреча' });
   });
 });
 

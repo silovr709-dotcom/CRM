@@ -5,7 +5,7 @@
 // хранит только SHA-256 от кода, поэтому сам код нигде не записан, а базу
 // нельзя перебрать. Код — это и есть «ключ от общей базы».
 
-import type { AppData, Client, Deal, WarehouseReceipt } from '../types';
+import type { AppData, CalendarEvent, Client, Deal, WarehouseReceipt } from '../types';
 import { validateData } from './storage';
 import { nowIso } from './utils';
 
@@ -28,10 +28,11 @@ export interface Removed {
   clients: Record<string, string>;
   deals: Record<string, string>;
   receipts: Record<string, string>;
+  events: Record<string, string>;
 }
 
 export function emptyRemoved(): Removed {
-  return { clients: {}, deals: {}, receipts: {} };
+  return { clients: {}, deals: {}, receipts: {}, events: {} };
 }
 
 export interface SyncConfig {
@@ -174,7 +175,12 @@ export function normalizeRemoved(raw: unknown): Removed {
     }
     return out;
   };
-  return { clients: pick(source.clients), deals: pick(source.deals), receipts: pick(source.receipts) };
+  return {
+    clients: pick(source.clients),
+    deals: pick(source.deals),
+    receipts: pick(source.receipts),
+    events: pick(source.events),
+  };
 }
 
 export function buildEnvelope(data: AppData, removed: Removed, device: string): SyncEnvelope {
@@ -206,7 +212,11 @@ export function envelopeSignature(envelope: { data: AppData; removed: Removed })
   const sort = (map: Record<string, string>) => Object.keys(map).sort().map((key) => [key, map[key]]);
   return JSON.stringify({
     data: envelope.data,
-    removed: { clients: sort(envelope.removed.clients), deals: sort(envelope.removed.deals) },
+    removed: {
+      clients: sort(envelope.removed.clients),
+      deals: sort(envelope.removed.deals),
+      events: sort(envelope.removed.events ?? {}),
+    },
   });
 }
 
@@ -245,6 +255,7 @@ export function mergeRemoved(a: Removed, b: Removed): Removed {
     clients: merge(a.clients, b.clients),
     deals: merge(a.deals, b.deals),
     receipts: merge(a.receipts ?? {}, b.receipts ?? {}),
+    events: merge(a.events ?? {}, b.events ?? {}),
   };
 }
 
@@ -305,6 +316,10 @@ export function mergeSyncData(
   const receipts = mergeList<WarehouseReceipt>(
     local.receipts ?? [], remote.receipts ?? [], deleted.receipts, now,
   );
+  // Свободные события графика — обычные записи: удалённые не воскресают.
+  const events = mergeList<CalendarEvent>(
+    local.events ?? [], remote.events ?? [], deleted.events, now,
+  );
 
   const localUpdated = local.updatedAt || '';
   const remoteUpdated = remote.updatedAt || '';
@@ -332,11 +347,17 @@ export function mergeSyncData(
       clients: clients.items,
       deals: deals.items,
       receipts: receipts.items,
+      events: events.items,
       settings,
       createdAt,
       updatedAt: localUpdated > remoteUpdated ? localUpdated : remoteUpdated,
     },
-    removed: { clients: clients.deleted, deals: deals.deleted, receipts: receipts.deleted },
+    removed: {
+      clients: clients.deleted,
+      deals: deals.deleted,
+      receipts: receipts.deleted,
+      events: events.deleted,
+    },
   };
 }
 
