@@ -206,11 +206,11 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
               <input data-autofocus value={draft.name} placeholder="Анна Смирнова" onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
             </label>
             <label className="field">Телефоны
-              <textarea rows={2} value={phonesText} placeholder="+7 900 000-00-00" onChange={(event) => setPhonesText(event.target.value)} />
+              <textarea rows={2} value={phonesText} placeholder="+7 900 000-00-00" inputMode="tel" autoComplete="tel" onChange={(event) => setPhonesText(event.target.value)} />
               <small className="field-hint">по одному в строке</small>
             </label>
             <label className="field">Почта
-              <textarea rows={2} value={emailsText} placeholder="anna@example.ru" onChange={(event) => setEmailsText(event.target.value)} />
+              <textarea rows={2} value={emailsText} placeholder="anna@example.ru" inputMode="email" autoComplete="email" onChange={(event) => setEmailsText(event.target.value)} />
             </label>
             <label className="field span-2">Адрес
               <input value={draft.address ?? ''} placeholder="город, улица, дом" onChange={(event) => setDraft({ ...draft, address: event.target.value })} />

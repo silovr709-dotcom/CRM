@@ -43,6 +43,35 @@ describe('мобильная шапка в зоне досягаемости', (
 
   it('нижнее меню не перекрыто домашним индикатором', () => {
     expect(rule('.mobile-nav {', 'safe-area-inset-bottom')).toContain('env(safe-area-inset-bottom');
-    expect(rule('.mobile-nav button {', 'min-height')).toContain('min-height: 48px');
+    expect(rule('.mobile-nav button {', 'min-height')).toContain('min-height: 58px');
+  });
+
+  it('значки нижнего меню крупные и не ужимаются на узком экране', () => {
+    expect(css).toContain('.mobile-nav button svg { width: 24px; height: 24px; }');
+    expect(css).not.toContain('.mobile-nav button svg { width: 17px; height: 17px; }');
+  });
+});
+
+describe('карточки клиента и сделки на телефоне', () => {
+  it('окно карточки — шторка снизу на всю ширину', () => {
+    expect(rule('.modal-overlay {', 'flex-end')).toContain('align-items: flex-end');
+    expect(rule('.modal {', '94dvh')).toContain('border-radius: 18px 18px 0 0');
+    expect(css).toContain('animation: sheet 0.22s ease');
+  });
+
+  it('поля ввода не вызывают авто-зум iOS и удобны для пальца', () => {
+    expect(css).toContain("input:not([type='checkbox']):not([type='radio']), select { min-height: 50px; }");
+    expect(css).toContain('input, select, textarea { font-size: 16px; padding: 12px 13px; }');
+  });
+
+  it('вкладки карточки — одна прокручиваемая закреплённая строка', () => {
+    expect(css).toContain('.modal .tabs {');
+    expect(css).toContain('overflow-x: auto; scrollbar-width: none;');
+    expect(css).toContain('.modal .tabs button { flex: none; min-height: 46px;');
+  });
+
+  it('кнопки действий в подвале карточки крупные', () => {
+    expect(css).toContain('.modal-foot .btn { min-height: 50px;');
+    expect(css).toContain('.modal-head .icon-btn { width: 44px; height: 44px;');
   });
 });
