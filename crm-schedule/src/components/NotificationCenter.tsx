@@ -28,11 +28,14 @@ function dayLabel(iso: string, today = todayISO()): string {
 export default function NotificationCenter({
   reminders,
   onOpenDeal,
+  onOpenSchedule,
   onOpenSettings,
   floating = false,
 }: {
   reminders: ReminderApi;
   onOpenDeal?: (id: string) => void;
+  /** Напоминания графика без сделки (свободные события) ведут в график. */
+  onOpenSchedule?: () => void;
   onOpenSettings?: () => void;
   floating?: boolean;
 }) {
@@ -111,6 +114,7 @@ export default function NotificationCenter({
                   key={reminder.id}
                   reminder={reminder}
                   onOpen={onOpenDeal}
+                  onOpenSchedule={onOpenSchedule}
                   onSnooze={(until) => reminders.snooze(reminder.id, until)}
                   onDismiss={() => reminders.dismiss(reminder.id)}
                   snoozeOpen={snoozeFor === reminder.id}
@@ -132,6 +136,7 @@ export default function NotificationCenter({
                     key={reminder.id}
                     reminder={reminder}
                     onOpen={onOpenDeal}
+                  onOpenSchedule={onOpenSchedule}
                     onSnooze={(until) => reminders.snooze(reminder.id, until)}
                     onDismiss={() => reminders.dismiss(reminder.id)}
                     snoozeOpen={snoozeFor === reminder.id}
@@ -159,6 +164,7 @@ export default function NotificationCenter({
                       key={reminder.id}
                       reminder={reminder}
                       onOpen={onOpenDeal}
+                  onOpenSchedule={onOpenSchedule}
                       presets={presets}
                       onSnooze={(until) => reminders.snooze(reminder.id, until)}
                       onDismiss={() => reminders.dismiss(reminder.id)}
@@ -185,10 +191,11 @@ export default function NotificationCenter({
 }
 
 function ReminderRow({
-  reminder, onOpen, onSnooze, onDismiss, snoozeOpen, setSnoozeOpen, presets, quiet,
+  reminder, onOpen, onOpenSchedule, onSnooze, onDismiss, snoozeOpen, setSnoozeOpen, presets, quiet,
 }: {
   reminder: PlannedReminder;
   onOpen?: (id: string) => void;
+  onOpenSchedule?: () => void;
   onSnooze: (until: Date) => void;
   onDismiss: () => void;
   snoozeOpen: boolean;
@@ -211,7 +218,10 @@ function ReminderRow({
         <b className="nc-title">
           {reminder.dealId && onOpen ? (
             <button type="button" className="link-btn" onClick={() => onOpen(reminder.dealId as string)}>{reminder.title}</button>
-          ) : reminder.title}
+          ) : !reminder.dealId && onOpenSchedule
+            && ['custom', 'install', 'measure', 'delivery', 'ready'].includes(reminder.source) ? (
+              <button type="button" className="link-btn" onClick={onOpenSchedule}>{reminder.title}</button>
+            ) : reminder.title}
         </b>
         {reminder.detail && <span className="nc-detail">{reminder.detail}</span>}
         <span className="nc-meta">

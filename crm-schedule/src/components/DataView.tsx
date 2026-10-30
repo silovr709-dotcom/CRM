@@ -82,6 +82,9 @@ export default function DataView() {
 
   const attachments = useMemo(() => collectAttachments(data), [data]);
   const attachmentsSize = useMemo(() => attachments.reduce((sum, item) => sum + item.attachment.size, 0), [attachments]);
+  // Размер базы виден заранее: сервер принимает не больше 8 МБ за один запрос,
+  // и лучше узнать о подходе к лимиту здесь, а не из ошибки синхронизации.
+  const dbBytes = useMemo(() => new TextEncoder().encode(JSON.stringify(data)).length, [data]);
 
   const duplicates = useMemo(() => findDuplicateClients(clients), [clients]);
   const totalTasks = deals.reduce((sum, deal) => sum + deal.tasks.length, 0);
@@ -195,7 +198,16 @@ export default function DataView() {
         <div><span>Оплачено</span><b>{fmtMoney(totalPaid)}</b></div>
         <div><span>Обновлено</span><b>{fmtDateTime(data.updatedAt)}</b></div>
         <div><span>Сохранено</span><b>{savedAt ? fmtDateTime(savedAt) : '—'}</b></div>
+        <div title="Сервер принимает базу целиком не больше 8 МБ; файлы вложений хранятся отдельно и в этот размер не входят">
+          <span>Размер базы</span><b>{fmtBytes(dbBytes)}</b>
+        </div>
       </section>
+      {dbBytes > 6 * 1024 * 1024 && (
+        <div className="inline-warning">
+          <TriangleAlert size={15} /> База приближается к лимиту сервера (8 МБ). Скачайте копию и проверьте,
+          не накопилось ли лишнего в заметках и истории.
+        </div>
+      )}
 
       <ServerUsersCard />
       {/* Локальный доступ показываем, только когда серверного входа нет вовсе:
@@ -205,7 +217,9 @@ export default function DataView() {
       <ReminderSettings />
 
       <div className="data-grid">
-        <SyncCard />
+        {/* В серверном режиме (свой домен) данные и так общие для всех устройств:
+            Supabase-карточка там только путает, поэтому показываем её лишь в локальном режиме. */}
+        {!server.user && <SyncCard />}
 
         <section className="card">
           <div className="section-head">

@@ -8,7 +8,7 @@ import {
 import type { Attachment, AttachmentKind } from '../types';
 import { useApp } from '../store';
 import {
-  attachmentsSupported, fmtBytes, getFile, isImage, localFileIds, MAX_FILE_BYTES,
+  attachmentsSupported, fileRemoteAvailable, fmtBytes, getFile, isImage, localFileIds, MAX_FILE_BYTES,
 } from '../lib/attachments';
 import { downloadFile } from '../lib/storage';
 import { buildFilesZip } from '../lib/backupZip';
@@ -51,7 +51,10 @@ export default function Attachments({ ownerType, ownerId, attachments = [] }: {
 
   const totalSize = useMemo(() => attachments.reduce((sum, item) => sum + item.size, 0), [attachments]);
   const idKey = attachments.map((item) => item.id).join(',');
-  const remoteCount = localFiles
+  // При входе на сервере фирмы файл с другого устройства скачается оттуда:
+  // «чужим» считаем только то, что недоступно ни здесь, ни на сервере.
+  const fetchable = fileRemoteAvailable();
+  const remoteCount = !fetchable && localFiles
     ? attachments.filter((item) => !localFiles.has(item.id)).length
     : 0;
 
@@ -216,7 +219,7 @@ export default function Attachments({ ownerType, ownerId, attachments = [] }: {
               <AttachmentRow
                 key={attachment.id}
                 attachment={attachment}
-                remote={Boolean(localFiles && !localFiles.has(attachment.id))}
+                remote={Boolean(localFiles && !localFiles.has(attachment.id)) && !fetchable}
                 onOpen={() => openInNewTab(attachment)}
                 onPreview={() => setPreview(attachment)}
                 onSave={() => save(attachment)}
@@ -236,8 +239,9 @@ export default function Attachments({ ownerType, ownerId, attachments = [] }: {
       )}
 
       <p className="field-hint">
-        В JSON-копию входят только описания файлов. Чтобы перенести сами файлы,
-        скачайте архив в «Данных» или по кнопке «Скачать всё».
+        {fetchable
+          ? 'Файлы хранятся на сервере фирмы и открываются на всех устройствах. В JSON-копию входят только описания файлов.'
+          : 'В JSON-копию входят только описания файлов. Чтобы перенести сами файлы, скачайте архив в «Данных» или по кнопке «Скачать всё».'}
         {settings.myName ? ` Добавил: ${settings.myName}.` : ''}
       </p>
 

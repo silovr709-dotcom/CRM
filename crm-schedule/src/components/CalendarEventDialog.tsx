@@ -24,6 +24,7 @@ export default function CalendarEventDialog(props: {
     timeStart: item?.timeStart ?? '',
     timeEnd: item?.timeEnd ?? '',
     days: item?.days ?? 1,
+    repeat: item?.repeat ?? ('' as '' | 'weekly' | 'monthly'),
     category: item?.category ?? '',
     team: item?.team ?? '',
     place: item?.place ?? '',
@@ -47,6 +48,7 @@ export default function CalendarEventDialog(props: {
       timeStart: draft.timeStart || undefined,
       timeEnd: draft.timeEnd || undefined,
       days: Math.max(1, Math.min(14, Math.round(draft.days || 1))),
+      repeat: draft.repeat || undefined,
       category: draft.category.trim() || undefined,
       team: draft.team.trim() || undefined,
       place: draft.place.trim() || undefined,
@@ -114,6 +116,16 @@ export default function CalendarEventDialog(props: {
             onChange={(event) => setDraft({ ...draft, days: Number(event.target.value) || 1 })}
           />
         </label>
+        <label className="field">Повтор
+          <select
+            value={draft.repeat}
+            onChange={(event) => setDraft({ ...draft, repeat: event.target.value as '' | 'weekly' | 'monthly' })}
+          >
+            <option value="">не повторять</option>
+            <option value="weekly">каждую неделю</option>
+            <option value="monthly">каждый месяц</option>
+          </select>
+        </label>
         <label className="field">Время с
           <input type="time" value={draft.timeStart} onChange={(event) => setDraft({ ...draft, timeStart: event.target.value })} />
         </label>
@@ -160,6 +172,7 @@ export default function CalendarEventDialog(props: {
         </label>
         <p className="form-note span-2">
           Событие видно в месяце, неделе и списке дней всем сотрудникам фирмы — сделки и клиента ради него заводить не нужно.
+          {draft.repeat ? ' Это серия: правки и удаление относятся ко всем повторениям сразу.' : ''}
         </p>
       </div>
     </Modal>

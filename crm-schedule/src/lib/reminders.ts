@@ -5,13 +5,13 @@
 // которые движок отдаёт на доставку. Всё чистыми функциями: без таймеров,
 // без DOM — поэтому проверяется тестами и не зависит от браузера.
 import type {
-  Deal, DigestSettings, QuietHours, ReminderChannel, ReminderPriority, ReminderRule,
+  CalendarEvent, Deal, DigestSettings, QuietHours, ReminderChannel, ReminderPriority, ReminderRule,
   ReminderSource, Settings, TaskReminder,
 } from '../types';
 import { addDays, isoDay, parseDay, todayISO } from './dates';
 import { isClosedStatus } from './crm';
 import { paymentState } from './crmTasks';
-import { collectEvents } from './schedule';
+import { calendarEvents, collectEvents } from './schedule';
 
 /* ------------------------------- время --------------------------------- */
 
@@ -50,6 +50,7 @@ export const SOURCE_META: Record<ReminderSource, { label: string; hint: string; 
   payment: { label: 'Остаток к оплате', hint: 'если к монтажу не всё оплачено', what: 'оплата' },
   stale: { label: 'Сделка без движения', hint: 'нет изменений столько дней', what: 'сделка' },
   digest: { label: 'Сводка на день', hint: 'одно сообщение со всеми делами', what: 'сводка' },
+  custom: { label: 'Событие графика', hint: 'свободное событие без сделки: встреча, выходной, отгрузка', what: 'событие' },
 };
 
 export const OFFSET_PRESETS: Array<{ minutes: number; label: string; short: string }> = [
@@ -177,6 +178,16 @@ export function defaultReminderRules(): ReminderRule[] {
       respectQuietHours: true,
     },
     {
+      id: 'rule-custom',
+      label: 'Событие графика накануне',
+      enabled: true,
+      source: 'custom',
+      offsets: [24 * 60],
+      channels: ['inapp', 'browser'],
+      priority: 'normal',
+      respectQuietHours: true,
+    },
+    {
       id: 'rule-stale',
       label: 'Сделка зависла',
       enabled: false,
@@ -253,6 +264,8 @@ export interface ReminderMoment {
 interface MomentContext {
   clientName: (deal: Deal) => string;
   today?: string;
+  /** Свободные события графика — напоминаем и о них. */
+  events?: CalendarEvent[];
 }
 
 /** Все события со сроком: график, задачи, контакты, оплаты, зависшие сделки. */
@@ -360,6 +373,20 @@ export function collectMoments(
     }
   }
 
+  // Свободные события графика: напоминаем один раз, в первый день.
+  for (const event of calendarEvents(context.events ?? [])) {
+    if (event.dayIndex && event.dayIndex > 1) continue;
+    moments.push({
+      key: `custom:${event.customId}:${event.date}`,
+      source: 'custom',
+      title: `${event.category || 'Событие'}: ${event.dealTitle}`,
+      detail: [event.team, event.address, event.timeStart].filter(Boolean).join(' · '),
+      at: momentAt(event.date, event.timeStart, '09:00'),
+      team: event.team,
+      address: event.address,
+    });
+  }
+
   return moments;
 }
 
@@ -387,6 +414,8 @@ export interface PlannedReminder {
 
 export interface EvaluateInput {
   deals: Deal[];
+  /** Свободные события графика — о них тоже напоминаем. */
+  events?: CalendarEvent[];
   rules: ReminderRule[];
   settings: Pick<Settings, 'quietHours' | 'myName'>;
   now?: Date;
@@ -523,6 +552,7 @@ export function evaluateReminders(input: EvaluateInput): EvaluateResult {
   const moments = collectMoments(input.deals, {
     clientName: input.clientName,
     today: isoDay(now),
+    events: input.events,
   }, input.rules);
 
   const fire: PlannedReminder[] = [];

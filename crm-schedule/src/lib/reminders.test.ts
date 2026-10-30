@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { ReminderRule, Settings } from '../types';
+import type { CalendarEvent, ReminderRule, Settings } from '../types';
 import {
   CHANNEL_META, clearSent, clearSnoozes, collectMoments, defaultDigest, defaultQuietHours,
   defaultReminderRules, defaultTaskReminder, describeRule, describeTaskReminder, digestText,
@@ -179,6 +179,25 @@ describe('сбор моментов', () => {
       rule({ source: 'stale', staleDays: 10, offsets: [0], atTime: '10:00' }),
     ]);
     expect(moments.filter((moment) => moment.source === 'stale')).toHaveLength(1);
+  });
+
+  it('свободное событие даёт момент только на первый день и без сделки', () => {
+    const event: CalendarEvent = {
+      id: 'evt-7',
+      title: 'Совещание с фабрикой',
+      date: '2026-10-28',
+      days: 3,
+      category: 'Встреча',
+      team: 'Бригада 1',
+      createdAt: '2026-10-01T09:00:00.000Z',
+      updatedAt: '2026-10-01T09:00:00.000Z',
+    };
+    const moments = collectMoments([], { clientName, events: [event] });
+    const customMoments = moments.filter((moment) => moment.source === 'custom');
+    expect(customMoments).toHaveLength(1);
+    expect(customMoments[0].key).toBe('custom:evt-7:2026-10-28');
+    expect(customMoments[0].dealId).toBeUndefined();
+    expect(customMoments[0].title).toContain('Совещание с фабрикой');
   });
 });
 

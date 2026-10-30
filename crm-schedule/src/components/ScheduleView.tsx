@@ -72,7 +72,7 @@ export default function ScheduleView(props: {
 
   const byDay = useMemo(() => eventsByDay(events), [events]);
   const days = useMemo(() => (prefs.mode === 'week' ? weekGrid(anchor) : monthGrid(anchor)), [prefs.mode, anchor]);
-  const warnings = useMemo(() => scheduleWarnings(deals), [deals]);
+  const warnings = useMemo(() => scheduleWarnings(deals, calendarEvents), [deals, calendarEvents]);
   const load = useMemo(() => teamLoad(allEvents), [allEvents]);
   const teams = useMemo(() => {
     const set = new Set<string>(settings.teams);
@@ -155,7 +155,7 @@ export default function ScheduleView(props: {
           <button
             type="button"
             className="btn ghost"
-            onClick={() => printDaySheet(deals, day, clientName, settings.companyName)}
+            onClick={() => printDaySheet(deals, day, clientName, settings.companyName, data.events)}
             title={`Печать листа на ${fmtDate(day)}`}
           >
             <Printer size={15} /> Лист дня
@@ -236,7 +236,7 @@ export default function ScheduleView(props: {
                   <h2>Список дней</h2>
                   <span className="muted">удобно на телефоне и для печати</span>
                 </div>
-                <button type="button" className="link-btn" onClick={() => printDaySheet(deals, day, clientName, settings.companyName)}>
+                <button type="button" className="link-btn" onClick={() => printDaySheet(deals, day, clientName, settings.companyName, data.events)}>
                   <Printer size={13} /> печать дня
                 </button>
               </div>
@@ -364,7 +364,7 @@ export default function ScheduleView(props: {
                   <MapPin size={13} /> Маршрут по адресам
                 </a>
               )}
-              <button type="button" className="btn small ghost" onClick={() => printDaySheet(deals, day, clientName, settings.companyName)}>
+              <button type="button" className="btn small ghost" onClick={() => printDaySheet(deals, day, clientName, settings.companyName, data.events)}>
                 <Printer size={13} /> Печать листа
               </button>
             </div>

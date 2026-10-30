@@ -257,6 +257,7 @@ export default function App() {
       <NotificationCenter
         reminders={reminders}
         onOpenDeal={(id) => openDeal(id)}
+        onOpenSchedule={() => go('schedule')}
         onOpenSettings={() => go('data')}
         floating
       />
@@ -305,6 +306,7 @@ export default function App() {
         <NotificationCenter
           reminders={reminders}
           onOpenDeal={(id) => openDeal(id)}
+          onOpenSchedule={() => go('schedule')}
           onOpenSettings={() => go('data')}
         />
 

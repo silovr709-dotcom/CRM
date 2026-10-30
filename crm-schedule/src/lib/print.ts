@@ -1,6 +1,6 @@
 // Печать: лист дня для бригады и карточка заказа.
 // Печатаем через скрытый iframe — без всплывающих окон и блокировщиков.
-import type { Client, Deal } from '../types';
+import type { CalendarEvent, Client, Deal } from '../types';
 import type { Period, Slice, Totals, FunnelStage } from './reports';
 import { fmtDate, fmtMoney, fmtTimeRange, fmtWeekday, todayISO } from './dates';
 import { paidAmount, paymentKindLabel, taskKindMeta } from './crmTasks';
@@ -106,8 +106,9 @@ export function printDaySheet(
   day: string,
   clientName: (deal: Deal) => string,
   company: string,
+  custom: CalendarEvent[] = [],
 ): void {
-  const events = eventsOfDay(collectEvents(deals, clientName), day);
+  const events = eventsOfDay(collectEvents(deals, clientName, custom), day);
   const rows = events.map((event) => {
     const deal = deals.find((item) => item.id === event.dealId);
     const kind = scheduleKindMeta(event.kind);

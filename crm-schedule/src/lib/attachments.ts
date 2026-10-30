@@ -1,5 +1,7 @@
 // Вложения сделок и клиентов. Метаданные лежат в данных приложения (localStorage),
 // сами файлы — в IndexedDB: там лимит в сотни мегабайт, а не 5 МБ.
+// Когда пользователь вошёл на сервере фирмы, файлы дублируются туда:
+// скачиваются по требованию и остаются в IndexedDB как кэш.
 import type { Attachment, AttachmentKind } from '../types';
 
 const DB_NAME = 'crm-schedule.files';
@@ -62,6 +64,29 @@ function run<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDB
   }));
 }
 
+/* --------------------- сервер фирмы как второй дом --------------------- */
+
+/**
+ * Серверное хранилище файлов подключает store, когда есть вход на домене.
+ * attachments.ts про сервер ничего не знает — только этот интерфейс.
+ */
+export interface FileRemote {
+  upload: (id: string, blob: Blob, meta: { name: string; mime: string; ownerType: string; ownerId: string }) => Promise<void>;
+  download: (id: string) => Promise<Blob | null>;
+  remove: (id: string) => Promise<void>;
+}
+
+let fileRemote: FileRemote | null = null;
+
+export function registerFileRemote(remote: FileRemote | null): void {
+  fileRemote = remote;
+}
+
+/** Файлы можно подтянуть с сервера фирмы, а не только с этого устройства. */
+export function fileRemoteAvailable(): boolean {
+  return fileRemote !== null;
+}
+
 /** Кладёт файл в хранилище. Метаданные (Attachment) сохраняются отдельно, в сделке/клиенте. */
 export async function saveFile(attachment: Attachment, ownerType: OwnerType, ownerId: string, blob: Blob): Promise<void> {
   const record: StoredFile = {
@@ -75,15 +100,54 @@ export async function saveFile(attachment: Attachment, ownerType: OwnerType, own
     blob,
   };
   await run('readwrite', (store) => store.put(record));
+  if (fileRemote) {
+    try {
+      await fileRemote.upload(attachment.id, blob, {
+        name: record.name,
+        mime: record.mime,
+        ownerType,
+        ownerId,
+      });
+    } catch {
+      /* Локально файл сохранён; на сервер подтянется фоновой выгрузкой. */
+    }
+  }
+}
+
+/** Тихо кладёт скачанный с сервера файл в локальный кэш. */
+async function cacheDownloaded(id: string, blob: Blob): Promise<void> {
+  const record: StoredFile = {
+    id,
+    ownerType: 'deal',
+    ownerId: '',
+    name: '',
+    mime: blob.type || 'application/octet-stream',
+    size: blob.size,
+    createdAt: new Date().toISOString(),
+    blob,
+  };
+  try {
+    await run('readwrite', (store) => store.put(record));
+  } catch {
+    /* кэш не записался — файл всё равно вернём вызывающему */
+  }
 }
 
 export async function getFile(id: string): Promise<Blob | null> {
   try {
     const record = await run<StoredFile | undefined>('readonly', (store) => store.get(id));
-    return record?.blob ?? null;
+    if (record?.blob) return record.blob;
   } catch {
-    return null;
+    /* локальное хранилище недоступно — попробуем сервер */
   }
+  if (fileRemote) {
+    const blob = await fileRemote.download(id).catch(() => null);
+    if (blob) {
+      void cacheDownloaded(id, blob);
+      return blob;
+    }
+  }
+  return null;
 }
 
 export async function hasFile(id: string): Promise<boolean> {
@@ -115,6 +179,13 @@ export async function removeFile(id: string): Promise<void> {
     await run('readwrite', (store) => store.delete(id));
   } catch {
     /* файла уже нет — не мешаем удалению записи */
+  }
+  if (fileRemote) {
+    try {
+      await fileRemote.remove(id);
+    } catch {
+      /* на сервере файл уберёт следующая сверка; локально он уже удалён */
+    }
   }
 }
 

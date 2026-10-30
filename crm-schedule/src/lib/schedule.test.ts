@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  calendarEvents, collectEvents, dealEvents, monthGrid, moveEvent, scheduleWarnings, teamLoad, weekGrid,
+  calendarEvents, collectEvents, dealEvents, monthGrid, moveEvent, occurrenceDates, scheduleWarnings, teamLoad, weekGrid,
 } from './schedule';
 import type { CalendarEvent } from '../types';
 import { makeDeal } from './testUtils';
@@ -129,5 +129,64 @@ describe('свободные события графика', () => {
     const onDay = merged.filter((event) => event.date === '2026-10-11');
     expect(onDay.map((event) => event.kind)).toEqual(['install', 'custom']);
     expect(merged.filter((event) => event.kind === 'custom')).toHaveLength(2);
+  });
+});
+
+describe('повторы свободных событий', () => {
+  const base: CalendarEvent = {
+    id: 'rep-1',
+    title: 'Планёрка',
+    date: '2026-10-05',
+    createdAt: '2026-10-01T09:00:00.000Z',
+    updatedAt: '2026-10-01T09:00:00.000Z',
+  };
+
+  it('без повтора — только исходная дата', () => {
+    expect(occurrenceDates(base, '2026-10-30')).toEqual(['2026-10-05']);
+  });
+
+  it('каждую неделю — шаг ровно 7 дней', () => {
+    const dates = occurrenceDates({ ...base, repeat: 'weekly' }, '2026-10-30');
+    expect(dates.slice(0, 4)).toEqual(['2026-10-05', '2026-10-12', '2026-10-19', '2026-10-26']);
+    expect(dates).toContain('2026-11-02');
+  });
+
+  it('каждый месяц — тот же день, в коротком месяце последний', () => {
+    const dates = occurrenceDates({ ...base, date: '2026-01-31', repeat: 'monthly' }, '2026-10-30');
+    expect(dates[0]).toBe('2026-01-31');
+    expect(dates).toContain('2026-02-28');
+    expect(dates).toContain('2026-03-31');
+    expect(dates).toContain('2026-04-30');
+  });
+
+  it('calendarEvents разворачивает повторы с отдельными id', () => {
+    const events = calendarEvents([{ ...base, date: '2026-10-26', repeat: 'weekly' }]);
+    expect(events.some((event) => event.date === '2026-10-26')).toBe(true);
+    expect(events.some((event) => event.date === '2026-11-02')).toBe(true);
+    expect(events.find((event) => event.date === '2026-11-02')?.id).toBe('rep-1-2026-11-02-0');
+  });
+});
+
+describe('свободные события в проверках графика', () => {
+  const deal = () => makeDeal({
+    schedule: { status: 'planned', installAt: '2026-10-10', team: 'Бригада 1', address: 'Ленина, 1' },
+  });
+  const custom: CalendarEvent = {
+    id: 'evt-9',
+    title: 'Выходной',
+    date: '2026-10-10',
+    team: 'Бригада 1',
+    createdAt: '2026-10-01T09:00:00.000Z',
+    updatedAt: '2026-10-01T09:00:00.000Z',
+  };
+
+  it('предупреждает о событии бригады в день её монтажа', () => {
+    const warnings = scheduleWarnings([deal()], [custom]);
+    expect(warnings.some((warning) => warning.kind === 'warn' && /событие/i.test(warning.text))).toBe(true);
+  });
+
+  it('молчит, если событие без бригады или в другой день', () => {
+    expect(scheduleWarnings([deal()], [{ ...custom, team: undefined }])).toHaveLength(0);
+    expect(scheduleWarnings([deal()], [{ ...custom, date: '2026-10-15' }])).toHaveLength(0);
   });
 });
