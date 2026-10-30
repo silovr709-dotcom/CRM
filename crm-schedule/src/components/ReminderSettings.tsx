@@ -7,9 +7,12 @@ import type { ReminderChannel, ReminderPriority, ReminderRule, ReminderSource } 
 import { useApp } from '../store';
 import {
   CHANNEL_META, OFFSET_PRESETS, PRIORITY_META, SOURCE_META, defaultDigest, defaultQuietHours,
-  defaultReminderRules, describeRule, fmtOffset, inQuietHours,
+  defaultReminderRules, describeRule, evaluateReminders, fmtOffset, inQuietHours,
+  readSnoozes, reminderRulesWithDigest,
 } from '../lib/reminders';
 import { askNotifyPermission, notifyPermission, permissionHint, testNotification } from '../lib/notify';
+import { localScheduledCount, supportsLocalScheduling } from '../lib/localReminders';
+import { downloadRemindersIcs } from '../lib/reminderCalendar';
 
 const SOURCES: ReminderSource[] = [
   'install', 'measure', 'delivery', 'ready', 'task', 'contact', 'payment', 'stale',
@@ -32,7 +35,7 @@ function newRule(source: ReminderSource = 'install'): ReminderRule {
 }
 
 export default function ReminderSettings() {
-  const { settings, updateSettings, notify } = useApp();
+  const { settings, updateSettings, notify, deals, clientName, calendarEvents } = useApp();
   const [expanded, setExpanded] = useState<string>('');
   const [permission, setPermission] = useState(() => notifyPermission());
   const [customOpen, setCustomOpen] = useState<string>('');
@@ -136,6 +139,47 @@ export default function ReminderSettings() {
             Разрешить
           </button>
         </div>
+      </div>
+
+      <div className="reminder-offline">
+        <p>
+          <b>Без интернета.</b>{' '}
+          {supportsLocalScheduling()
+            ? 'Это устройство умеет само показывать уведомления по расписанию: ближайшие напоминания ставятся в расписание телефона/компьютера при открытии приложения и сработают в срок даже без сети и при закрытом приложении.'
+            : 'Этот браузер не умеет будить приложение по расписанию, если оно полностью закрыто (так устроен, например, iPhone). Чтобы напоминания приходили без интернета и при закрытом приложении, скачайте их в календарь телефона — дальше телефон напомнит сам.'}
+        </p>
+        <p className="muted">
+          В расписании устройства сейчас: {localScheduledCount()} уведомлений.
+          Файл календаря содержит напоминания на 90 дней вперёд; после больших правок в графике скачайте его заново.
+        </p>
+        <button
+          type="button"
+          className="btn small ghost"
+          onClick={() => {
+            const result = evaluateReminders({
+              deals,
+              events: calendarEvents,
+              rules: reminderRulesWithDigest(settings),
+              settings,
+              clientName,
+              snoozes: readSnoozes(),
+              horizonDays: 90,
+              digestSummary: () => 'Дела на сегодня из CRM',
+            });
+            const count = downloadRemindersIcs(
+              [...result.upcoming, ...result.waiting],
+              settings.companyName,
+            );
+            notify(
+              count > 0
+                ? `Календарь скачан: ${count} напоминаний. Импортируйте файл в календарь телефона.`
+                : 'На ближайшие 90 дней напоминаний нет — календарь пустой.',
+              count > 0 ? 'ok' : 'info',
+            );
+          }}
+        >
+          <Bell size={14} /> Скачать напоминания в календарь телефона (.ics)
+        </button>
       </div>
 
       <ul className="reminder-rules">
