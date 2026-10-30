@@ -76,6 +76,9 @@ jobs:
           mkdir -p deploy/api/data
           cp server/api/data/.htaccess deploy/api/data/.htaccess
           cp server/.htaccess deploy/.htaccess
+          # Маркер доставки: по https://<домен>/build.txt видно, когда и какой
+          # коммит реально долетел до папки сайта (диагностика «обновлений нет»).
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ${GITHUB_SHA}" > deploy/build.txt
           ls -la deploy deploy/api
 
       - name: Загрузка на хостинг по FTP
