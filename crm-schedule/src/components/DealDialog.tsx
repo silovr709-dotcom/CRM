@@ -182,7 +182,7 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
       headExtra={(
         <div className="deal-head-actions">
           {phone && (
-            <a className="btn small primary" href={telHref(phone)} title={phone}>
+            <a className="btn small primary" href={telHref(phone)} title={phone} aria-label="Позвонить клиенту">
               <Phone size={15} /> Позвонить
             </a>
           )}
@@ -192,6 +192,8 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
               href={whatsappLink(phone, message)}
               target="_blank"
               rel="noreferrer"
+              aria-label="Написать в WhatsApp"
+              title="Написать в WhatsApp"
             >
               <MessageSquare size={15} /> WhatsApp
             </a>
@@ -205,10 +207,10 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
           >
             <Send size={15} /> Telegram
           </a>
-          <button type="button" className="icon-btn" title="Скопировать ссылку на сделку" onClick={() => copy(shareLink(), 'Ссылка на сделку скопирована')}>
+          <button type="button" className="icon-btn" title="Скопировать ссылку на сделку" aria-label="Скопировать ссылку на сделку" onClick={() => copy(shareLink(), 'Ссылка на сделку скопирована')}>
             <Link2 size={16} />
           </button>
-          <button type="button" className="icon-btn" title="Печать карточки заказа" onClick={() => printDealCard(deal, client, client?.name ?? '', settings.companyName)}>
+          <button type="button" className="icon-btn" title="Печать карточки заказа" aria-label="Печать карточки заказа" onClick={() => printDealCard(deal, client, client?.name ?? '', settings.companyName)}>
             <Printer size={16} />
           </button>
         </div>

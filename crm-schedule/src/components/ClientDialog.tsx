@@ -165,7 +165,7 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
           <a className="btn small primary" href={telHref(phone)} title={phone}>
             <Phone size={15} /> Позвонить
           </a>
-          <a className="btn small ghost" href={`https://wa.me/${digitsOnly(phone)}`} target="_blank" rel="noreferrer">
+          <a className="btn small ghost" href={`https://wa.me/${digitsOnly(phone)}`} target="_blank" rel="noreferrer" aria-label="Написать в WhatsApp" title="Написать в WhatsApp">
             <MessageSquare size={15} /> WhatsApp
           </a>
         </div>
