@@ -40,7 +40,7 @@ export interface ReminderHandlers {
 }
 
 export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
-  const { deals, settings, clientName, notify, calendarEvents } = useApp();
+  const { deals, tasks, settings, clientName, notify, calendarEvents } = useApp();
   const [active, setActive] = useState<PlannedReminder[]>([]);
   const [upcoming, setUpcoming] = useState<PlannedReminder[]>([]);
   const [waiting, setWaiting] = useState<PlannedReminder[]>([]);
@@ -70,6 +70,7 @@ export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
     try {
       const result = evaluateReminders({
         deals,
+        tasks,
         events: calendarEvents,
         rules,
         settings,

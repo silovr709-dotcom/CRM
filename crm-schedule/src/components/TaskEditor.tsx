@@ -78,7 +78,7 @@ export default function TaskEditor({
     comment: task?.comment ?? '',
     done: Boolean(task?.done),
   });
-  const [target, setTarget] = useState(dealId ?? deals[0]?.id ?? '');
+  const [target, setTarget] = useState(dealId ?? '');
   const [error, setError] = useState('');
   const [mode, setMode] = useState<ReminderMode>(
     task?.reminder ? (task.reminder.enabled ? 'custom' : 'off') : 'inherit',
@@ -100,10 +100,8 @@ export default function TaskEditor({
       setError('Напишите, что нужно сделать');
       return;
     }
-    if (!target) {
-      setError('Выберите сделку — задача живёт внутри сделки');
-      return;
-    }
+    // Задача может быть самостоятельной (без сделки): съездить, забрать, проект.
+    // В этом случае target пустой и сохраняется отдельно.
     if (mode === 'custom' && reminder.offsets.length === 0) {
       setError('Выберите хотя бы один момент для напоминания');
       return;
@@ -124,7 +122,7 @@ export default function TaskEditor({
   return (
     <Modal
       title={isNew ? 'Новая задача' : 'Задача'}
-      subtitle={deal ? `${clientName(deal)} · ${deal.title}` : 'Задача привязывается к сделке'}
+      subtitle={deal ? `${clientName(deal)} · ${deal.title}` : 'Самостоятельная задача — не привязана к сделке'}
       onClose={onClose}
       footer={(
         <>
@@ -168,7 +166,7 @@ export default function TaskEditor({
         {isNew && (
           <label className="field span-2">Сделка
             <select value={target} onChange={(event) => { setTarget(event.target.value); setError(''); }}>
-              <option value="">— выберите сделку —</option>
+              <option value="">— без сделки (самостоятельная задача) —</option>
               {deals.map((item) => (
                 <option key={item.id} value={item.id}>{clientName(item)} · {item.title}</option>
               ))}

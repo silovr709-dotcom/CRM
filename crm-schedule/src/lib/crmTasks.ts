@@ -73,7 +73,7 @@ export interface TaskStats {
   today: number;
 }
 
-export function taskStats(deals: Deal[], today = todayISO()): TaskStats {
+export function taskStats(deals: Deal[], today = todayISO(), standalone: DealTask[] = []): TaskStats {
   let open = 0;
   let overdue = 0;
   let todayCount = 0;
@@ -85,19 +85,29 @@ export function taskStats(deals: Deal[], today = todayISO()): TaskStats {
       if (tone === 'today') todayCount += 1;
     }
   }
+  for (const task of standalone ?? []) {
+    if (task.done) continue;
+    open += 1;
+    const tone = taskTone(task, today);
+    if (tone === 'overdue') overdue += 1;
+    if (tone === 'today') todayCount += 1;
+  }
   return { open, overdue, today: todayCount };
 }
 
 /** Все открытые задачи со ссылкой на сделку — для экрана «Задачи». */
 export interface TaskWithDeal {
-  deal: Deal;
+  /** Сделка, к которой привязана задача; undefined — самостоятельная задача. */
+  deal?: Deal;
   task: DealTask;
   tone: TaskTone;
 }
 
-export function allTasks(deals: Deal[], today = todayISO()): TaskWithDeal[] {
-  return deals
-    .flatMap((deal) => (deal.tasks ?? []).map((task) => ({ deal, task, tone: taskTone(task, today) })))
+export function allTasks(deals: Deal[], today = todayISO(), standalone: DealTask[] = []): TaskWithDeal[] {
+  const fromDeals = deals
+    .flatMap((deal) => (deal.tasks ?? []).map((task) => ({ deal, task, tone: taskTone(task, today) })));
+  const fromStandalone = (standalone ?? []).map((task) => ({ deal: undefined, task, tone: taskTone(task, today) }));
+  return [...fromDeals, ...fromStandalone]
     .sort((left, right) => TONE_ORDER[left.tone] - TONE_ORDER[right.tone]
       || (left.task.dueAt ?? '9999-12-31').localeCompare(right.task.dueAt ?? '9999-12-31'));
 }
@@ -249,4 +259,40 @@ export function quickFollowUp(deal: Deal, days = 1): Deal {
     done: false,
     assignee: deal.manager,
   });
+}
+
+/* ----------------------- самостоятельные задачи ----------------------- */
+
+/** Переключить выполнение самостоятельной задачи. Возвращает обновлённую задачу
+    и, если было повторение, следующую задачу для добавления в список. */
+export function toggleStandaloneTask(task: DealTask): { updated: DealTask; next?: DealTask } {
+  // Переиспользуем логику повторов через синтетическую сделку.
+  const synthetic: Deal = {
+    id: task.dealId ?? 'standalone',
+    clientId: '',
+    title: task.dealTitle ?? task.title,
+    status: 'draft',
+    amount: 0,
+    payments: [],
+    history: [],
+    tasks: [task],
+    schedule: { status: 'planned' },
+    createdAt: task.createdAt,
+    updatedAt: task.createdAt,
+  };
+  const after = toggleTask(synthetic, task.id);
+  const updated = after.tasks.find((t) => t.id === task.id) ?? task;
+  const next = after.tasks.find((t) => t.id !== task.id && t.origin === `repeat:${task.id}`);
+  return { updated, next };
+}
+
+/** Отложить самостоятельную задачу на N дней. */
+export function postponeStandaloneTask(task: DealTask, days: number, today = todayISO()): DealTask {
+  const base = task.dueAt && task.dueAt > today ? task.dueAt : today;
+  return { ...task, dueAt: addDays(base, days) };
+}
+
+/** Патч самостоятельной задачи. */
+export function patchStandaloneTask(task: DealTask, patch: Partial<DealTask>): DealTask {
+  return { ...task, ...patch };
 }

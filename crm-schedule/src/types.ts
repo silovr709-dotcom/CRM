@@ -67,6 +67,10 @@ export interface Client {
 export interface DealTask {
   id: string;
   title: string;
+  /** Если задача привязана к сделке — её id; иначе задача самостоятельная. */
+  dealId?: string;
+  /** Название сделки для показа (кэш, чтобы не искать при удалённой сделке). */
+  dealTitle?: string;
   kind: TaskKind;
   /** Срок YYYY-MM-DD. Пусто — «когда-нибудь». */
   dueAt?: string;
@@ -461,6 +465,8 @@ export interface AppData {
   version: 2;
   clients: Client[];
   deals: Deal[];
+  /** Самостоятельные задачи, не привязанные к сделке (съездить, забрать, проект). */
+  tasks: DealTask[];
   /** Поступления на склад: отгрузочные ведомости с фабрики. */
   receipts: WarehouseReceipt[];
   /** Свободные события графика, не связанные со сделками. */

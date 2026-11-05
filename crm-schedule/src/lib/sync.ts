@@ -5,7 +5,7 @@
 // хранит только SHA-256 от кода, поэтому сам код нигде не записан, а базу
 // нельзя перебрать. Код — это и есть «ключ от общей базы».
 
-import type { AppData, CalendarEvent, Client, Deal, WarehouseReceipt } from '../types';
+import type { AppData, CalendarEvent, Client, Deal, DealTask, WarehouseReceipt } from '../types';
 import { validateData } from './storage';
 import { nowIso } from './utils';
 
@@ -29,10 +29,11 @@ export interface Removed {
   deals: Record<string, string>;
   receipts: Record<string, string>;
   events: Record<string, string>;
+  tasks: Record<string, string>;
 }
 
 export function emptyRemoved(): Removed {
-  return { clients: {}, deals: {}, receipts: {}, events: {} };
+  return { clients: {}, deals: {}, receipts: {}, events: {}, tasks: {} };
 }
 
 export interface SyncConfig {
@@ -180,6 +181,7 @@ export function normalizeRemoved(raw: unknown): Removed {
     deals: pick(source.deals),
     receipts: pick(source.receipts),
     events: pick(source.events),
+    tasks: pick(source.tasks),
   };
 }
 
@@ -216,6 +218,7 @@ export function envelopeSignature(envelope: { data: AppData; removed: Removed })
       clients: sort(envelope.removed.clients),
       deals: sort(envelope.removed.deals),
       events: sort(envelope.removed.events ?? {}),
+      tasks: sort(envelope.removed.tasks ?? {}),
     },
   });
 }
@@ -256,6 +259,7 @@ export function mergeRemoved(a: Removed, b: Removed): Removed {
     deals: merge(a.deals, b.deals),
     receipts: merge(a.receipts ?? {}, b.receipts ?? {}),
     events: merge(a.events ?? {}, b.events ?? {}),
+    tasks: merge(a.tasks ?? {}, b.tasks ?? {}),
   };
 }
 
@@ -320,6 +324,10 @@ export function mergeSyncData(
   const events = mergeList<CalendarEvent>(
     local.events ?? [], remote.events ?? [], deleted.events, now,
   );
+  // Самостоятельные задачи — обычные записи.
+  const tasks = mergeList<DealTask>(
+    local.tasks ?? [], remote.tasks ?? [], deleted.tasks, now,
+  );
 
   const localUpdated = local.updatedAt || '';
   const remoteUpdated = remote.updatedAt || '';
@@ -348,6 +356,7 @@ export function mergeSyncData(
       deals: deals.items,
       receipts: receipts.items,
       events: events.items,
+      tasks: tasks.items,
       settings,
       createdAt,
       updatedAt: localUpdated > remoteUpdated ? localUpdated : remoteUpdated,
@@ -357,6 +366,7 @@ export function mergeSyncData(
       deals: deals.deleted,
       receipts: receipts.deleted,
       events: events.deleted,
+      tasks: tasks.deleted,
     },
   };
 }

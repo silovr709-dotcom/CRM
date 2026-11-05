@@ -491,6 +491,7 @@ export function demoData(): AppData {
     deals,
     receipts,
     events: [],
+    tasks: [],
     settings: {
       ...defaultSettings(),
       companyName: 'Студия кухни',

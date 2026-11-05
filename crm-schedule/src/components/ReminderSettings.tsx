@@ -35,7 +35,7 @@ function newRule(source: ReminderSource = 'install'): ReminderRule {
 }
 
 export default function ReminderSettings() {
-  const { settings, updateSettings, notify, deals, clientName, calendarEvents } = useApp();
+  const { settings, updateSettings, notify, deals, tasks, clientName, calendarEvents } = useApp();
   const [expanded, setExpanded] = useState<string>('');
   const [permission, setPermission] = useState(() => notifyPermission());
   const [customOpen, setCustomOpen] = useState<string>('');
@@ -158,6 +158,7 @@ export default function ReminderSettings() {
           onClick={() => {
             const result = evaluateReminders({
               deals,
+              tasks,
               events: calendarEvents,
               rules: reminderRulesWithDigest(settings),
               settings,

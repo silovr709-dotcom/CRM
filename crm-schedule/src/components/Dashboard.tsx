@@ -11,7 +11,7 @@ import { fmtDate, fmtMoney, fmtMoneyCompact, fmtTimeRange, relativeDay, todayISO
 import { statusMeta } from '../lib/crm';
 import { dealsForToday, longToday, overview, scheduleAhead } from '../lib/metrics';
 import { scheduleKindMeta, scheduleWarnings } from '../lib/schedule';
-import { allTasks, paymentState, taskStats, toggleTask } from '../lib/crmTasks';
+import { allTasks, paymentState, taskStats, toggleStandaloneTask, toggleTask } from '../lib/crmTasks';
 import { receivables } from '../lib/money';
 import { ContactActions, ContactLine } from './ContactActions';
 import EmptyState from './EmptyState';
@@ -34,7 +34,7 @@ export default function Dashboard(props: {
   onOpenReports: () => void;
   onNewDeal: () => void;
 }) {
-  const { deals, clientName, updateDeal, settings, clients, calendarEvents } = useApp();
+  const { deals, tasks: standaloneTasks, clientName, updateDeal, addStandaloneTask, updateStandaloneTask, settings, clients, calendarEvents } = useApp();
   const today = todayISO();
   const [dismissed, patchDismissed] = usePrefs('overview-notes', { warnings: false, money: false });
 
@@ -43,10 +43,10 @@ export default function Dashboard(props: {
   const urgent = useMemo(() => dealsForToday(deals, today).slice(0, 6), [deals, today]);
   const ahead = useMemo(() => scheduleAhead(deals, 10, today, calendarEvents).slice(0, 7), [deals, today, calendarEvents]);
   const tasks = useMemo(
-    () => allTasks(deals, today).filter(({ tone }) => tone === 'overdue' || tone === 'today').slice(0, 6),
-    [deals, today],
+    () => allTasks(deals, today, standaloneTasks).filter(({ tone }) => tone === 'overdue' || tone === 'today').slice(0, 6),
+    [deals, standaloneTasks, today],
   );
-  const taskCounts = useMemo(() => taskStats(deals, today), [deals, today]);
+  const taskCounts = useMemo(() => taskStats(deals, today, standaloneTasks), [deals, standaloneTasks, today]);
   const debts = useMemo(() => receivables(deals, today, clientName), [deals, today, clientName]);
   const overdueDebts = debts.filter((item) => item.overdue > 0);
   // Кому написать сегодня–завтра: замер, доставка, монтаж, оплата.
@@ -288,17 +288,34 @@ export default function Dashboard(props: {
               ) : (
                 <ul className="task-list compact">
                   {tasks.map(({ deal, task, tone }) => (
-                    <li key={`${deal.id}-${task.id}`} className={`task-row task-${tone}`}>
+                    <li key={`${deal?.id ?? 'standalone'}-${task.id}`} className={`task-row task-${tone}`}>
                       <input
                         type="checkbox"
                         checked={Boolean(task.done)}
-                        onChange={() => updateDeal(toggleTask(deal, task.id))}
+                        onChange={() => {
+                          if (deal) updateDeal(toggleTask(deal, task.id));
+                          else {
+                            const t = standaloneTasks.find((x) => x.id === task.id);
+                            if (t) {
+                              const { updated, next } = toggleStandaloneTask(t);
+                              updateStandaloneTask(updated);
+                              if (next) addStandaloneTask(next);
+                            }
+                          }
+                        }}
                         aria-label={`Выполнить: ${task.title}`}
                       />
-                      <button type="button" className="task-main" onClick={() => props.onOpenDeal(deal.id)}>
-                        <b>{task.title}</b>
-                        <span>{clientName(deal)} · {deal.title}</span>
-                      </button>
+                      {deal ? (
+                        <button type="button" className="task-main" onClick={() => props.onOpenDeal(deal.id)}>
+                          <b>{task.title}</b>
+                          <span>{clientName(deal)} · {deal.title}</span>
+                        </button>
+                      ) : (
+                        <div className="task-main">
+                          <b>{task.title}</b>
+                          <span>без сделки</span>
+                        </div>
+                      )}
                       <span className={`task-due tone-${tone}`}>{TASK_TONE_LABEL[tone]}</span>
                     </li>
                   ))}

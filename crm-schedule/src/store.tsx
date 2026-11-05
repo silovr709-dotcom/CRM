@@ -4,7 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
-  Account, AppData, Attachment, CalendarEvent, Client, Deal, DealItem, DealSchedule, DealStatus, HistoryEntry,
+  Account, AppData, Attachment, CalendarEvent, Client, Deal, DealItem, DealSchedule, DealStatus, DealTask, HistoryEntry,
   IssuedDocument, RoleId, Settings, WarehouseReceipt,
 } from './types';
 import { demoData } from './lib/demoData';
@@ -69,6 +69,7 @@ export type CalendarEventInput = Omit<CalendarEvent, 'id' | 'createdAt' | 'updat
 interface AppContextValue {
   data: AppData;
   deals: Deal[];
+  tasks: DealTask[];
   clients: Client[];
   /** Сотрудники с паролями (синхронизируются вместе с базой). */
   accounts: Account[];
@@ -88,6 +89,9 @@ interface AppContextValue {
   clientName: (deal: Deal) => string;
   clientFor: (deal: Deal) => Client | undefined;
   updateDeal: (deal: Deal) => void;
+  addStandaloneTask: (task: DealTask) => string;
+  updateStandaloneTask: (task: DealTask) => void;
+  removeStandaloneTask: (id: string) => void;
   patchDeal: (id: string, patch: Partial<Deal>, history?: Omit<HistoryEntry, 'id' | 'createdAt'>) => void;
   changeStatus: (id: string, status: DealStatus) => void;
   updateSchedule: (id: string, patch: Partial<DealSchedule>) => void;
@@ -357,6 +361,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ['deals', prev.deals, next.deals],
       ['receipts', prev.receipts ?? [], next.receipts ?? []],
       ['events', prev.events ?? [], next.events ?? []],
+      ['tasks', prev.tasks ?? [], next.tasks ?? []],
     ];
     const applyTo = (removed: Removed): boolean => {
       let touched = false;
@@ -1141,6 +1146,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
       updatedAt: nowIso(),
     }));
   }, []);
+  const addStandaloneTask = useCallback((task: DealTask) => {
+    const id = task.id || uid('task');
+    const entry: DealTask = { ...task, id, createdAt: task.createdAt ?? nowIso() };
+    setData((current) => ({
+      ...current,
+      tasks: [...(current.tasks ?? []), entry],
+      updatedAt: nowIso(),
+    }));
+    return id;
+  }, []);
+
+  const updateStandaloneTask = useCallback((task: DealTask) => {
+    setData((current) => ({
+      ...current,
+      tasks: (current.tasks ?? []).map((item) => (item.id === task.id ? { ...task } : item)),
+      updatedAt: nowIso(),
+    }));
+  }, []);
+
+  const removeStandaloneTask = useCallback((id: string) => {
+    setData((current) => ({
+      ...current,
+      tasks: (current.tasks ?? []).filter((item) => item.id !== id),
+      updatedAt: nowIso(),
+    }));
+    // tombstone
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+    } catch { /* noop */ }
+  }, []);
 
   const patchDeal = useCallback((id: string, patch: Partial<Deal>, history?: Omit<HistoryEntry, 'id' | 'createdAt'>) => {
     setData((current) => ({
@@ -1797,6 +1832,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppContextValue>(() => ({
     data,
     deals: data.deals,
+    tasks: data.tasks ?? [],
     clients: data.clients,
     accounts,
     currentAccount,
@@ -1810,6 +1846,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     clientName,
     clientFor,
     updateDeal,
+    addStandaloneTask,
+    updateStandaloneTask,
+    removeStandaloneTask,
     patchDeal,
     changeStatus,
     updateSchedule,
