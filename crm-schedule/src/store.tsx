@@ -102,6 +102,7 @@ interface AppContextValue {
   mergeClients: (targetId: string, sourceId: string) => void;
   /** Добавить сделку из ссылки, которую прислал коллега. */
   importSharedDeal: (deal: Deal, client?: Client) => string;
+  importCalculatorProject: (bundle: unknown) => string | null;
   /** Загрузить файлы в сделку или клиента. Возвращает, что получилось. */
   addAttachments: (ownerType: OwnerType, ownerId: string, files: File[]) => Promise<AttachmentResult>;
   /** Удалить вложение: и запись, и файл. */
@@ -1528,6 +1529,85 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return nextDeal.id;
   }, [pushUndo]);
 
+  /** Импорт проекта из калькулятора РЕцепт: создаёт сделку с суммой, датами
+      и прикрепляет JSON расчёта как файл. Возвращает id сделки или null. */
+  const importCalculatorProject = useCallback((bundle: unknown): string | null => {
+    const b = bundle as { kind?: string; v?: number; project?: Record<string, unknown> } | null;
+    if (!b || b.kind !== 'recept-calculator-project' || !b.project) return null;
+    const p = b.project;
+    const title = String(p.name ?? p.title ?? 'Расчёт кухни');
+    const clientName = String(p.client ?? p.clientName ?? '').trim();
+    const phone = String(p.phone ?? '').trim();
+    const amount = Number(p.clientPrice ?? p.amount ?? 0) || 0;
+    const statusMap: Record<string, DealStatus> = {
+      draft: 'draft', sent: 'offerSent', approved: 'approved', archived: 'delivered',
+    };
+    const status = statusMap[String(p.status ?? 'approved')] ?? 'approved';
+    const dealId = uid('deal');
+    const deal: Deal = {
+      id: dealId,
+      title,
+      clientId: '',
+      amount,
+      manager: (typeof p.manager === 'string' ? p.manager : undefined),
+      status,
+      nextAction: defaultNextAction(status),
+      tasks: [],
+      payments: [],
+      history: [{ id: uid('h'), createdAt: nowIso(), kind: 'project', title: 'Импорт из калькулятора РЕцепт', author: me() }],
+      schedule: {
+        status: 'planned',
+        measureAt: typeof p.measureAt === 'string' ? p.measureAt : undefined,
+        readyAt: typeof p.readyAt === 'string' ? p.readyAt : undefined,
+        deliveryAt: typeof p.deliveryAt === 'string' ? p.deliveryAt : undefined,
+        installAt: typeof p.installAt === 'string' ? p.installAt : undefined,
+      },
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    };
+    setData((current) => {
+      // Найти или создать клиента по имени/телефону.
+      let resolvedClientId = '';
+      const existingClient = current.clients.find((c) =>
+        (clientName && c.name.trim().toLowerCase() === clientName.toLowerCase()) ||
+        (phone && (c.phones ?? []).some((ph) => ph.replace(/\D/g, '') === phone.replace(/\D/g, ''))),
+      );
+      if (existingClient) {
+        resolvedClientId = existingClient.id;
+      } else if (clientName) {
+        resolvedClientId = uid('cli');
+        current = {
+          ...current,
+          clients: [...current.clients, {
+            id: resolvedClientId,
+            name: clientName,
+            phones: phone ? [phone] : [],
+            emails: [],
+            address: String(p.address ?? ''),
+            source: 'калькулятор',
+            tags: ['калькулятор'],
+            managerComment: '',
+            createdAt: nowIso(),
+            updatedAt: nowIso(),
+          }],
+        };
+      }
+      return {
+        ...current,
+        deals: [{ ...deal, clientId: resolvedClientId }, ...current.deals],
+        updatedAt: nowIso(),
+      };
+    });
+    // Прикрепить JSON расчёта как файл (через File + addAttachments) — асинхронно.
+    try {
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const file = new File([blob], `расчёт-${title}.json`, { type: 'application/json' });
+      void addAttachments('deal', dealId, [file]);
+    } catch { /* не критично */ }
+    pushUndo('импорт из калькулятора');
+    return dealId;
+  }, [pushUndo, addAttachments]);
+
   /**
    * Автоматика срабатывает через секунду после открытия. Раньше она подставляла
    * снимок данных, сделанный при старте, и затирала всё, что человек успел
@@ -1858,6 +1938,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     removeClient,
     mergeClients,
     importSharedDeal,
+    importCalculatorProject,
     addAttachments,
     removeAttachment,
     saveDealItems,
@@ -1904,7 +1985,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     data, accounts, currentAccount, needsLogin, login, logout, addAccount, updateAccount, removeAccount,
     clientName, clientFor, updateDeal, patchDeal, changeStatus, updateSchedule, addDeal,
     logContact, snoozeDealContact, applyAutomationResult, receipts, addReceipt, addReceipts, updateReceipt, attachReceiptFile, removeReceipt,
-    removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, addAttachments,
+    removeDeal, saveClient, removeClient, mergeClients, importSharedDeal, importCalculatorProject, addAttachments,
     removeAttachment, saveDealItems, issueDocument, markClientReminder, updateSettings, replaceData,
     resetDemo, clearAll, undo, undoStack.length, toasts, notify, dismissToast, storageOk, savedAt,
     role, me,
