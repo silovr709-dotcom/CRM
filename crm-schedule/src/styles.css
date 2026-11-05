@@ -1446,6 +1446,7 @@ label { font-size: 12.5px; color: var(--ink-2); }
 .mini-deal b { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mini-deal small { font-size: 10.5px; color: var(--muted); }
 .mini-deal-sum { font-size: 11.5px; color: var(--ink-2); flex: none; }
+.mini-deal-dates { color: var(--ink-3, var(--muted)); font-size: 11px; }
 .timeline.mini .timeline-row { padding: 6px 0; }
 .timeline.mini .timeline-main b { font-size: 11.5px; }
 

@@ -229,10 +229,12 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
           {!isNew && (
             <div className="client-side">
               <div className="info-card">
-                <h3>Итого</h3>
+                <h3>Итого по клиенту</h3>
                 <b>{openSum ? fmtMoney(openSum) : '—'}</b>
                 <span className="muted small">в активных сделках</span>
                 <span className="muted small">всего сделок: {clientDeals.length}</span>
+                <span className="muted small">оплачено: {fmtMoney(clientDeals.reduce((s, d) => s + (d.payments ?? []).reduce((x, p) => x + p.amount, 0), 0))}</span>
+                <span className="muted small">остаток: {fmtMoney(clientDeals.reduce((s, d) => s + d.amount, 0) - clientDeals.reduce((s, d) => s + (d.payments ?? []).reduce((x, p) => x + p.amount, 0), 0))}</span>
                 <div className="contact-actions">
                   {phonesText && <a className="btn small ghost" href={telHref(phonesText.split(/[\n,;]+/)[0])}><Phone size={13} /> Позвонить</a>}
                   <button
@@ -286,12 +288,32 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
                   <ul className="mini-deal-list">
                     {clientDeals.map((deal) => {
                       const meta = statusMeta(deal.status);
+                      const contract = (deal.documents ?? []).find((doc) => doc.kind === 'contract');
+                      const prepay = (deal.payments ?? []).filter((p) => p.kind === 'prepay').reduce((s, p) => s + p.amount, 0);
+                      const finalPay = (deal.payments ?? []).filter((p) => p.kind === 'final').reduce((s, p) => s + p.amount, 0);
+                      const paid = (deal.payments ?? []).reduce((s, p) => s + p.amount, 0);
+                      const sched = deal.schedule ?? {};
+                      const dates = [
+                        sched.measureAt ? `замер ${fmtDate(sched.measureAt)}` : '',
+                        sched.readyAt ? `готово ${fmtDate(sched.readyAt)}` : '',
+                        sched.deliveryAt ? `доставка ${fmtDate(sched.deliveryAt)}` : '',
+                        sched.installAt ? `монтаж ${fmtDate(sched.installAt)}` : '',
+                      ].filter(Boolean).join(' · ');
                       return (
                         <li key={deal.id}>
                           <button type="button" className="mini-deal" onClick={() => onOpenDeal(deal.id)}>
                             <span>
                               <b>{deal.title}</b>
-                              <small>{meta.label}{deal.nextContactAt ? ` · ${relativeDay(deal.nextContactAt, today)}` : ''}</small>
+                              <small>{meta.label}{deal.nextContactAt ? ` · след. контакт ${relativeDay(deal.nextContactAt, today)}` : ''}</small>
+                              {dates && <small className="mini-deal-dates">{dates}</small>}
+                              {contract && <small>договор №{contract.number} от {fmtDate(contract.issuedAt)}</small>}
+                              {(deal.payments?.length ?? 0) > 0 && (
+                                <small>
+                                  оплачено {fmtMoneyCompact(paid)} из {fmtMoneyCompact(deal.amount)}
+                                  {prepay > 0 ? ` (предопл. ${fmtMoneyCompact(prepay)})` : ''}
+                                  {finalPay > 0 ? ` (допл. ${fmtMoneyCompact(finalPay)})` : ''}
+                                </small>
+                              )}
                               {(deal.contacts?.length ?? 0) > 0 && <ContactLine deal={deal} />}
                             </span>
                             <span className="mini-deal-sum">{deal.amount ? fmtMoneyCompact(deal.amount) : '—'}</span>
