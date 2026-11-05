@@ -40,13 +40,49 @@ export interface ReminderHandlers {
 }
 
 export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
-  const { deals, tasks, settings, clientName, notify, calendarEvents } = useApp();
+  const { deals, tasks, settings, clientName, notify, calendarEvents, role, server, currentAccount } = useApp();
   const [active, setActive] = useState<PlannedReminder[]>([]);
   const [upcoming, setUpcoming] = useState<PlannedReminder[]>([]);
   const [waiting, setWaiting] = useState<PlannedReminder[]>([]);
   const busy = useRef(false);
+  const baselineRoleRef = useRef('');
+  const baselineIdsRef = useRef<Set<string> | null>(null);
+  const deliveredRef = useRef<Set<string> | null>(null);
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
+
+  const deliveredKey = 'crm-schedule.auto-notify.v1';
+  const readDelivered = (): Set<string> => {
+    if (deliveredRef.current) return deliveredRef.current;
+    try {
+      const raw = window.localStorage.getItem(deliveredKey);
+      const list = raw ? (JSON.parse(raw) as string[]) : [];
+      deliveredRef.current = new Set(Array.isArray(list) ? list : []);
+    } catch {
+      deliveredRef.current = new Set();
+    }
+    return deliveredRef.current;
+  };
+  const writeDelivered = (ids: Set<string>) => {
+    deliveredRef.current = ids;
+    try { window.localStorage.setItem(deliveredKey, JSON.stringify(Array.from(ids))); } catch { /* приватный режим */ }
+  };
+
+  const userName = (server?.user?.name || currentAccount?.name || settings.myName || '').trim().toLowerCase();
+
+  const autoIdsForDeal = (deal: (typeof deals)[number]): string[] => {
+    const ids: string[] = [];
+    if (role.id === 'owner' || role.id === 'manager') {
+      ids.push(`auto:deal-added:${deal.id}`);
+    }
+    if (role.id === 'installer') {
+      const team = (deal.schedule?.team || '').toLowerCase();
+      if (deal.schedule?.installAt && userName && team.includes(userName)) {
+        ids.push(`auto:install-assigned:${deal.id}:${deal.schedule.installAt}:${deal.schedule.team ?? ''}`);
+      }
+    }
+    return ids;
+  };
 
   // Сводка на день идёт отдельным правилом из настроек дайджеста.
   const rules = useMemo<ReminderRule[]>(() => reminderRulesWithDigest(settings), [settings]);
@@ -97,6 +133,82 @@ export function useReminders(handlers: ReminderHandlers = {}): ReminderApi {
       // уведомление придёт в срок и без интернета, и при закрытом приложении
       // (где браузер умеет показывать по расписанию; проверка — внутри).
       void syncLocalReminderSchedule([...result.upcoming, ...result.waiting]);
+
+      // Автоматические уведомления: новая сделка и назначение монтажа.
+      // Они не привязаны к правилам-времени: срабатывают один раз, когда
+      // запись впервые появилась на этом устройстве (в том числе после синхронизации).
+      if (settings.notifications) {
+        const roleKey = `${role.id}:${userName}`;
+        if (baselineRoleRef.current !== roleKey) {
+          baselineRoleRef.current = roleKey;
+          baselineIdsRef.current = new Set(deals.flatMap((deal) => autoIdsForDeal(deal)));
+        }
+        const baseline = baselineIdsRef.current ?? new Set<string>();
+        const delivered = readDelivered();
+        const autoReminders: PlannedReminder[] = [];
+        for (const deal of deals) {
+          const client = clientName(deal);
+          if (role.id === 'owner' || role.id === 'manager') {
+            const id = `auto:deal-added:${deal.id}`;
+            if (!baseline.has(id) && !delivered.has(id)) {
+              autoReminders.push({
+                id,
+                ruleId: 'auto-deal-added',
+                ruleLabel: 'Автоматическое уведомление',
+                source: 'custom',
+                dealId: deal.id,
+                title: `Новая сделка: ${deal.title}`,
+                detail: [client, deal.amount ? `${Math.round(deal.amount).toLocaleString('ru-RU')} ₽` : '', deal.manager].filter(Boolean).join(' · '),
+                momentAt: deal.createdAt || new Date().toISOString(),
+                notifyAt: new Date().toISOString(),
+                offsetMinutes: 0,
+                priority: 'normal',
+                channels: ['inapp', 'browser', 'sound'],
+                waitingForQuiet: false,
+              });
+              delivered.add(id);
+            }
+          }
+          if (role.id === 'installer') {
+            const team = (deal.schedule?.team || '').toLowerCase();
+            if (deal.schedule?.installAt && userName && team.includes(userName)) {
+              const id = `auto:install-assigned:${deal.id}:${deal.schedule.installAt}:${deal.schedule.team ?? ''}`;
+              if (!baseline.has(id) && !delivered.has(id)) {
+                autoReminders.push({
+                  id,
+                  ruleId: 'auto-install-assigned',
+                  ruleLabel: 'Автоматическое уведомление',
+                  source: 'custom',
+                  dealId: deal.id,
+                  title: `Назначен монтаж: ${deal.title}`,
+                  detail: [client, deal.schedule.installAt ? `монтаж ${deal.schedule.installAt}` : '', deal.schedule.team, deal.schedule.address].filter(Boolean).join(' · '),
+                  momentAt: deal.updatedAt || new Date().toISOString(),
+                  notifyAt: new Date().toISOString(),
+                  offsetMinutes: 0,
+                  priority: 'high',
+                  channels: ['inapp', 'browser', 'sound', 'title'],
+                  waitingForQuiet: false,
+                });
+                delivered.add(id);
+              }
+            }
+          }
+        }
+        if (autoReminders.length > 0) {
+          writeDelivered(delivered);
+          void deliverReminders(autoReminders, {
+            onInApp: (reminder) => {
+              const action = reminder.dealId
+                ? { label: 'Открыть', run: () => handlersRef.current.onOpenDeal?.(reminder.dealId as string) }
+                : undefined;
+              notify(reminder.title, 'info', action);
+            },
+            onOpen: (reminder) => {
+              if (reminder.dealId) handlersRef.current.onOpenDeal?.(reminder.dealId);
+            },
+          });
+        }
+      }
 
       if (result.skipped.length > 0) markSentMap(result.skipped);
 
