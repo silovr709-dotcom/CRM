@@ -230,6 +230,7 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
     status,
     nextAction: raw.nextAction,
     nextContactAt: raw.nextContactAt?.slice(0, 10),
+    contractAt: raw.contractAt?.slice(0, 10),
     // Журнал общения: без этого он терялся бы при загрузке и слиянии баз.
     contacts: Array.isArray(raw.contacts)
       ? raw.contacts

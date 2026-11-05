@@ -302,6 +302,10 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
               />
               <small className="field-hint">По этому номеру ищут поступление на складе</small>
             </label>
+            <label className="field">Дата договора
+              <input type="date" value={deal.contractAt ?? ''} onChange={(event) => patchDeal(deal.id, { contractAt: event.target.value || undefined })} />
+              <small className="field-hint">когда подписали договор</small>
+            </label>
             <label className="field">Клиент
               <select value={deal.clientId} onChange={(event) => patchDeal(deal.id, { clientId: event.target.value })}>
                 <option value="">— без клиента —</option>

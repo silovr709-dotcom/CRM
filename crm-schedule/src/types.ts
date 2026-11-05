@@ -225,6 +225,8 @@ export interface Deal {
   nextAction?: string;
   /** Когда связаться с клиентом, YYYY-MM-DD. */
   nextContactAt?: string;
+  /** Дата подписания договора, YYYY-MM-DD. */
+  contractAt?: string;
   /** Журнал общения: звонки, сообщения, встречи. Новые — в конце. */
   contacts?: ContactEntry[];
   /** Причина отказа. */

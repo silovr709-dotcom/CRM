@@ -34,6 +34,7 @@ export default function QuickContractModal({ clientId, onClose, onCreated }: {
     });
     // Даты в расписание сделки.
     patchDeal(id, {
+      contractAt: draft.contractDate || undefined,
       schedule: {
         status: 'done',
         measureAt: draft.measureAt || undefined,
