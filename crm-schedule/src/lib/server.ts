@@ -5,6 +5,7 @@
  * серверный режим просто выключен и приложение работает как раньше. */
 
 import type { RoleId } from '../types';
+import { deviceName } from './sync';
 import type { Removed, SyncEnvelope } from './sync';
 import { emptyRemoved } from './sync';
 
@@ -356,4 +357,97 @@ export async function serverDownloadFile(token: string, id: string): Promise<Blo
 /** Убрать файл с сервера фирмы (при удалении вложения). */
 export async function serverDeleteFile(token: string, id: string): Promise<void> {
   await call('file_delete', { method: 'POST', token, body: { id }, timeoutMs: 10_000 });
+}
+
+/* --------------------------- Web Push helpers --------------------------- */
+
+export async function serverPushVapid(): Promise<string | null> {
+  try {
+    const raw = await call<Record<string, unknown>>('push_vapid', { timeoutMs: 8_000 });
+    return typeof raw.publicKey === 'string' ? raw.publicKey : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function serverPushSubscribe(
+  token: string,
+  subscription: PushSubscription,
+  team: string,
+): Promise<boolean> {
+  const json = subscription.toJSON();
+  try {
+    await call('push_subscribe', {
+      method: 'POST',
+      token,
+      body: {
+        endpoint: json.endpoint,
+        keys: json.keys,
+        team,
+        deviceName: deviceName(),
+      },
+      timeoutMs: 12_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function serverPushUnsubscribe(token: string, endpoint: string): Promise<boolean> {
+  try {
+    await call('push_unsubscribe', {
+      method: 'POST',
+      token,
+      body: { endpoint },
+      timeoutMs: 12_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface PushNotifyPayload {
+  targets: string[];
+  title: string;
+  body?: string;
+  dealId?: string;
+  tag?: string;
+  team?: string;
+  excludeEndpoint?: string;
+}
+
+export async function serverPushNotify(token: string, payload: PushNotifyPayload): Promise<void> {
+  try {
+    await call('push_notify', {
+      method: 'POST',
+      token,
+      body: payload,
+      timeoutMs: 12_000,
+    });
+  } catch {
+    /* push не критичен: данные уже сохранены */
+  }
+}
+
+export interface PushInboxItem {
+  title: string;
+  body: string;
+  dealId: string;
+  tag: string;
+  createdAt: string;
+}
+
+export async function serverPushInbox(endpoint: string): Promise<PushInboxItem[]> {
+  try {
+    const raw = await call<Record<string, unknown>>('push_inbox', {
+      method: 'GET',
+      query: `&endpoint=${encodeURIComponent(endpoint)}`,
+      timeoutMs: 12_000,
+    });
+    return Array.isArray(raw.items) ? (raw.items as PushInboxItem[]) : [];
+  } catch {
+    return [];
+  }
 }

@@ -12,6 +12,7 @@ import {
 } from '../lib/reminders';
 import { askNotifyPermission, notifyPermission, permissionHint, testNotification } from '../lib/notify';
 import { localScheduledCount, supportsLocalScheduling } from '../lib/localReminders';
+import { loadServerSession, serverPushSubscribe, serverPushUnsubscribe, serverPushVapid } from '../lib/server';
 import { downloadRemindersIcs } from '../lib/reminderCalendar';
 
 const SOURCES: ReminderSource[] = [
@@ -35,9 +36,11 @@ function newRule(source: ReminderSource = 'install'): ReminderRule {
 }
 
 export default function ReminderSettings() {
-  const { settings, updateSettings, notify, deals, tasks, clientName, calendarEvents } = useApp();
+  const { settings, updateSettings, notify, deals, tasks, clientName, calendarEvents, server } = useApp();
   const [expanded, setExpanded] = useState<string>('');
   const [permission, setPermission] = useState(() => notifyPermission());
+  const [pushState, setPushState] = useState<'off' | 'on' | 'loading'>('off');
+  const [pushBusy, setPushBusy] = useState(false);
   const [customOpen, setCustomOpen] = useState<string>('');
   const rules = settings.reminderRules ?? [];
   const quiet = settings.quietHours ?? defaultQuietHours();
@@ -59,6 +62,58 @@ export default function ReminderSettings() {
     const minutes = Math.round(hours * 60);
     if (rule.offsets.includes(minutes)) return;
     patchRule(rule.id, { offsets: [...rule.offsets, minutes].sort((left, right) => right - left).slice(0, 8) });
+  };
+
+  const urlBase64ToUint8Array = (base64String: string): Uint8Array => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; i += 1) outputArray[i] = rawData.charCodeAt(i);
+    return outputArray;
+  };
+
+  const enableWebPush = async () => {
+    if (!server.user) { notify('Сначала войдите на сервере фирмы в разделе «Данные»', 'error'); return; }
+    setPushBusy(true);
+    try {
+      const perm = await askNotifyPermission();
+      setPermission(perm);
+      if (perm !== 'granted') { notify(permissionHint(perm), 'info'); return; }
+      const publicKey = await serverPushVapid();
+      if (!publicKey) { notify('Сервер не поддерживает push-уведомления', 'error'); return; }
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource });
+      }
+      const ok = await serverPushSubscribe(loadServerSession()?.token ?? '', sub, settings.myName);
+      if (ok) { setPushState('on'); notify('Push-уведомления включены на этом устройстве', 'ok'); }
+      else notify('Не удалось сохранить подписку на сервере', 'error');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Не удалось включить push', 'error');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const disableWebPush = async () => {
+    if (!server.user) return;
+    setPushBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await serverPushUnsubscribe(loadServerSession()?.token ?? '', sub.endpoint);
+        await sub.unsubscribe();
+      }
+      setPushState('off');
+      notify('Push-уведомления отключены', 'info');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Не удалось отключить push', 'error');
+    } finally {
+      setPushBusy(false);
+    }
   };
 
   const quietNow = inQuietHours(quiet, new Date());
@@ -181,6 +236,29 @@ export default function ReminderSettings() {
         >
           <Bell size={14} /> Скачать напоминания в календарь телефона (.ics)
         </button>
+      </div>
+
+
+      <div className="reminder-push">
+        <p>
+          <b>Push при закрытом приложении (если есть интернет).</b>{' '}
+          {server.user
+            ? 'Подпишите это устройство: сервер будет будить его при новых сделках и назначении монтажа, даже если приложение закрыто.'
+            : 'Доступно после входа на сервере фирмы (раздел «Данные»).'}
+        </p>
+        {server.user && (
+          <div className="save-row">
+            <button type="button" className="btn small primary" disabled={pushBusy} onClick={() => void enableWebPush()}>
+              {pushBusy ? 'Подключение…' : 'Включить push на этом устройстве'}
+            </button>
+            <button type="button" className="btn small ghost" disabled={pushBusy} onClick={() => void disableWebPush()}>
+              Отключить
+            </button>
+            <span className="muted small">
+              {pushState === 'on' ? 'Подписка активна' : 'Статус: ' + pushState}
+            </span>
+          </div>
+        )}
       </div>
 
       <ul className="reminder-rules">
