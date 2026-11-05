@@ -313,6 +313,7 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
                               <small>{meta.label}{deal.nextContactAt ? ` · след. контакт ${relativeDay(deal.nextContactAt, today)}` : ''}</small>
                               {dates && <small className="mini-deal-dates">{dates}</small>}
                               {contract && <small>договор №{contract.number} от {fmtDate(contract.issuedAt)}</small>}
+                              {!contract && deal.contractAt && <small>договор от {fmtDate(deal.contractAt)}</small>}
                               {(deal.payments?.length ?? 0) > 0 && (
                                 <small>
                                   оплачено {fmtMoneyCompact(paid)} из {fmtMoneyCompact(deal.amount)}

@@ -129,7 +129,7 @@ export default function CrmView(props: {
     return Array.from(byClient.values())
       .map((entry) => {
         const active = entry.deals.filter((deal) => !isClosedStatus(deal.status));
-        const contractDates = entry.deals.flatMap((deal) => (deal.documents ?? []).filter((d) => d.kind === 'contract').map((d) => d.issuedAt)).sort();
+        const contractDates = entry.deals.map((deal) => deal.contractAt || (deal.documents ?? []).find((d) => d.kind === 'contract')?.issuedAt).filter(Boolean).sort() as string[];
         return {
           ...entry,
           activeCount: active.length,
