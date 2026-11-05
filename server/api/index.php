@@ -292,6 +292,143 @@ function envelopeForStorage(array $incoming, string $role, $stored): array
 
 /* -------------------------------- маршруты -------------------------------- */
 
+
+/* --------------------------- Web Push (VAPID) --------------------------- */
+
+function base64UrlEncode(string $data): string
+{
+    return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+}
+
+function base64UrlDecode(string $data): string
+{
+    $pad = strlen($data) % 4;
+    if ($pad) $data .= str_repeat('=', 4 - $pad);
+    $decoded = base64_decode(strtr($data, '-_', '+/'), true);
+    return $decoded === false ? '' : $decoded;
+}
+
+function pushVapidPath(): string { return dataDir() . '/push-vapid.json'; }
+function pushSubscriptionsPath(): string { return dataDir() . '/push-subscriptions.json'; }
+function pushInboxPath(): string { return dataDir() . '/push-inbox.json'; }
+
+function readJsonFile(string $path): array
+{
+    if (!is_file($path)) return [];
+    $raw = @file_get_contents($path);
+    if ($raw === false || $raw === '') return [];
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function writeJsonFile(string $path, array $data): void
+{
+    $handle = fopen($path, 'c+');
+    if ($handle === false) return;
+    flock($handle, LOCK_EX);
+    rewind($handle);
+    ftruncate($handle, 0);
+    fwrite($handle, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    fflush($handle);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+}
+
+function loadOrCreateVapid(): array
+{
+    $path = pushVapidPath();
+    $data = readJsonFile($path);
+    if (isset($data['publicKey'], $data['privatePem'])) return $data;
+    $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
+    if ($key === false) out(['ok' => false, 'error' => 'crypto', 'message' => 'Сервер не умеет создавать ключи push'], 500);
+    openssl_pkey_export($key, $privatePem);
+    $details = openssl_pkey_get_details($key);
+    $x = $details['ec']['x'] ?? '';
+    $y = $details['ec']['y'] ?? '';
+    if ($x === '' || $y === '') out(['ok' => false, 'error' => 'crypto', 'message' => 'Не удалось прочитать ключ push'], 500);
+    $data = ['publicKey' => base64UrlEncode("\x04" . $x . $y), 'privatePem' => $privatePem];
+    writeJsonFile($path, $data);
+    return $data;
+}
+
+function derToRawSignature(string $der): string
+{
+    $offset = 0;
+    $len = strlen($der);
+    if ($len < 2 || ord($der[$offset++]) !== 0x30) return '';
+    $seqLen = ord($der[$offset++]);
+    if ($seqLen & 0x80) {
+        $n = $seqLen & 0x7f;
+        $seqLen = 0;
+        for ($i = 0; $i < $n && $offset < $len; $i++) $seqLen = ($seqLen << 8) | ord($der[$offset++]);
+    }
+    if ($offset >= $len || ord($der[$offset++]) !== 0x02) return '';
+    $rLen = ord($der[$offset++]);
+    if ($rLen & 0x80) {
+        $n = $rLen & 0x7f;
+        $rLen = 0;
+        for ($i = 0; $i < $n && $offset < $len; $i++) $rLen = ($rLen << 8) | ord($der[$offset++]);
+    }
+    if ($offset + $rLen > $len) return '';
+    $r = substr($der, $offset, $rLen);
+    $offset += $rLen;
+    if ($offset >= $len || ord($der[$offset++]) !== 0x02) return '';
+    $sLen = ord($der[$offset++]);
+    if ($sLen & 0x80) {
+        $n = $sLen & 0x7f;
+        $sLen = 0;
+        for ($i = 0; $i < $n && $offset < $len; $i++) $sLen = ($sLen << 8) | ord($der[$offset++]);
+    }
+    if ($offset + $sLen > $len) return '';
+    $s = substr($der, $offset, $sLen);
+    $r = ltrim($r, "\x00");
+    $s = ltrim($s, "\x00");
+    $r = str_pad($r, 32, "\x00", STR_PAD_LEFT);
+    $s = str_pad($s, 32, "\x00", STR_PAD_LEFT);
+    return $r . $s;
+}
+
+function vapidJwt(string $audience, array $vapid): string
+{
+    $header = base64UrlEncode(json_encode(['typ' => 'JWT', 'alg' => 'ES256']));
+    $payload = base64UrlEncode(json_encode(['aud' => $audience, 'exp' => time() + 43200, 'sub' => 'mailto:crm@example.com']));
+    $unsigned = $header . '.' . $payload;
+    $pkey = openssl_pkey_get_private($vapid['privatePem']);
+    if ($pkey === false) return '';
+    openssl_sign($unsigned, $der, $pkey, OPENSSL_ALGO_SHA256);
+    $raw = derToRawSignature($der);
+    if ($raw === '') return '';
+    return base64UrlEncode($raw);
+}
+
+function sendWebPushEmpty(string $endpoint, array $vapid): bool
+{
+    $parts = parse_url($endpoint);
+    $audience = ($parts['scheme'] ?? 'https') . '://' . ($parts['host'] ?? '');
+    if (isset($parts['port'])) $audience .= ':' . $parts['port'];
+    $jwt = vapidJwt($audience, $vapid);
+    if ($jwt === '') return false;
+    $headers = [
+        'Authorization: vapid t=' . $jwt . ', k=' . $vapid['publicKey'],
+        'TTL: 86400',
+        'Urgency: normal',
+    ];
+    if (function_exists('curl_init')) {
+        $ch = curl_init($endpoint);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        return $code >= 200 && $code < 300;
+    }
+    $context = stream_context_create(['http' => ['method' => 'POST', 'header' => implode("\r\n", $headers) . "\r\n", 'timeout' => 10]]);
+    $result = @file_get_contents($endpoint, false, $context);
+    return $result !== false;
+}
+
 $action = (string)($_GET['action'] ?? 'health');
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
@@ -695,6 +832,114 @@ if ($action === 'file_delete' && $method === 'POST') {
     });
     @unlink(filesDir() . '/' . $id . '.bin');
     out(['ok' => true]);
+}
+
+
+/* --------------------------- Web Push endpoints --------------------------- */
+
+if ($action === 'push_vapid' && $method === 'GET') {
+    $vapid = loadOrCreateVapid();
+    out(['ok' => true, 'publicKey' => $vapid['publicKey']]);
+}
+
+if ($action === 'push_subscribe' && $method === 'POST') {
+    $state = withState(function (array $state) { return [$state, false]; });
+    $user = requireUser($state);
+    $input = body();
+    $endpoint = trim((string)($input['endpoint'] ?? ''));
+    $keys = is_array($input['keys'] ?? null) ? $input['keys'] : [];
+    $p256dh = trim((string)($keys['p256dh'] ?? ''));
+    $auth = trim((string)($keys['auth'] ?? ''));
+    if ($endpoint === '' || $p256dh === '' || $auth === '') {
+        out(['ok' => false, 'error' => 'bad_request', 'message' => 'Некорректная подписка'], 400);
+    }
+    $subs = readJsonFile(pushSubscriptionsPath());
+    $subs = array_values(array_filter($subs, function ($item) use ($endpoint) {
+        return ($item['endpoint'] ?? '') !== $endpoint;
+    }));
+    $subs[] = [
+        'id' => bin2hex(random_bytes(8)),
+        'userId' => $user['id'],
+        'login' => $user['login'],
+        'name' => $user['name'],
+        'role' => $user['role'],
+        'team' => trim((string)($input['team'] ?? '')),
+        'endpoint' => $endpoint,
+        'p256dh' => $p256dh,
+        'auth' => $auth,
+        'deviceName' => trim((string)($input['deviceName'] ?? '')),
+        'createdAt' => date('c'),
+    ];
+    writeJsonFile(pushSubscriptionsPath(), $subs);
+    out(['ok' => true]);
+}
+
+if ($action === 'push_unsubscribe' && $method === 'POST') {
+    $state = withState(function (array $state) { return [$state, false]; });
+    $user = requireUser($state);
+    $input = body();
+    $endpoint = trim((string)($input['endpoint'] ?? ''));
+    $subs = readJsonFile(pushSubscriptionsPath());
+    $subs = array_values(array_filter($subs, function ($item) use ($endpoint, $user) {
+        return !(($item['endpoint'] ?? '') === $endpoint && ($item['userId'] ?? '') === $user['id']);
+    }));
+    writeJsonFile(pushSubscriptionsPath(), $subs);
+    out(['ok' => true]);
+}
+
+if ($action === 'push_notify' && $method === 'POST') {
+    $state = withState(function (array $state) { return [$state, false]; });
+    $user = requireUser($state);
+    $input = body();
+    $targets = is_array($input['targets'] ?? null) ? $input['targets'] : [];
+    $title = trim((string)($input['title'] ?? 'CRM'));
+    $bodyText = trim((string)($input['body'] ?? ''));
+    $dealId = trim((string)($input['dealId'] ?? ''));
+    $tag = trim((string)($input['tag'] ?? 'crm'));
+    $team = trim((string)($input['team'] ?? ''));
+    $excludeEndpoint = trim((string)($input['excludeEndpoint'] ?? ''));
+    $subs = readJsonFile(pushSubscriptionsPath());
+    $inbox = readJsonFile(pushInboxPath());
+    $vapid = loadOrCreateVapid();
+    $sent = 0;
+    foreach ($subs as $sub) {
+        if (($sub['endpoint'] ?? '') === $excludeEndpoint) continue;
+        $role = (string)($sub['role'] ?? '');
+        $okTarget = false;
+        foreach ($targets as $target) {
+            if ($target === 'owners' && $role === 'owner') $okTarget = true;
+            if ($target === 'managers' && $role === 'manager') $okTarget = true;
+            if ($target === 'installers' && $role === 'installer') {
+                if ($team === '' || stripos((string)($sub['team'] ?? ''), $team) !== false) $okTarget = true;
+            }
+        }
+        if (!$okTarget) continue;
+        $inbox[] = [
+            'endpoint' => $sub['endpoint'],
+            'title' => $title,
+            'body' => $bodyText,
+            'dealId' => $dealId,
+            'tag' => $tag,
+            'createdAt' => date('c'),
+        ];
+        if (sendWebPushEmpty((string)$sub['endpoint'], $vapid)) $sent++;
+    }
+    writeJsonFile(pushInboxPath(), $inbox);
+    out(['ok' => true, 'sent' => $sent]);
+}
+
+if ($action === 'push_inbox' && $method === 'GET') {
+    $endpoint = trim((string)($_GET['endpoint'] ?? ''));
+    if ($endpoint === '') out(['ok' => false, 'error' => 'bad_request', 'message' => 'Не указан endpoint'], 400);
+    $inbox = readJsonFile(pushInboxPath());
+    $items = array_values(array_filter($inbox, function ($item) use ($endpoint) {
+        return ($item['endpoint'] ?? '') === $endpoint;
+    }));
+    $inbox = array_values(array_filter($inbox, function ($item) use ($endpoint) {
+        return ($item['endpoint'] ?? '') !== $endpoint;
+    }));
+    writeJsonFile(pushInboxPath(), $inbox);
+    out(['ok' => true, 'items' => $items]);
 }
 
 out(['ok' => false, 'error' => 'unknown_action', 'message' => 'Неизвестный запрос'], 404);

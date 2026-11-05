@@ -101,15 +101,54 @@ self.addEventListener('message', (event) => {
 // когда приложение было закрыто): поднять открытую вкладку или открыть приложение.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const dealId = event.notification?.data?.dealId;
+  const target = dealId ? `./#/deal/${encodeURIComponent(dealId)}` : './';
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const client of windows) {
       if ('focus' in client) {
+        if (dealId && 'navigate' in client) {
+          try { await client.navigate(target); } catch { /* ignore */ }
+        }
         await client.focus();
         return;
       }
     }
-    await self.clients.openWindow('./');
+    await self.clients.openWindow(target);
+  })());
+});
+
+// Web Push: сервер будит service worker; мы забираем накопленные уведомления
+// и показываем их. Данные не передаются в push-пакете, поэтому запрос идёт
+// отдельно — так проще и не нужна шифровка payload на сервере.
+self.addEventListener('push', (event) => {
+  event.waitUntil((async () => {
+    let items = [];
+    try {
+      const reg = self.registration;
+      const sub = await reg.pushManager.getSubscription();
+      const endpoint = sub?.endpoint;
+      if (endpoint) {
+        const url = new URL('./api/index.php', self.location.href);
+        url.searchParams.set('action', 'push_inbox');
+        url.searchParams.set('endpoint', endpoint);
+        const response = await fetch(url.toString(), { cache: 'no-store' });
+        if (response.ok) {
+          const payload = await response.json();
+          if (Array.isArray(payload.items)) items = payload.items;
+        }
+      }
+    } catch {
+      /* сеть недоступна — покажем хотя бы общее уведомление */
+    }
+    const item = items[0] || { title: 'CRM', body: 'Новое уведомление', tag: 'crm', dealId: '' };
+    await self.registration.showNotification(item.title || 'CRM', {
+      body: item.body || '',
+      tag: item.tag || 'crm',
+      icon: './icons/icon-192.png',
+      badge: './icons/favicon-32.png',
+      data: { dealId: item.dealId || '' },
+    });
   })());
 });
 

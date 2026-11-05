@@ -34,7 +34,7 @@ import {
   loadServerRemoved, loadServerSession, saveServerRemoved, saveServerSession,
   serverDeleteFile, serverDownloadFile, serverHealth, serverListFiles,
   serverLogin as apiServerLogin, serverLogout as apiServerLogout,
-  serverMe, serverPull, serverPush, serverSetup as apiServerSetup, serverUploadFile,
+  serverMe, serverPull, serverPush, serverPushNotify, serverSetup as apiServerSetup, serverUploadFile,
   type ServerSession, type ServerUiState,
 } from './lib/server';
 
@@ -1296,6 +1296,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
         : deal)),
       updatedAt: nowIso(),
     }));
+    const session = serverSessionRef.current;
+    if (session && (patch.installAt || patch.team)) {
+      const deal = dataRef.current.deals.find((item) => item.id === id);
+      if (deal?.schedule?.installAt) {
+        void serverPushNotify(session.token, {
+          targets: ['installers'],
+          title: `Назначен монтаж: ${deal.title}`,
+          body: [deal.schedule.installAt, deal.schedule.team, deal.schedule.address].filter(Boolean).join(' · '),
+          dealId: deal.id,
+          tag: `install-${deal.id}`,
+          team: deal.schedule.team ?? '',
+        });
+      }
+    }
   }, []);
 
   const addDeal = useCallback((input: { title: string; clientId: string; amount?: number; status?: DealStatus; manager?: string }) => {
@@ -1321,6 +1335,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       deals: [deal, ...current.deals],
       updatedAt: nowIso(),
     }));
+    const session = serverSessionRef.current;
+    if (session) {
+      void serverPushNotify(session.token, {
+        targets: ['owners', 'managers'],
+        title: `Новая сделка: ${deal.title}`,
+        body: deal.amount ? `${Math.round(deal.amount).toLocaleString('ru-RU')} ₽` : 'Сумма не заполнена',
+        dealId: deal.id,
+        tag: `deal-added-${deal.id}`,
+        excludeEndpoint: '',
+      });
+    }
     return id;
   }, []);
 
