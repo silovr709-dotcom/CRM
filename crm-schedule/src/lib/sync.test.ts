@@ -41,7 +41,7 @@ describe('свободные события при слиянии', () => {
       createdAt: stamp(5),
       updatedAt: stamp(5),
     };
-    const local = makeData({ events: [] });
+    const local = makeData({ events: [], tasks: [] });
     const remote = makeData({ events: [event] });
     const merged = mergeSyncData(local, remote, emptyRemoved());
     expect(merged.data.events.map((item) => item.id)).toEqual(['evt-1']);
@@ -113,7 +113,7 @@ describe('слияние двух устройств', () => {
     const local = makeData({ deals: [] });
     const remote = makeData({ deals: [makeDeal({ id: 'deal-1', updatedAt: edited })] });
 
-    const merged = mergeSyncData(local, remote, { clients: {}, deals: { 'deal-1': removedAt }, receipts: {}, events: {} });
+    const merged = mergeSyncData(local, remote, { clients: {}, deals: { 'deal-1': removedAt }, receipts: {}, events: {}, tasks: {} });
     expect(merged.data.deals).toHaveLength(0);
     expect(merged.removed.deals['deal-1']).toBe(removedAt);
   });
@@ -122,7 +122,7 @@ describe('слияние двух устройств', () => {
     const local = makeData({ clients: [makeClient({ id: 'c1', updatedAt: '2026-03-01T09:00:00.000Z' })] });
     const remote = makeData({ clients: [] });
 
-    const merged = mergeSyncData(local, remote, { clients: { c1: '2026-02-01T09:00:00.000Z' }, deals: {}, receipts: {}, events: {} });
+    const merged = mergeSyncData(local, remote, { clients: { c1: '2026-02-01T09:00:00.000Z' }, deals: {}, receipts: {}, events: {}, tasks: {} });
     expect(merged.data.clients).toHaveLength(1);
     expect(merged.removed.clients.c1).toBeUndefined();
   });
@@ -130,7 +130,7 @@ describe('слияние двух устройств', () => {
   it('забывает старые удаления и хранит свежие', () => {
     const old = new Date(Date.now() - 400 * 86400000).toISOString();
     const fresh = new Date(Date.now() - 3 * 86400000).toISOString();
-    const merged = mergeSyncData(makeData(), makeData(), { clients: { old: old, fresh: fresh }, deals: {}, receipts: {}, events: {} });
+    const merged = mergeSyncData(makeData(), makeData(), { clients: { old: old, fresh: fresh }, deals: {}, receipts: {}, events: {}, tasks: {} });
     expect(merged.removed.clients.old).toBeUndefined();
     expect(merged.removed.clients.fresh).toBe(fresh);
   });
@@ -171,8 +171,8 @@ describe('слияние двух устройств', () => {
 
   it('объединяет «надгробия» по самому свежему времени', () => {
     const merged = mergeRemoved(
-      { clients: { a: '2026-01-01T00:00:00.000Z' }, deals: { x: '2026-01-05T00:00:00.000Z' }, receipts: {}, events: {} },
-      { clients: { a: '2026-02-01T00:00:00.000Z', b: '2026-01-02T00:00:00.000Z' }, deals: {}, receipts: {}, events: {} },
+      { clients: { a: '2026-01-01T00:00:00.000Z' }, deals: { x: '2026-01-05T00:00:00.000Z' }, receipts: {}, events: {}, tasks: {} },
+      { clients: { a: '2026-02-01T00:00:00.000Z', b: '2026-01-02T00:00:00.000Z' }, deals: {}, receipts: {}, events: {}, tasks: {} },
     );
     expect(merged.clients.a).toBe('2026-02-01T00:00:00.000Z');
     expect(merged.clients.b).toBe('2026-01-02T00:00:00.000Z');
@@ -183,7 +183,7 @@ describe('слияние двух устройств', () => {
 describe('документ общей базы', () => {
   it('собирает и разбирает конверт, отбрасывая мусор', () => {
     const data = makeData({ deals: [makeDeal()] });
-    const envelope = buildEnvelope(data, { clients: {}, deals: { 'deal-1': '2026-02-01T00:00:00.000Z' }, receipts: {}, events: {} }, 'телефон');
+    const envelope = buildEnvelope(data, { clients: {}, deals: { 'deal-1': '2026-02-01T00:00:00.000Z' }, receipts: {}, events: {}, tasks: {} }, 'телефон');
     const parsed = parseEnvelope(JSON.parse(JSON.stringify(envelope)));
     expect(parsed?.data.deals).toHaveLength(1);
     expect(parsed?.removed.deals['deal-1']).toBe('2026-02-01T00:00:00.000Z');
@@ -195,8 +195,8 @@ describe('документ общей базы', () => {
     const data = makeData({ clients: [makeClient()] });
     expect(parseEnvelope(data)?.data.clients).toHaveLength(1);
 
-    const left = envelopeSignature({ data, removed: { clients: { a: '1', b: '2' }, deals: {}, receipts: {}, events: {} } });
-    const right = envelopeSignature({ data, removed: { clients: { b: '2', a: '1' }, deals: {}, receipts: {}, events: {} } });
+    const left = envelopeSignature({ data, removed: { clients: { a: '1', b: '2' }, deals: {}, receipts: {}, events: {}, tasks: {} } });
+    const right = envelopeSignature({ data, removed: { clients: { b: '2', a: '1' }, deals: {}, receipts: {}, events: {}, tasks: {} } });
     expect(left).toBe(right);
   });
 });

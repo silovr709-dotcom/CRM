@@ -5,7 +5,7 @@
 // которые движок отдаёт на доставку. Всё чистыми функциями: без таймеров,
 // без DOM — поэтому проверяется тестами и не зависит от браузера.
 import type {
-  CalendarEvent, Deal, DigestSettings, QuietHours, ReminderChannel, ReminderPriority, ReminderRule,
+  CalendarEvent, Deal, DealTask, DigestSettings, QuietHours, ReminderChannel, ReminderPriority, ReminderRule,
   ReminderSource, Settings, TaskReminder,
 } from '../types';
 import { addDays, isoDay, parseDay, todayISO } from './dates';
@@ -284,6 +284,8 @@ interface MomentContext {
   today?: string;
   /** Свободные события графика — напоминаем и о них. */
   events?: CalendarEvent[];
+  /** Самостоятельные задачи — напоминаем о них так же, как о задачах сделок. */
+  tasks?: DealTask[];
 }
 
 /** Все события со сроком: график, задачи, контакты, оплаты, зависшие сделки. */
@@ -294,10 +296,11 @@ export function collectMoments(
 ): ReminderMoment[] {
   const moments: ReminderMoment[] = [];
   const today = context.today ?? todayISO();
-  const staleRule = rules.find((rule) => rule.source === 'stale' && rule.enabled);
   /** Время дня из правила — для дат без часов (задачи, контакты, оплата). */
   const ruleTime = (source: ReminderSource, fallback: string) =>
     rules.find((rule) => rule.source === source && rule.enabled)?.atTime ?? fallback;
+
+  const staleRule = rules.find((rule) => rule.source === 'stale' && rule.enabled);
 
   for (const deal of deals) {
     const client = context.clientName(deal);
@@ -391,6 +394,20 @@ export function collectMoments(
     }
   }
 
+  // Самостоятельные задачи (не привязанные к сделке): напоминаем так же.
+  for (const task of context.tasks ?? []) {
+    if (task.done || !task.dueAt) continue;
+    moments.push({
+      key: `task:standalone:${task.id}:${task.dueAt}`,
+      source: 'task',
+      title: task.title,
+      detail: [task.assignee, task.comment].filter(Boolean).join(' · '),
+      at: momentAt(task.dueAt, undefined, task.reminder?.atTime ?? ruleTime('task', '09:00')),
+      taskId: task.id,
+      taskReminder: task.reminder,
+    });
+  }
+
   // Свободные события графика: напоминаем один раз, в первый день.
   for (const event of calendarEvents(context.events ?? [])) {
     if (event.dayIndex && event.dayIndex > 1) continue;
@@ -432,6 +449,8 @@ export interface PlannedReminder {
 
 export interface EvaluateInput {
   deals: Deal[];
+  /** Самостоятельные задачи, не привязанные к сделке. */
+  tasks?: DealTask[];
   /** Свободные события графика — о них тоже напоминаем. */
   events?: CalendarEvent[];
   rules: ReminderRule[];
@@ -574,6 +593,7 @@ export function evaluateReminders(input: EvaluateInput): EvaluateResult {
     clientName: input.clientName,
     today: isoDay(now),
     events: input.events,
+    tasks: input.tasks,
   }, input.rules);
 
   const fire: PlannedReminder[] = [];

@@ -9,6 +9,7 @@ const baseData = {
   deals: [makeDeal({ amount: 100000 })],
   receipts: [],
   events: [],
+  tasks: [],
   settings: { ...defaultSettings(), companyName: 'Студия' },
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',

@@ -162,6 +162,7 @@ export function loadServerRemoved(): Removed {
       deals: parsed.deals ?? {},
       receipts: parsed.receipts ?? {},
       events: parsed.events ?? {},
+      tasks: parsed.tasks ?? {},
     };
   } catch {
     return emptyRemoved();

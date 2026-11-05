@@ -368,25 +368,25 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
                     <ul className="task-list">
                       {items.map(({ task, deal, tone }) => (
                         <ClientTaskRow
-                          key={`${deal.id}-${task.id}`}
+                          key={`${deal!.id}-${task.id}`}
                           task={task}
                           tone={tone}
-                          dealTitle={deal.title}
+                          dealTitle={deal!.title}
                           today={today}
-                          onOpen={() => setEditor({ dealId: deal.id, task })}
-                          onOpenDeal={() => onOpenDeal(deal.id)}
+                          onOpen={() => setEditor({ dealId: deal!.id, task })}
+                          onOpenDeal={() => onOpenDeal(deal!.id)}
                           onToggle={() => {
-                            updateDeal(toggleTask(deal, task.id));
+                            updateDeal(toggleTask(deal!, task.id));
                             notify('Готово');
                           }}
-                          onPostpone={(days) => updateDeal(postponeTask(deal, task.id, days))}
+                          onPostpone={(days) => updateDeal(postponeTask(deal!, task.id, days))}
                           onDelete={() => {
                             if (!confirm(`Удалить задачу «${task.title}»?`)) return;
-                            updateDeal(removeTask(deal, task.id));
+                            updateDeal(removeTask(deal!, task.id));
                             const removed = task;
                             notify('Задача удалена', 'ok', {
                               label: 'Вернуть',
-                              run: () => updateDeal(addTask(deal, { ...removed, done: false })),
+                              run: () => updateDeal(addTask(deal!, { ...removed, done: false })),
                             });
                           }}
                         />
@@ -402,16 +402,16 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
                   <ul className="task-list done-list">
                     {doneClientTasks.slice(0, 20).map(({ task, deal }) => (
                       <ClientTaskRow
-                        key={`${deal.id}-${task.id}`}
+                        key={`${deal!.id}-${task.id}`}
                         task={task}
                         tone="done"
-                        dealTitle={deal.title}
+                        dealTitle={deal!.title}
                         today={today}
-                        onOpen={() => setEditor({ dealId: deal.id, task })}
-                        onOpenDeal={() => onOpenDeal(deal.id)}
-                        onToggle={() => updateDeal(toggleTask(deal, task.id))}
+                        onOpen={() => setEditor({ dealId: deal!.id, task })}
+                        onOpenDeal={() => onOpenDeal(deal!.id)}
+                        onToggle={() => updateDeal(toggleTask(deal!, task.id))}
                         onPostpone={() => {}}
-                        onDelete={() => updateDeal(removeTask(deal, task.id))}
+                        onDelete={() => updateDeal(removeTask(deal!, task.id))}
                       />
                     ))}
                   </ul>
