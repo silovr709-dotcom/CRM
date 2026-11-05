@@ -1,5 +1,5 @@
 // CRM: сделки и клиенты, воронка, фильтры, доска и разбор очереди.
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, Copy, Filter, LayoutGrid, List, Paperclip, Phone, Play, Search, Trash2,
   Users, X,
@@ -31,6 +31,7 @@ export default function CrmView(props: {
 }) {
   const {
     deals, clients, clientName, changeStatus, patchDeal, removeDeal, settings, mergeClients, notify,
+    importCalculatorProject,
   } = useApp();
   const [prefs, patchPrefs] = usePrefs('crm', {
     mode: 'deals' as 'deals' | 'clients',
@@ -43,6 +44,28 @@ export default function CrmView(props: {
     clientSort: 'openSum' as 'name' | 'openSum' | 'total' | 'lastTouch' | 'contract',
   });
   const [query, setQuery] = useState('');
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const handleImportCalculator = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const bundle = JSON.parse(String(reader.result));
+        const id = importCalculatorProject(bundle);
+        if (id) {
+          notify('Проект из калькулятора импортирован', 'ok');
+          props.onOpenDeal(id);
+        } else {
+          notify('Файл не похож на экспорт калькулятора', 'error');
+        }
+      } catch {
+        notify('Не удалось прочитать файл', 'error');
+      }
+      if (importFileRef.current) importFileRef.current.value = '';
+    };
+    reader.readAsText(file);
+  };
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [selected, setSelected] = useState<string[]>([]);
   const [duplicatesOpen, setDuplicatesOpen] = useState(false);
@@ -190,6 +213,10 @@ export default function CrmView(props: {
           <button type="button" className="btn ghost" onClick={props.onNewClient}>
             <Users size={16} /> Клиент
           </button>
+          <button type="button" className="btn ghost" onClick={() => importFileRef.current?.click()}>
+            Импорт из калькулятора
+          </button>
+          <input ref={importFileRef} type="file" accept="application/json,.json" style={{ display: 'none' }} onChange={handleImportCalculator} />
           <button type="button" className="btn primary" onClick={props.onNewDeal}>+ Сделка</button>
         </div>
       </header>
