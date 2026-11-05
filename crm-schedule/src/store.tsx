@@ -109,7 +109,7 @@ interface AppContextValue {
   /** Позиции сметы заказа: КП, смета и акт печатаются из них. */
   saveDealItems: (dealId: string, items: DealItem[]) => void;
   /** Выдать документ: номер запоминается и больше не меняется. */
-  issueDocument: (dealId: string, kind: IssuedDocument['kind']) => IssuedDocument | null;
+  issueDocument: (dealId: string, kind: IssuedDocument['kind'], issuedAt?: string) => IssuedDocument | null;
   /** Отметить, что клиенту написали: событие попадёт в историю сделки. */
   markClientReminder: (dealId: string, reminderId: string, channel?: string) => void;
   /** Касание клиента: звонок, сообщение, встреча. Обновляет журнал и срок. */
@@ -1205,7 +1205,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
-  const issueDocument = useCallback((dealId: string, kind: IssuedDocument['kind']): IssuedDocument | null => {
+  const issueDocument = useCallback((dealId: string, kind: IssuedDocument['kind'], issuedAt?: string): IssuedDocument | null => {
     const deal = dataRef.current.deals.find((item) => item.id === dealId);
     if (!deal) return null;
     const issued = dataRef.current.deals.flatMap((item) => item.documents ?? []);
@@ -1216,7 +1216,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       id: uid('doc'),
       kind,
       number: documentNumber(kind, year, sequence),
-      issuedAt: today.toISOString().slice(0, 10),
+      issuedAt: (issuedAt && /^\d{4}-\d{2}-\d{2}$/.test(issuedAt)) ? issuedAt : today.toISOString().slice(0, 10),
       issuedBy: dataRef.current.settings.myName || undefined,
     };
     setData((current) => ({

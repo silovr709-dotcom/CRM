@@ -22,6 +22,7 @@ import Modal from './Modal';
 import Attachments from './Attachments';
 import EmptyState from './EmptyState';
 import TaskEditor, { TaskBell } from './TaskEditor';
+import QuickContractModal from './QuickContractModal';
 
 const TABS = [
   { id: 'overview', label: 'Обзор' },
@@ -74,6 +75,7 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
   const [tagsText, setTagsText] = useState((existing?.tags ?? []).join(', '));
   const [tab, setTab] = useState<ClientTab>('overview');
   const [editor, setEditor] = useState<{ dealId?: string; task?: DealTask } | null>(null);
+  const [quickContractOpen, setQuickContractOpen] = useState(false);
   const isNew = !existing;
 
   const clientDeals = useMemo(
@@ -155,6 +157,7 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
   const phone = (existing?.phones ?? [])[0] ?? '';
 
   return (
+    <>
     <Modal
       title={isNew ? 'Новый клиент' : draft.name || 'Клиент'}
       subtitle={isNew ? 'Имя обязательно, остальное можно позже.' : `В базе с ${fmtDate(draft.createdAt?.slice(0, 10))}`}
@@ -282,6 +285,9 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
 
               <div className="info-card">
                 <h3>Сделки</h3>
+                <button type="button" className="btn small primary" onClick={() => setQuickContractOpen(true)}>
+                  <Plus size={13} /> Добавить договор
+                </button>
                 {clientDeals.length === 0 ? (
                   <span className="muted small">Сделок нет.</span>
                 ) : (
@@ -528,7 +534,14 @@ export default function ClientDialog({ clientId, onClose, onOpenDeal, onNewDeal 
         />
       )}
     </Modal>
-  );
+    {quickContractOpen && (
+      <QuickContractModal
+        clientId={clientId}
+        onClose={() => setQuickContractOpen(false)}
+        onCreated={() => { setQuickContractOpen(false); notify('Договор добавлен'); }}
+      />
+    )}
+  </>);
 }
 
 function ClientTaskRow({
