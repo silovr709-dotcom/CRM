@@ -40,6 +40,7 @@ export default function CrmView(props: {
     manager: '',
     sort: 'urgency' as 'urgency' | 'money' | 'updated',
     mine: false,
+    clientSort: 'openSum' as 'name' | 'openSum' | 'total' | 'lastTouch' | 'contract',
   });
   const [query, setQuery] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -105,15 +106,26 @@ export default function CrmView(props: {
     return Array.from(byClient.values())
       .map((entry) => {
         const active = entry.deals.filter((deal) => !isClosedStatus(deal.status));
+        const contractDates = entry.deals.flatMap((deal) => (deal.documents ?? []).filter((d) => d.kind === 'contract').map((d) => d.issuedAt)).sort();
         return {
           ...entry,
           activeCount: active.length,
           openSum: active.reduce((sum, deal) => sum + deal.amount, 0),
+          totalSum: entry.deals.reduce((sum, deal) => sum + deal.amount, 0),
           lastTouch: entry.deals.reduce((latest, deal) => (deal.updatedAt > latest ? deal.updatedAt : latest), ''),
+          contractAt: contractDates.length > 0 ? contractDates[contractDates.length - 1] : (entry.deals.reduce((latest, deal) => (deal.createdAt > latest ? deal.createdAt : latest), '') || ''),
         };
       })
       .filter((entry) => !needle || [entry.name, entry.phone, entry.email, entry.tags.join(' ')].join(' ').toLocaleLowerCase('ru-RU').includes(needle))
-      .sort((left, right) => right.openSum - left.openSum || right.lastTouch.localeCompare(left.lastTouch));
+      .sort((left, right) => {
+        const mode = prefs.clientSort;
+        if (mode === 'name') return left.name.localeCompare(right.name, 'ru');
+        if (mode === 'openSum') return right.openSum - left.openSum || right.lastTouch.localeCompare(left.lastTouch);
+        if (mode === 'total') return right.totalSum - left.totalSum;
+        if (mode === 'lastTouch') return right.lastTouch.localeCompare(left.lastTouch);
+        if (mode === 'contract') return right.contractAt.localeCompare(left.contractAt);
+        return 0;
+      });
   }, [clients, deals, clientName, query]);
 
   const { drag, over, bind } = useDragDrop((payload, target) => {
@@ -411,7 +423,19 @@ export default function CrmView(props: {
               <h2>Клиенты</h2>
               <span className="muted">{clientRows.length} в базе</span>
             </div>
-            <button type="button" className="btn small ghost" onClick={props.onNewClient}>+ Клиент</button>
+            <div className="actions wrap">
+              <label className="sort-select">
+                <span className="muted small">Сортировка</span>
+                <select value={prefs.clientSort} onChange={(event) => patchPrefs({ clientSort: event.target.value as typeof prefs.clientSort })}>
+                  <option value="openSum">по сумме в работе</option>
+                  <option value="total">по общей сумме</option>
+                  <option value="contract">по дате договора</option>
+                  <option value="lastTouch">по последнему контакту</option>
+                  <option value="name">по имени</option>
+                </select>
+              </label>
+              <button type="button" className="btn small ghost" onClick={props.onNewClient}>+ Клиент</button>
+            </div>
           </div>
           {clientRows.length === 0 ? (
             <EmptyState
@@ -429,8 +453,9 @@ export default function CrmView(props: {
                     <span className="client-main">
                       <b>{row.name}</b>
                       <span>{[row.phone, row.email].filter(Boolean).join(' · ') || 'контакты не заполнены'}</span>
-                      {(row.tags.length > 0 || row.files > 0) && (
+                      {(row.tags.length > 0 || row.files > 0 || row.contractAt) && (
                         <em>
+                          {row.contractAt && <i className="tag">договор {row.contractAt.slice(0, 10)}</i>}
                           {row.tags.map((tag) => <i key={tag} className="tag">{tag}</i>)}
                           {row.files > 0 && <i className="tag tag-file"><Paperclip size={10} /> {row.files}</i>}
                         </em>
