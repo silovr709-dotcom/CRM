@@ -227,6 +227,12 @@ export interface Deal {
   nextContactAt?: string;
   /** Дата подписания договора, YYYY-MM-DD. */
   contractAt?: string;
+  /** Связь с проектом в калькуляторе РЕцепт. */
+  calculatorProjectId?: string;
+  /** Ревизия проекта калькулятора, из которой последний раз обновили сделку. */
+  calculatorRevision?: number;
+  /** Когда последний раз синхронизировались с калькулятором. */
+  calculatorSyncedAt?: string;
   /** Журнал общения: звонки, сообщения, встречи. Новые — в конце. */
   contacts?: ContactEntry[];
   /** Причина отказа. */

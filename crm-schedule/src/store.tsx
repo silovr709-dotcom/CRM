@@ -1557,22 +1557,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /** Импорт проекта из калькулятора РЕцепт: создаёт сделку с суммой, датами
       и прикрепляет JSON расчёта как файл. Возвращает id сделки или null. */
   const importCalculatorProject = useCallback((bundle: unknown): string | null => {
-    const b = bundle as { kind?: string; v?: number; project?: Record<string, unknown> } | null;
-    if (!b || b.kind !== 'recept-calculator-project' || !b.project) return null;
-    const p = b.project;
+    // Принимаем как нашу обёртку { kind, project }, так и «сырой» экспорт
+    // калькулятора (объект проекта с полем lines). Это делает импорт
+    // устойчивым к любому из двух путей передачи.
+    const raw = bundle as { kind?: string; v?: number; project?: Record<string, unknown> } | Record<string, unknown> | null;
+    if (!raw || typeof raw !== 'object') return null;
+    const isWrapped = (raw as { kind?: string }).kind === 'recept-calculator-project' && (raw as { project?: unknown }).project && typeof (raw as { project?: unknown }).project === 'object';
+    const p = (isWrapped ? (raw as { project: Record<string, unknown> }).project : raw) as Record<string, unknown>;
+    if (!p || typeof p !== 'object') return null;
+    // Калькулятор всегда хранит массив строк расчёта; без него это не проект.
+    if (!Array.isArray(p.lines) && p.lines !== undefined) return null;
     const title = String(p.name ?? p.title ?? 'Расчёт кухни');
     const clientName = String(p.client ?? p.clientName ?? '').trim();
     const phone = String(p.phone ?? '').trim();
-    const amount = Number(p.clientPrice ?? p.amount ?? 0) || 0;
+    const addressFromProject = String(p.address ?? '').trim();
+    const amount = Number(p.clientPrice ?? p.amount ?? p.total ?? 0) || 0;
     const statusMap: Record<string, DealStatus> = {
       draft: 'draft', sent: 'offerSent', approved: 'approved', archived: 'delivered',
     };
     const status = statusMap[String(p.status ?? 'approved')] ?? 'approved';
-    const dealId = uid('deal');
+    const calculatorProjectId = typeof p.id === 'string' && p.id.trim() ? p.id.trim() : undefined;
+    const crmDealId = typeof p.crmDealId === 'string' && p.crmDealId.trim() ? p.crmDealId.trim() : undefined;
+    const crmClientId = typeof p.crmClientId === 'string' && p.crmClientId.trim() ? p.crmClientId.trim() : undefined;
+    const revision = typeof p.calculatorRevision === 'number'
+      ? p.calculatorRevision
+      : (typeof p.revision === 'number' ? p.revision : undefined);
+    const syncedAt = nowIso();
+
+    // Ищем существующую сделку заранее, чтобы не зависеть от асинхронного
+    // обновления состояния при прикреплении файла.
+    const existingDeal = dataRef.current.deals.find((item) =>
+      (calculatorProjectId && item.calculatorProjectId === calculatorProjectId) ||
+      (crmDealId && item.id === crmDealId),
+    );
+    const targetDealId = existingDeal?.id ?? (crmDealId || uid('deal'));
+
+    const buildSchedule = (base?: Deal['schedule']): Deal['schedule'] => ({
+      ...(base ?? { status: 'planned' }),
+      status: (base?.status ?? 'planned') as DealSchedule['status'],
+      measureAt: typeof p.measureAt === 'string' ? p.measureAt : base?.measureAt,
+      readyAt: typeof p.readyAt === 'string' ? p.readyAt : base?.readyAt,
+      deliveryAt: typeof p.deliveryAt === 'string' ? p.deliveryAt : base?.deliveryAt,
+      installAt: typeof p.installAt === 'string' ? p.installAt : base?.installAt,
+      address: typeof p.address === 'string' ? p.address : (addressFromProject || base?.address),
+      team: typeof p.team === 'string' ? p.team : base?.team,
+    });
+
     const deal: Deal = {
-      id: dealId,
+      id: targetDealId,
       title,
-      clientId: '',
+      clientId: crmClientId ?? '',
       amount,
       manager: (typeof p.manager === 'string' ? p.manager : undefined),
       status,
@@ -1580,19 +1614,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       tasks: [],
       payments: [],
       history: [{ id: uid('h'), createdAt: nowIso(), kind: 'project', title: 'Импорт из калькулятора РЕцепт', author: me() }],
-      schedule: {
-        status: 'planned',
-        measureAt: typeof p.measureAt === 'string' ? p.measureAt : undefined,
-        readyAt: typeof p.readyAt === 'string' ? p.readyAt : undefined,
-        deliveryAt: typeof p.deliveryAt === 'string' ? p.deliveryAt : undefined,
-        installAt: typeof p.installAt === 'string' ? p.installAt : undefined,
-      },
+      schedule: buildSchedule(),
+      calculatorProjectId: calculatorProjectId ?? targetDealId,
+      calculatorRevision: revision,
+      calculatorSyncedAt: syncedAt,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
+
     setData((current) => {
       // Найти или создать клиента по имени/телефону.
-      let resolvedClientId = '';
+      let resolvedClientId = crmClientId ?? '';
       const existingClient = current.clients.find((c) =>
         (clientName && c.name.trim().toLowerCase() === clientName.toLowerCase()) ||
         (phone && (c.phones ?? []).some((ph) => ph.replace(/\D/g, '') === phone.replace(/\D/g, ''))),
@@ -1608,7 +1640,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             name: clientName,
             phones: phone ? [phone] : [],
             emails: [],
-            address: String(p.address ?? ''),
+            address: addressFromProject,
             source: 'калькулятор',
             tags: ['калькулятор'],
             managerComment: '',
@@ -1617,20 +1649,60 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }],
         };
       }
+      if (crmClientId && !current.clients.some((c) => c.id === crmClientId)) {
+        // сохраняем переданный id клиента, если его ещё нет
+        resolvedClientId = crmClientId;
+      }
+
+      // Если этот проект уже был импортирован — обновляем существующую сделку.
+      const foundDeal = calculatorProjectId
+        ? current.deals.find((item) => item.calculatorProjectId === calculatorProjectId)
+        : (crmDealId ? current.deals.find((item) => item.id === crmDealId) : undefined);
+      if (foundDeal) {
+        const updatedDeal: Deal = {
+          ...foundDeal,
+          title,
+          clientId: resolvedClientId || foundDeal.clientId,
+          amount: amount || foundDeal.amount,
+          manager: (typeof p.manager === 'string' ? p.manager : foundDeal.manager),
+          status,
+          nextAction: foundDeal.nextAction?.trim() || defaultNextAction(status),
+          schedule: buildSchedule(foundDeal.schedule),
+          calculatorProjectId: calculatorProjectId ?? foundDeal.calculatorProjectId,
+          calculatorRevision: revision ?? foundDeal.calculatorRevision,
+          calculatorSyncedAt: syncedAt,
+          updatedAt: nowIso(),
+          history: [...(foundDeal.history ?? []), {
+            id: uid('h'),
+            createdAt: nowIso(),
+            kind: 'project',
+            title: 'Обновлено из калькулятора РЕцепт',
+            text: `Ревизия проекта: ${calculatorProjectId ?? foundDeal.id}`,
+            author: me(),
+          }],
+        };
+        return {
+          ...current,
+          deals: current.deals.map((item) => (item.id === foundDeal.id ? updatedDeal : item)),
+          updatedAt: nowIso(),
+        };
+      }
+
       return {
         ...current,
-        deals: [{ ...deal, clientId: resolvedClientId }, ...current.deals],
+        deals: [{ ...deal, clientId: resolvedClientId, calculatorProjectId: calculatorProjectId ?? targetDealId }, ...current.deals],
         updatedAt: nowIso(),
       };
     });
-    // Прикрепить JSON расчёта как файл (через File + addAttachments) — асинхронно.
+
+    // Прикрепить JSON расчёта как файл.
     try {
       const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
       const file = new File([blob], `расчёт-${title}.json`, { type: 'application/json' });
-      void addAttachments('deal', dealId, [file]);
+      void addAttachments('deal', targetDealId, [file]);
     } catch { /* не критично */ }
-    pushUndo('импорт из калькулятора');
-    return dealId;
+    pushUndo(calculatorProjectId ? 'обновлён проект из калькулятора' : 'импорт из калькулятора');
+    return targetDealId;
   }, [pushUndo, addAttachments]);
 
   /**

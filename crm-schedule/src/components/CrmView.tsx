@@ -594,6 +594,7 @@ function DealListRow({ row, client, today, selected, onSelect, onOpen, onCopyPho
             {pay.paid > 0 && <span>{pay.label}</span>}
             {tone !== 'none' && !row.closed && <span className={`tone-${tone}`}>{relativeDay(deal.nextContactAt, today)}</span>}
             {deal.schedule.installAt && <span>монтаж {fmtDate(deal.schedule.installAt)}</span>}
+            {deal.contractAt && <span>договор {fmtDate(deal.contractAt)}</span>}
             {(deal.attachments?.length ?? 0) > 0 && (
               <span className="with-icon"><Paperclip size={11} /> {deal.attachments?.length}</span>
             )}

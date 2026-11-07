@@ -231,6 +231,9 @@ function normalizeDeal(raw: Partial<Deal>): Deal {
     nextAction: raw.nextAction,
     nextContactAt: raw.nextContactAt?.slice(0, 10),
     contractAt: raw.contractAt?.slice(0, 10),
+    calculatorProjectId: typeof raw.calculatorProjectId === 'string' ? raw.calculatorProjectId : undefined,
+    calculatorRevision: typeof raw.calculatorRevision === 'number' ? raw.calculatorRevision : undefined,
+    calculatorSyncedAt: typeof raw.calculatorSyncedAt === 'string' ? raw.calculatorSyncedAt : undefined,
     // Журнал общения: без этого он терялся бы при загрузке и слиянии баз.
     contacts: Array.isArray(raw.contacts)
       ? raw.contacts

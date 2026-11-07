@@ -229,6 +229,57 @@ export default function DealDialog({ dealId, initialTab, onClose, onOpenClient, 
           <span className="foot-spacer" />
           {client && <button type="button" className="btn ghost" onClick={() => onOpenClient(client.id)}>Клиент</button>}
           <button type="button" className="btn ghost" onClick={onOpenSchedule}>График</button>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => {
+              const reverseStatus: Record<string, string> = {
+                draft: 'draft', calculating: 'draft', offerSent: 'sent', clientThinking: 'sent',
+                approved: 'approved', techCheck: 'approved', factorySent: 'approved',
+                production: 'approved', ready: 'approved', delivered: 'archived', rejected: 'archived',
+              };
+              const bundle = {
+                kind: 'recept-calculator-project',
+                v: 1,
+                project: {
+                  id: deal.calculatorProjectId || deal.id,
+                  name: deal.title,
+                  client: client?.name ?? '',
+                  clientId: deal.clientId || undefined,
+                  phone: client?.phones?.[0],
+                  address: deal.schedule?.address || client?.address,
+                  date: deal.contractAt ?? today,
+                  comment: deal.comment ?? '',
+                  manager: deal.manager,
+                  status: reverseStatus[deal.status] ?? 'approved',
+                  pricebookId: '',
+                  pricebookName: '',
+                  settings: {},
+                  lines: [],
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                  measureAt: deal.schedule?.measureAt,
+                  readyAt: deal.schedule?.readyAt,
+                  deliveryAt: deal.schedule?.deliveryAt,
+                  installAt: deal.schedule?.installAt,
+                  team: deal.schedule?.team,
+                  crmDealId: deal.id,
+                  crmClientId: deal.clientId || undefined,
+                  calculatorSyncedAt: new Date().toISOString(),
+                },
+              };
+              const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement('a');
+              link.href = url;
+              link.download = `crm-${deal.title.replace(/[^\wа-яА-ЯёЁ]+/g, '-')}.json`;
+              link.click();
+              URL.revokeObjectURL(url);
+              notify('Файл для калькулятора скачан. Импортируйте его в калькулятор как проект.');
+            }}
+          >
+            В калькулятор
+          </button>
           {queue && onQueueNext ? (
             <button type="button" className="btn primary" onClick={onQueueNext}>
               Следующая сделка <CheckCheck size={15} />
